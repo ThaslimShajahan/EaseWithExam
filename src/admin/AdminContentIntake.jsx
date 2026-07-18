@@ -1,0 +1,794 @@
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Upload, Link2, FileText, Loader2, CheckCircle2, AlertTriangle,
+  X, Inbox, Info, BookOpen, ClipboardList, FolderSearch, Check, Circle,
+  ChevronLeft, ImagePlus, ChevronDown, ChevronUp, Network, ArrowRight,
+} from 'lucide-react';
+import { chatComplete } from '../lib/aiProxy';
+import { supabase, adminSaveKnowledgeChunks } from '../lib/supabase';
+import { logChange, ENTITY, ACTION } from '../lib/changelog';
+import { getFeatureFlag, FLAGS } from '../lib/featureFlags';
+import { fetchPdfBuffer, extractPdfText } from '../lib/pdfAnalyzer';
+import { getSubjectsForExam, BOARDS, CLASS_LEVELS } from '../lib/categories';
+import { getChapters } from '../lib/syllabus';
+import { listDriveFolderPdfs, fetchDriveFileBytes } from '../lib/driveFolder';
+import { useAuth } from '../context/AuthContext';
+
+/* ── Config ─────────────────────────────────────────────────────── */
+
+const COMPETITIVE_EXAMS = ['NEET', 'JEE Main', 'JEE Advanced'];
+const EXAM_GROUPS = [
+  { label: 'Competitive', items: COMPETITIVE_EXAMS },
+  { label: 'Boards',      items: BOARDS },
+];
+
+function getDbExamType(examBase, classLevel) {
+  return BOARDS.includes(examBase) && classLevel ? `${examBase} Class ${classLevel}` : examBase;
+}
+
+function parseDriveFileId(input) {
+  const m = input.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || input.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+}
+
+function resolveFetchUrl(rawUrl) {
+  const driveId = parseDriveFileId(rawUrl);
+  return driveId ? `https://drive.google.com/uc?export=download&id=${driveId}` : rawUrl;
+}
+
+// Best-effort chapter-name guess from a filename like "UNIT 1 WIT AND WISDOM.pdf" —
+// only used as a starting hint; the real chapter comes from AI reading the content.
+function cleanChapterGuess(filename) {
+  return filename.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Align an AI-detected (or filename-guessed) chapter name to the admin's actual
+// syllabus chapter list where possible, so it registers correctly in Content Map
+// instead of showing up as an "unmapped" chapter with a slightly different name.
+function matchSyllabusChapter(guess, chapterNames) {
+  if (!guess || !chapterNames?.length) return guess;
+  const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const g = norm(guess);
+  const exact = chapterNames.find((c) => norm(c) === g);
+  if (exact) return exact;
+  const partial = chapterNames.find((c) => norm(c).includes(g) || g.includes(norm(c)));
+  return partial || guess;
+}
+
+/* ── AI extraction ──────────────────────────────────────────────── */
+
+async function runPYQExtraction({ rawText, examType, subject, year, onProgress }) {
+  const isMixed = subject === 'Mixed';
+  onProgress('AI extracting questions…');
+
+  const resp = await chatComplete({
+    model:           'gpt-4o',
+    max_tokens:      8000,
+    temperature:     0,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: 'You are an expert at extracting structured question papers from raw text. Return only valid JSON.' },
+      {
+        role: 'user',
+        content: `Extract ALL questions from this ${examType}${isMixed ? '' : ` ${subject}`} question paper${year ? ` (${year})` : ''}.
+${isMixed ? '\nThis paper covers multiple subjects. For each question, also identify the subject (Physics, Chemistry, Biology for NEET; Physics, Chemistry, Mathematics for JEE).' : ''}
+
+For CBSE/board papers, section marks: A=1, B=2, C=3, D=5, E=4-5.
+For NEET/JEE: all MCQ, 4 marks correct, -1 wrong.
+
+Extract every question. For each include:
+- Full question text
+- Section label (A/B/C/D/E or blank)
+- Marks per question
+- Question type (MCQ / Short Answer / Long Answer / Numerical / Assertion-Reason / Case-Based)
+- Chapter or topic — identify this from the actual content, as precisely as you can
+- All 4 options if MCQ (A, B, C, D)
+- Correct answer if in answer key
+- Brief explanation if available
+- has_diagram: true if question references a figure/diagram/graph
+${isMixed ? '- subject: Physics / Chemistry / Biology / Mathematics' : ''}
+
+Return JSON:
+{
+  "paper_title": "title if visible",
+  "total_marks": 80,
+  "questions": [
+    {
+      "section": "A", "marks": 1, "type": "MCQ", "chapter": "topic name",
+      "question_text": "full question", "options": ["A. opt1","B. opt2","C. opt3","D. opt4"],
+      "correct_answer": "A", "explanation": "", "has_diagram": false${isMixed ? ',\n      "subject": "Biology"' : ''}
+    }
+  ]
+}
+
+RAW TEXT (first 10000 chars):
+${rawText.slice(0, 10000)}`,
+      },
+    ],
+  });
+
+  const data      = JSON.parse(resp.choices[0].message.content);
+  const questions = data.questions ?? [];
+  if (!questions.length) throw new Error('No questions found. Check if this is a text-based PDF.');
+  return { questions, paperTitle: data.paper_title, totalMarks: data.total_marks };
+}
+
+async function runNotesExtraction({ rawText, examType, subject, onProgress }) {
+  onProgress('AI structuring study notes…');
+
+  const resp = await chatComplete({
+    model:           'gpt-4o',
+    max_tokens:      8000,
+    temperature:     0,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: 'You structure educational content into searchable chunks and identify its chapter/topic. Return only valid JSON.' },
+      {
+        role: 'user',
+        content: `Structure this ${examType} ${subject} content into knowledge chunks, and identify the single chapter/topic name it belongs to (from the actual content — e.g. a textbook chapter title).
+Each chunk: self-contained, 100–300 words, focused on one concept.
+
+Return JSON:
+{
+  "topic": "chapter/topic name",
+  "chunks": [
+    { "heading": "concept name", "content": "explanation", "keywords": ["kw1","kw2"] }
+  ]
+}
+
+CONTENT (first 8000 chars):
+${rawText.slice(0, 8000)}`,
+      },
+    ],
+  });
+
+  const data   = JSON.parse(resp.choices[0].message.content);
+  const chunks = data.chunks ?? [];
+  if (!chunks.length) throw new Error('No content could be extracted.');
+  return { chunks, topic: data.topic };
+}
+
+/* ── Save helpers ───────────────────────────────────────────────── */
+
+async function savePYQRows({ questions, examType, subject, year, source, isMixed, syllabusChapters }) {
+  const reviewQueueOn = await getFeatureFlag(FLAGS.CONTENT_REVIEW_QUEUE);
+
+  const rows = questions.map((q) => ({
+    exam_type:      examType,
+    subject:        isMixed ? (q.subject || 'Mixed') : subject,
+    chapter:        matchSyllabusChapter(q.chapter, syllabusChapters) || null,
+    question_text:  q.question_text,
+    options:        q.options?.length ? q.options : null,
+    correct_answer: q.correct_answer || null,
+    explanation:    q.explanation || null,
+    year:           year ? parseInt(year) : null,
+    question_type:  q.type || 'MCQ',
+    difficulty:     'Medium',
+    marks:          q.marks ?? null,
+    section:        q.section || null,
+    has_diagram:    q.has_diagram ?? false,
+    source,
+    ...(reviewQueueOn && { status: 'in_review' }),
+  }));
+
+  const { data: saved, error } = await supabase
+    .from('pyq_questions')
+    .insert(rows)
+    .select('id, question_text, has_diagram, section, marks, chapter');
+  if (error) throw new Error(error.message);
+
+  logChange(ENTITY.PYQ_QUESTION, 'bulk', ACTION.CREATE,
+    { count: rows.length, examType, subject, source },
+    `Content Intake: ${rows.length} PYQ questions from ${source}`);
+
+  return saved ?? [];
+}
+
+// Saves to knowledge_base (AI doubt-tutor retrieval) AND upserts a study_notes row
+// (the curated notes library Content Map + the student-facing Study Notes screen
+// both read from) — one upload should serve both, not just the AI retrieval store.
+async function saveNoteChunks({ chunks, topic, examType, subject, chapter, source, callerUid, syllabusChapters }) {
+  const reviewQueueOn = await getFeatureFlag(FLAGS.CONTENT_REVIEW_QUEUE);
+  const chapterName   = matchSyllabusChapter(topic || chapter, syllabusChapters) || chapter || subject;
+
+  let kbCount = 0;
+  if (reviewQueueOn) {
+    const rows = chunks.map((c) => ({
+      exam_type:     examType || null,
+      subject,
+      chapter:       chapterName,
+      question_text: c.heading ? `${c.heading}\n\n${c.content}` : c.content,
+      question_type: 'KB_NOTE',
+      status:        'in_review',
+      source,
+    }));
+    const { error } = await supabase.from('pyq_questions').insert(rows);
+    if (error) throw new Error(error.message);
+    kbCount = rows.length;
+    logChange(ENTITY.CONTENT_ITEM, 'bulk', ACTION.CREATE,
+      { count: rows.length, examType, subject, source },
+      `Content Intake: ${rows.length} KB chunks queued for review`);
+  } else {
+    const examTag  = examType ? examType.toLowerCase().replace(/\s+/g, '_') : null;
+    const kbRows = chunks.map((c) => ({
+      content: `${c.heading}\n\n${c.content}`,
+      subject,
+      tags:    [chapterName, ...(examTag ? [examTag] : []), ...(c.keywords || [])].filter(Boolean),
+    }));
+    await adminSaveKnowledgeChunks(kbRows);
+    kbCount = kbRows.length;
+    logChange(ENTITY.CONTENT_ITEM, 'bulk', ACTION.CREATE,
+      { count: kbRows.length, examType, subject, source },
+      `Content Intake: ${kbRows.length} knowledge chunks`);
+  }
+
+  // Curated study_notes row — same table Admin > Academic > Study Notes and
+  // Content Map both read from. One combined chunk of full content per file.
+  const fullContent = chunks.map((c) => (c.heading ? `**${c.heading}**\n${c.content}` : c.content)).join('\n\n');
+  const { error: noteErr } = await supabase.rpc('admin_upsert_study_note', {
+    p_caller:       callerUid,
+    p_id:           null,
+    p_title:        chapterName,
+    p_subject:      subject,
+    p_exam_type:    examType || null,
+    p_chapter:      chapterName,
+    p_content:      fullContent.slice(0, 12000),
+    p_pdf_url:      null,
+    p_centre_id:    null,
+    p_is_published: !reviewQueueOn,
+    p_tags:         chunks.flatMap((c) => c.keywords || []).slice(0, 10),
+  });
+  if (noteErr) throw new Error(noteErr.message);
+
+  return { kbCount, chapterName };
+}
+
+/* ── Diagram image enrichment (PYQ only) ─────────────────────────── */
+
+async function uploadImageForPYQ(file, rowId) {
+  const ext  = file.name.split('.').pop().toLowerCase();
+  const path = `pyq-images/${Date.now()}-${rowId}.${ext}`;
+  const { error: upErr } = await supabase.storage.from('question-papers').upload(path, file, { upsert: true });
+  if (upErr) throw upErr;
+  const { data } = supabase.storage.from('question-papers').getPublicUrl(path);
+  const { error: updErr } = await supabase.from('pyq_questions').update({ image_url: data.publicUrl }).eq('id', rowId);
+  if (updErr) throw updErr;
+  logChange(ENTITY.PYQ_QUESTION, rowId, ACTION.UPDATE, { after: { image_url: data.publicUrl } }, 'Diagram image attached to PYQ question');
+  return data.publicUrl;
+}
+
+function DiagramEnrichPanel({ savedRows }) {
+  const [open,    setOpen]    = useState(true);
+  const [images,  setImages]  = useState({});
+  const [loading, setLoading] = useState({});
+  const [errors,  setErrors]  = useState({});
+  const fileRefs = useRef({});
+
+  const diagramQs = savedRows.filter((r) => r.has_diagram);
+  if (!diagramQs.length) return null;
+
+  const handleFile = async (rowId, file) => {
+    if (!file || !file.type.startsWith('image/')) return;
+    setLoading((p) => ({ ...p, [rowId]: true }));
+    setErrors((p) => ({ ...p, [rowId]: null }));
+    try {
+      const url = await uploadImageForPYQ(file, rowId);
+      setImages((p) => ({ ...p, [rowId]: url }));
+    } catch (e) {
+      setErrors((p) => ({ ...p, [rowId]: e.message }));
+    } finally {
+      setLoading((p) => ({ ...p, [rowId]: false }));
+    }
+  };
+
+  const done = Object.keys(images).length;
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="bg-amber-900/10 border border-amber-700/30 rounded-2xl overflow-hidden">
+      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-3 px-5 py-4 text-left">
+        <ImagePlus size={16} className="text-amber-400 shrink-0" />
+        <div className="flex-1">
+          <p className="text-sm font-bold text-amber-300">Add Diagram Images</p>
+          <p className="text-[11px] text-amber-600 mt-0.5">
+            {diagramQs.length} question{diagramQs.length !== 1 ? 's' : ''} reference a figure · {done}/{diagramQs.length} added
+          </p>
+        </div>
+        {done === diagramQs.length ? <CheckCircle2 size={16} className="text-emerald-400" /> : (open ? <ChevronUp size={14} className="text-amber-600" /> : <ChevronDown size={14} className="text-amber-600" />)}
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
+            <div className="px-5 pb-5 space-y-3 border-t border-amber-700/20 pt-3">
+              {diagramQs.map((q) => {
+                const imageUrl = images[q.id];
+                const isLoading = loading[q.id];
+                return (
+                  <div key={q.id} className="bg-slate-900/60 rounded-xl p-3 space-y-2">
+                    <div className="flex items-start gap-2">
+                      {q.section && <span className="text-[10px] font-bold bg-amber-900/40 text-amber-400 px-1.5 py-0.5 rounded shrink-0">Sec {q.section}</span>}
+                      <p className="text-xs text-slate-300 leading-relaxed line-clamp-2">{q.question_text}</p>
+                    </div>
+                    {imageUrl ? (
+                      <div className="relative rounded-lg overflow-hidden border border-emerald-700/40">
+                        <img src={imageUrl} alt="Question diagram" className="w-full max-h-40 object-contain bg-white" />
+                        <button onClick={() => fileRefs.current[q.id]?.click()} className="absolute top-1.5 right-1.5 bg-black/60 hover:bg-black/80 text-white rounded-lg px-2 py-1 text-[10px] font-semibold">Replace</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => fileRefs.current[q.id]?.click()} disabled={isLoading}
+                        className="w-full flex items-center justify-center gap-2 border border-dashed border-amber-700/40 hover:border-amber-500 rounded-xl py-3 text-xs text-amber-500 hover:text-amber-300 transition-colors disabled:opacity-40">
+                        {isLoading ? <><Loader2 size={12} className="animate-spin" /> Uploading…</> : <><ImagePlus size={13} /> Click to upload diagram image</>}
+                      </button>
+                    )}
+                    {errors[q.id] && <p className="text-[10px] text-red-400">{errors[q.id]}</p>}
+                    <input ref={(el) => { fileRefs.current[q.id] = el; }} type="file" accept="image/*" className="hidden" onChange={(e) => handleFile(q.id, e.target.files?.[0])} />
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+/* ── Small UI helpers ─────────────────────────────────────────────── */
+
+function Chip({ label, active, onClick }) {
+  return (
+    <button onClick={onClick} className={[
+      'px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors',
+      active ? 'bg-primary-600 border-primary-600 text-white' : 'bg-slate-800 border-white/10 text-slate-400 hover:border-primary-500/50 hover:text-primary-300',
+    ].join(' ')}>
+      {label}
+    </button>
+  );
+}
+
+function StepDots({ steps, current }) {
+  const idx = steps.indexOf(current);
+  return (
+    <div className="flex items-center gap-2">
+      {steps.map((s, i) => (
+        <div key={s} className="flex items-center gap-2">
+          <div className={[
+            'h-7 w-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-colors',
+            i < idx ? 'bg-emerald-500 text-white' : i === idx ? 'bg-primary-600 text-white' : 'bg-slate-800 text-slate-500 border border-white/10',
+          ].join(' ')}>
+            {i < idx ? <Check size={13} /> : i + 1}
+          </div>
+          {i < steps.length - 1 && <div className={`h-0.5 w-6 sm:w-10 ${i < idx ? 'bg-emerald-500' : 'bg-white/10'}`} />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── Main page ──────────────────────────────────────────────────── */
+
+const WIZARD_STEPS = ['type', 'classify', 'input', 'results'];
+const STEP_LABELS  = { type: 'Content Type', classify: 'Class & Subject', input: 'Source', results: 'Process & Review' };
+
+export default function AdminContentIntake() {
+  const navigate = useNavigate();
+  const { currentUser } = useAuth();
+  const [callerUid, setCallerUid] = useState('');
+
+  // Same resolution as AdminSyllabus.jsx: prefer the sessionStorage admin record's
+  // uid, but always fall back to the Firebase uid itself rather than an empty
+  // string — an empty p_caller silently fails admin_upsert_study_note's
+  // authorization check, which is exactly what was dropping "Study Notes"
+  // uploads before they ever reached the study_notes table.
+  useEffect(() => {
+    if (!currentUser) return;
+    const rec = sessionStorage.getItem(`edu_admin_rec_${currentUser.uid}`);
+    try { setCallerUid(rec ? JSON.parse(rec).uid : currentUser.uid); }
+    catch { setCallerUid(currentUser.uid); }
+  }, [currentUser]);
+
+  const [step, setStep] = useState('type');
+
+  // Step 1
+  const [contentType, setContentType] = useState(''); // 'pyq' | 'notes'
+
+  // Step 2
+  const [examBase,   setExamBase]   = useState('CBSE');
+  const [classLevel, setClassLevel] = useState('10');
+  const [subject,    setSubject]    = useState('');
+  const [year,       setYear]       = useState('');
+  const [chapterHint, setChapterHint] = useState('');
+
+  const isBoard    = BOARDS.includes(examBase);
+  const dbExamType = isBoard ? getDbExamType(examBase, classLevel) : examBase;
+  const subjects   = getSubjectsForExam(dbExamType);
+  const isMixed    = subject === 'Mixed';
+
+  // Real syllabus chapters for this exam+subject — used to align AI-detected
+  // chapter names so they register correctly in Content Map.
+  const [syllabusChapters, setSyllabusChapters] = useState([]);
+  useEffect(() => {
+    if (!subject || step === 'type') { setSyllabusChapters([]); return; }
+    let cancelled = false;
+    getChapters(dbExamType, subject).then((chs) => { if (!cancelled) setSyllabusChapters(chs.map((c) => c.name)); });
+    return () => { cancelled = true; };
+  }, [dbExamType, subject, step]);
+
+  // Step 3 — items to process, regardless of source
+  const [inputTab,  setInputTab]  = useState('file'); // file | url | folder
+  const [items,     setItems]     = useState([]);     // [{ source, file?, url?, id?, name, path?, chapter, selected }]
+  const [urlInput,  setUrlInput]  = useState('');
+  const [folderUrl, setFolderUrl] = useState('');
+  const [driveToken, setDriveToken] = useState('');
+  const [scanningFolder, setScanningFolder] = useState(false);
+  const [folderErr, setFolderErr] = useState('');
+  const fileInputRef = useRef(null);
+
+  // Step 4
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchResults, setBatchResults] = useState([]); // [{ name, status, message, savedRows? }]
+  const [batchErr,     setBatchErr]     = useState('');
+
+  function changeExamBase(e) {
+    setExamBase(e);
+    const next = BOARDS.includes(e) ? getDbExamType(e, classLevel || '10') : e;
+    setSubject(getSubjectsForExam(next)[0] ?? 'General');
+  }
+  function changeClassLevel(cl) {
+    setClassLevel(cl);
+    setSubject(getSubjectsForExam(getDbExamType(examBase, cl))[0] ?? 'General');
+  }
+
+  function goBack() {
+    const i = WIZARD_STEPS.indexOf(step);
+    if (i > 0) setStep(WIZARD_STEPS[i - 1]);
+  }
+
+  function addFiles(fileList) {
+    const newItems = Array.from(fileList).map((file) => ({
+      source: 'file', file, name: file.name, chapter: cleanChapterGuess(file.name), selected: true,
+    }));
+    setItems((its) => [...its, ...newItems]);
+  }
+  function removeItem(i) {
+    setItems((its) => its.filter((_, idx) => idx !== i));
+  }
+  function toggleItem(i) {
+    setItems((its) => its.map((it, idx) => idx === i ? { ...it, selected: !it.selected } : it));
+  }
+  function updateItemChapter(i, val) {
+    setItems((its) => its.map((it, idx) => idx === i ? { ...it, chapter: val } : it));
+  }
+
+  function addUrlItem() {
+    const raw = urlInput.trim();
+    if (!raw) return;
+    const name = raw.split('/').filter(Boolean).pop() || 'Linked PDF';
+    setItems((its) => [...its, { source: 'url', url: raw, name, chapter: cleanChapterGuess(name), selected: true }]);
+    setUrlInput('');
+  }
+
+  async function handleScanFolder() {
+    setFolderErr('');
+    if (!folderUrl.trim()) { setFolderErr('Paste a Drive folder link first.'); return; }
+    setScanningFolder(true);
+    try {
+      const { files, token } = await listDriveFolderPdfs(folderUrl.trim());
+      setDriveToken(token);
+      setItems((its) => [
+        ...its,
+        ...files.map((f) => ({ source: 'drive', id: f.id, name: f.name, path: f.path, chapter: cleanChapterGuess(f.name), selected: true })),
+      ]);
+    } catch (e) {
+      setFolderErr(e.message);
+    } finally {
+      setScanningFolder(false);
+    }
+  }
+
+  async function getBytes(item) {
+    if (item.source === 'file') return item.file.arrayBuffer();
+    if (item.source === 'url')  return fetchPdfBuffer(resolveFetchUrl(item.url));
+    return fetchDriveFileBytes(item.id, driveToken);
+  }
+
+  async function handleProcess() {
+    const selected = items.filter((it) => it.selected);
+    if (!selected.length) return;
+    setStep('results');
+    setBatchRunning(true);
+    setBatchErr('');
+    setBatchResults(selected.map((it) => ({ name: it.name, status: 'pending', message: 'Waiting…' })));
+
+    for (let i = 0; i < selected.length; i++) {
+      const it = selected[i];
+      const setStepMsg = (patch) => setBatchResults((rs) => rs.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+      setStepMsg({ status: 'processing', message: 'Fetching…' });
+      try {
+        const buf = await getBytes(it);
+        setStepMsg({ message: 'Extracting text…' });
+        const rawText = await extractPdfText(buf);
+        if (!rawText || rawText.trim().length < 100) throw new Error('No extractable text — scanned/image-only PDF?');
+
+        if (contentType === 'pyq') {
+          const { questions } = await runPYQExtraction({
+            rawText, examType: dbExamType, subject, year,
+            onProgress: (msg) => setStepMsg({ message: msg }),
+          });
+          setStepMsg({ message: `Saving ${questions.length} questions…` });
+          const rows = await savePYQRows({
+            questions, examType: dbExamType, subject, year, source: `${it.source}:${it.name}`, isMixed, syllabusChapters,
+          });
+          setStepMsg({ status: 'done', message: `${rows.length} questions saved`, savedRows: rows });
+        } else {
+          const { chunks, topic } = await runNotesExtraction({
+            rawText, examType: dbExamType, subject,
+            onProgress: (msg) => setStepMsg({ message: msg }),
+          });
+          setStepMsg({ message: `Saving ${chunks.length} chunks…` });
+          const { kbCount, chapterName } = await saveNoteChunks({
+            chunks, topic, examType: dbExamType, subject, chapter: it.chapter || chapterHint,
+            source: `${it.source}:${it.name}`, callerUid, syllabusChapters,
+          });
+          setStepMsg({ status: 'done', message: `${kbCount} chunks saved · "${chapterName}"` });
+        }
+        // Deselect on success so a stray re-click of Process can't duplicate-save.
+        setItems((its) => its.map((x) => (x.source === it.source && x.name === it.name && x.id === it.id) ? { ...x, selected: false } : x));
+      } catch (e) {
+        setStepMsg({ status: 'error', message: e.message });
+      }
+    }
+    setBatchRunning(false);
+  }
+
+  const doneCount    = batchResults.filter((r) => r.status === 'done').length;
+  const errorCount   = batchResults.filter((r) => r.status === 'error').length;
+  const allSavedRows = batchResults.flatMap((r) => r.savedRows ?? []);
+  const canProceedInput = items.some((it) => it.selected);
+
+  return (
+    <div className="max-w-3xl space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary-500 to-violet-500 flex items-center justify-center shrink-0">
+          <Inbox size={18} className="text-white" />
+        </div>
+        <div className="flex-1">
+          <h1 className="text-xl font-bold text-white">Content Intake</h1>
+          <p className="text-sm text-slate-400">Upload PYQs or study material from a file, a URL, or a whole Drive folder — AI reads, tags, and saves it.</p>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto pb-1">
+        <StepDots steps={WIZARD_STEPS} current={step} />
+      </div>
+
+      {/* ── Step 1: content type ─────────────────────────────────── */}
+      {step === 'type' && (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {[
+            { id: 'pyq', icon: <ClipboardList size={22} className="text-violet-400" />, title: 'Question Paper / PYQ', desc: 'AI extracts each question with marks, section, type, and answer key. Diagram questions get flagged for a follow-up image upload.', ring: 'border-violet-500 bg-violet-900/20' },
+            { id: 'notes', icon: <BookOpen size={22} className="text-emerald-400" />, title: 'Study Notes', desc: 'Textbook chapters, teacher notes, or reference material. AI chunks it for the AI tutor\'s knowledge base and saves a curated note others can browse — this also feeds Content Map.', ring: 'border-emerald-500 bg-emerald-900/20' },
+          ].map(({ id, icon, title, desc, ring }) => (
+            <button key={id} onClick={() => { setContentType(id); setStep('classify'); }}
+              className={`text-left p-5 rounded-2xl border-2 transition-all space-y-3 ${contentType === id ? ring : 'bg-slate-900/60 border-white/8 hover:border-white/20'}`}>
+              <div className="flex items-center gap-3">{icon}<p className="font-bold text-white text-sm">{title}</p></div>
+              <p className="text-xs text-slate-400 leading-relaxed">{desc}</p>
+            </button>
+          ))}
+        </motion.div>
+      )}
+
+      {/* ── Step 2: classify ─────────────────────────────────────── */}
+      {step === 'classify' && (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+          <div className="bg-slate-900/60 border border-white/8 rounded-2xl p-5 space-y-5">
+            <p className="text-sm font-bold text-slate-200">{contentType === 'pyq' ? 'Which exam is this question paper for?' : 'Which subject is this material for?'}</p>
+
+            <div className="space-y-3">
+              {EXAM_GROUPS.map((g) => (
+                <div key={g.label}>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase mb-1.5">{g.label}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {g.items.map((e) => <Chip key={e} label={e} active={examBase === e} onClick={() => changeExamBase(e)} />)}
+                  </div>
+                </div>
+              ))}
+              {isBoard && (
+                <div className="bg-slate-800/60 rounded-xl px-3 py-2.5 space-y-1.5 border border-white/5">
+                  <p className="text-[10px] text-slate-500 font-bold uppercase">Class</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {CLASS_LEVELS.map((cl) => <Chip key={cl} label={`Class ${cl}`} active={classLevel === cl} onClick={() => changeClassLevel(cl)} />)}
+                  </div>
+                  <p className="text-[10px] text-primary-400">Will be saved as <span className="font-bold">{dbExamType}</span></p>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Subject</label>
+              <div className="flex flex-wrap gap-1.5">
+                {subjects.map((s) => <Chip key={s} label={s} active={subject === s} onClick={() => setSubject(s)} />)}
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              {contentType === 'pyq' && (
+                <div className="flex-1">
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide block mb-1.5">Year (optional)</label>
+                  <input type="number" placeholder="e.g. 2023" value={year} onChange={(e) => setYear(e.target.value)}
+                    className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500" />
+                </div>
+              )}
+              <div className="flex-1">
+                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide block mb-1.5">Chapter hint (optional)</label>
+                <input type="text" placeholder="AI detects this automatically — only needed as a fallback" value={chapterHint} onChange={(e) => setChapterHint(e.target.value)}
+                  className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500" />
+              </div>
+            </div>
+
+            {isMixed && contentType === 'pyq' && (
+              <div className="flex items-start gap-2 bg-amber-900/20 border border-amber-700/20 rounded-xl p-3">
+                <Info size={13} className="text-amber-400 mt-0.5 shrink-0" />
+                <p className="text-xs text-amber-300">AI will identify the subject (Physics/Chemistry/Biology) for each question individually — works best for full NEET papers.</p>
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-3">
+            <button onClick={goBack} className="px-4 py-2.5 rounded-xl border border-white/10 text-slate-400 hover:text-white hover:bg-white/5 text-sm font-semibold flex items-center gap-1.5 transition-colors">
+              <ChevronLeft size={14} /> Back
+            </button>
+            <button onClick={() => setStep('input')} disabled={!subject}
+              className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white text-sm font-bold transition-colors">
+              Continue
+            </button>
+          </div>
+        </motion.div>
+      )}
+
+      {/* ── Step 3: input method ─────────────────────────────────── */}
+      {step === 'input' && (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+          <div className="bg-slate-900/60 border border-white/8 rounded-2xl p-5 space-y-4">
+            <div className="flex gap-1 p-1 bg-slate-800 rounded-xl w-fit">
+              {[
+                { key: 'file',   icon: Upload,       label: 'Upload File(s)'   },
+                { key: 'url',    icon: Link2,        label: 'URL / Drive Link' },
+                { key: 'folder', icon: FolderSearch, label: 'Drive Folder'     },
+              ].map(({ key, icon: Icon, label }) => (
+                <button key={key} onClick={() => setInputTab(key)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${inputTab === key ? 'bg-primary-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}>
+                  <Icon size={14} /> {label}
+                </button>
+              ))}
+            </div>
+
+            {inputTab === 'file' && (
+              <div
+                onDrop={(e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }}
+                onDragOver={(e) => e.preventDefault()}
+                onClick={() => fileInputRef.current?.click()}
+                className="border-2 border-dashed border-slate-700 hover:border-primary-500 hover:bg-slate-900/40 rounded-2xl p-8 text-center cursor-pointer transition-colors"
+              >
+                <Upload size={22} className="mx-auto text-slate-500 mb-2" />
+                <p className="text-sm font-medium text-slate-300">Drop PDFs here or click to select — multiple allowed</p>
+                <input ref={fileInputRef} type="file" multiple accept=".pdf" className="hidden" onChange={(e) => e.target.files.length && addFiles(e.target.files)} />
+              </div>
+            )}
+
+            {inputTab === 'url' && (
+              <div className="flex gap-2">
+                <input type="url" placeholder="https://drive.google.com/file/d/…  or any PDF URL" value={urlInput}
+                  onChange={(e) => setUrlInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addUrlItem()}
+                  className="flex-1 bg-slate-800 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500" />
+                <button onClick={addUrlItem} disabled={!urlInput.trim()} className="shrink-0 px-4 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm font-semibold transition-colors">Add Link</button>
+              </div>
+            )}
+
+            {inputTab === 'folder' && (
+              <div className="space-y-3">
+                <div className="flex items-start gap-2 bg-blue-900/20 border border-blue-700/20 rounded-xl p-3">
+                  <Info size={13} className="text-blue-400 mt-0.5 shrink-0" />
+                  <p className="text-xs text-blue-300 leading-relaxed">
+                    Point this at <strong>one subject's folder</strong> — every file found uses the exam/subject/class picked in the previous step. Scanning prompts a Google sign-in for read-only Drive access, and works for any folder your account can already see, including ones shared just with you.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <input type="url" placeholder="https://drive.google.com/drive/folders/…" value={folderUrl} onChange={(e) => setFolderUrl(e.target.value)}
+                    className="flex-1 bg-slate-800 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500" />
+                  <button onClick={handleScanFolder} disabled={scanningFolder || !folderUrl.trim()} className="shrink-0 px-4 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-sm font-semibold flex items-center gap-2 transition-colors">
+                    {scanningFolder ? <Loader2 size={14} className="animate-spin" /> : <FolderSearch size={14} />} {scanningFolder ? 'Scanning…' : 'Scan Folder'}
+                  </button>
+                </div>
+                {folderErr && <p className="text-xs text-red-300 bg-red-900/20 border border-red-700/20 rounded-xl px-3 py-2">{folderErr}</p>}
+              </div>
+            )}
+          </div>
+
+          {items.length > 0 && (
+            <div className="bg-slate-900/60 border border-white/8 rounded-2xl p-5 space-y-2">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{items.filter((i) => i.selected).length} file(s) queued</p>
+              <div className="border border-white/5 rounded-xl divide-y divide-white/5 max-h-72 overflow-y-auto">
+                {items.map((it, i) => (
+                  <div key={`${it.source}-${it.name}-${i}`} className="flex items-center gap-3 px-3 py-2.5">
+                    <button onClick={() => toggleItem(i)} className={`h-5 w-5 rounded-md border flex items-center justify-center shrink-0 ${it.selected ? 'bg-primary-600 border-primary-600' : 'border-white/20'}`}>
+                      {it.selected && <Check size={12} className="text-white" />}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <input value={it.chapter} onChange={(e) => updateItemChapter(i, e.target.value)}
+                        className="w-full text-sm font-medium text-slate-200 bg-transparent border-b border-transparent hover:border-white/10 focus:border-primary-500 focus:outline-none" />
+                      <p className="text-[10px] text-slate-500 truncate">{it.path ? `${it.path} · ` : ''}{it.name}</p>
+                    </div>
+                    <button onClick={() => removeItem(i)} className="p-1 rounded-lg text-slate-600 hover:text-red-400 shrink-0"><X size={13} /></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-3">
+            <button onClick={goBack} className="px-4 py-2.5 rounded-xl border border-white/10 text-slate-400 hover:text-white hover:bg-white/5 text-sm font-semibold flex items-center gap-1.5 transition-colors">
+              <ChevronLeft size={14} /> Back
+            </button>
+            <button onClick={handleProcess} disabled={!canProceedInput}
+              className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2 transition-colors">
+              <Inbox size={15} /> Process {items.filter((i) => i.selected).length || ''} File{items.filter((i) => i.selected).length === 1 ? '' : 's'}
+            </button>
+          </div>
+        </motion.div>
+      )}
+
+      {/* ── Step 4: process + results ────────────────────────────── */}
+      {step === 'results' && (
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+          <div className="bg-slate-900/60 border border-white/8 rounded-2xl divide-y divide-white/5 overflow-hidden">
+            {batchResults.map((r, i) => (
+              <div key={i} className="flex items-center gap-3 px-4 py-3">
+                {r.status === 'pending' && <Circle size={14} className="text-slate-600 shrink-0" />}
+                {r.status === 'processing' && <Loader2 size={14} className="animate-spin text-primary-400 shrink-0" />}
+                {r.status === 'done' && <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />}
+                {r.status === 'error' && <AlertTriangle size={14} className="text-red-400 shrink-0" />}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-slate-200 truncate">{r.name}</p>
+                  <p className={`text-xs mt-0.5 truncate ${r.status === 'error' ? 'text-red-400' : 'text-slate-500'}`}>{r.message}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {!batchRunning && batchResults.length > 0 && (
+            <div className={`flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold ${errorCount > 0 ? 'bg-amber-900/20 border border-amber-700/20 text-amber-300' : 'bg-emerald-900/20 border border-emerald-700/20 text-emerald-300'}`}>
+              {errorCount > 0 ? <AlertTriangle size={16} className="shrink-0" /> : <CheckCircle2 size={16} className="shrink-0" />}
+              {doneCount === 0 ? `All ${errorCount} file${errorCount === 1 ? '' : 's'} failed — see errors above.`
+                : errorCount > 0 ? `Batch complete — ${doneCount} saved, ${errorCount} failed.`
+                : `Batch complete — all ${doneCount} file${doneCount === 1 ? '' : 's'} saved.`}
+            </div>
+          )}
+
+          {batchErr && <p className="text-sm text-red-300 bg-red-900/20 border border-red-700/20 rounded-xl px-4 py-3">{batchErr}</p>}
+
+          {!batchRunning && contentType === 'pyq' && allSavedRows.length > 0 && (
+            <DiagramEnrichPanel savedRows={allSavedRows} />
+          )}
+
+          {!batchRunning && batchResults.length > 0 && (
+            <div className="flex flex-col sm:flex-row gap-3">
+              {doneCount > 0 && (
+                <button onClick={() => navigate('/admin/academic?tab=map')}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-primary-700/40 bg-primary-900/20 hover:bg-primary-900/40 text-primary-300 text-sm font-bold transition-colors">
+                  <Network size={15} /> View in Content Map <ArrowRight size={13} />
+                </button>
+              )}
+              <button onClick={() => { setStep('type'); setContentType(''); setItems([]); setBatchResults([]); }}
+                className="flex-1 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white text-sm font-bold transition-colors">
+                Start New Upload
+              </button>
+            </div>
+          )}
+        </motion.div>
+      )}
+    </div>
+  );
+}

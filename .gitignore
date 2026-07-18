@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+.claude/
+.qodo/
+
+# Large binaries not obviously source — excluded from the first commit so they
+# don't bloat repo history permanently; remove these lines if you want them tracked.
+dist.zip
+IMG_4429.MOV
+EWE logo only.zip
+data.txt
+supabase/.temp/

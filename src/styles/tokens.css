@@ -1,0 +1,142 @@
+/* ============================================================
+   EWE Design Tokens — single source of truth
+   Import this file ONCE in index.css before @tailwind directives.
+   All components must consume these variables or their Tailwind
+   aliases; raw hex values and one-off shades are banned.
+   ============================================================ */
+
+:root {
+  /* ── Brand: Primary (indigo) ─────────────────────────────── */
+  /* ONE primary action color. Hover = --clr-primary-700.       */
+  --clr-primary-50:   #EEF2FF;
+  --clr-primary-100:  #E0E7FF;
+  --clr-primary-200:  #C7D2FE;
+  --clr-primary-300:  #A5B4FC;
+  --clr-primary-400:  #818CF8;
+  --clr-primary-500:  #6366F1;
+  --clr-primary-600:  #4F46E5;   /* ← THE action color */
+  --clr-primary-700:  #4338CA;   /* ← hover */
+  --clr-primary-800:  #3730A3;
+  --clr-primary-900:  #312E81;
+
+  /* ── Semantic status colors ──────────────────────────────── */
+  --clr-success:        #10B981;   /* emerald-500 */
+  --clr-success-light:  #ECFDF5;   /* emerald-50  */
+  --clr-success-dark:   #059669;   /* emerald-600 */
+  --clr-success-text:   #065F46;   /* emerald-900 */
+
+  --clr-warning:        #F59E0B;   /* amber-500 */
+  --clr-warning-light:  #FFFBEB;   /* amber-50  */
+  --clr-warning-dark:   #D97706;   /* amber-600 */
+  --clr-warning-text:   #78350F;   /* amber-900 */
+
+  --clr-danger:         #EF4444;   /* red-500 */
+  --clr-danger-light:   #FEF2F2;   /* red-50  */
+  --clr-danger-dark:    #DC2626;   /* red-600 */
+  --clr-danger-text:    #7F1D1D;   /* red-900 */
+
+  /* Review (violet) — ONLY for exam palette marked-for-review state */
+  --clr-review:         #8B5CF6;
+  --clr-review-done:    #7C3AED;
+
+  /* ── Neutral scale (slate-based) ─────────────────────────── */
+  --clr-neutral-0:    #FFFFFF;
+  --clr-neutral-50:   #F8FAFC;
+  --clr-neutral-100:  #F1F5F9;
+  --clr-neutral-200:  #E2E8F0;
+  --clr-neutral-300:  #CBD5E1;
+  --clr-neutral-400:  #94A3B8;
+  --clr-neutral-500:  #64748B;
+  --clr-neutral-600:  #475569;
+  --clr-neutral-700:  #334155;
+  --clr-neutral-800:  #1E293B;
+  --clr-neutral-900:  #0F172A;
+
+  /* ── Radius — exactly two ────────────────────────────────── */
+  --radius-card:    1rem;       /* 16px  rounded-2xl — surfaces, modals, panels */
+  --radius-control: 0.75rem;    /* 12px  rounded-xl  — buttons, inputs, chips   */
+
+  /* ── Shadow — exactly two ────────────────────────────────── */
+  --shadow-card:  0 1px 3px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.06);
+  --shadow-float: 0 8px 32px rgba(79,70,229,0.20);
+
+  /* ── Type scale ──────────────────────────────────────────── */
+  /* Sizes only — weight set per-element in CSS classes below. */
+  --text-display: 1.875rem;   /* 30px — hero / page hero */
+  --text-h1:      1.5rem;     /* 24px */
+  --text-h2:      1.25rem;    /* 20px */
+  --text-h3:      1rem;       /* 16px */
+  --text-body:    0.875rem;   /* 14px */
+  --text-caption: 0.75rem;    /* 12px */
+  --text-micro:   0.6875rem;  /* 11px — badge labels, table captions */
+
+  /* ── Spacing rhythm (4px base, 8-step) ──────────────────── */
+  --sp-1:  0.25rem;   /*  4px */
+  --sp-2:  0.5rem;    /*  8px */
+  --sp-3:  0.75rem;   /* 12px */
+  --sp-4:  1rem;      /* 16px */
+  --sp-5:  1.25rem;   /* 20px */
+  --sp-6:  1.5rem;    /* 24px */
+  --sp-8:  2rem;      /* 32px */
+  --sp-10: 2.5rem;    /* 40px */
+  --sp-12: 3rem;      /* 48px */
+
+  /* ── Focus ring ──────────────────────────────────────────── */
+  /* Apply as box-shadow on :focus-visible for all interactive. */
+  --focus-ring: 0 0 0 3px rgba(99,102,241,0.40);
+
+  /* ── Touch target floor ──────────────────────────────────── */
+  --touch-min: 44px;
+
+  /* ── Portal-specific overrides ───────────────────────────── */
+  /* Student portal: slightly friendlier, warmer background.     */
+  --portal-bg:       var(--clr-neutral-50);
+  --portal-surface:  var(--clr-neutral-0);
+  --portal-border:   var(--clr-neutral-100);
+}
+
+/* ── Admin portal context ─────────────────────────────────── */
+/* Applied via a wrapper class (.portal-admin) in AdminLayout. */
+.portal-admin {
+  --portal-bg:      #020617;   /* slate-950 */
+  --portal-surface: #0F172A;   /* slate-900 */
+  --portal-border:  rgba(255,255,255,0.06);
+  --text-body:      0.8125rem; /* 13px — denser admin type */
+  --text-caption:   0.6875rem; /* 11px */
+}
+
+/* ── Coaching portal context ──────────────────────────────── */
+/* Applied via .portal-coaching. Brand color is injected via   */
+/* inline style --brand from CoachingPortalLayout.             */
+.portal-coaching {
+  --portal-bg:      var(--clr-neutral-50);
+  --portal-surface: var(--clr-neutral-0);
+  --portal-border:  var(--clr-neutral-200);
+}
+
+/* ── Semantic typography utilities ────────────────────────── */
+/* Used directly in JSX: className="t-display", "t-h1", etc.  */
+.t-display { font-size: var(--text-display); font-weight: 800; line-height: 1.15; letter-spacing: -0.02em; }
+.t-h1      { font-size: var(--text-h1);      font-weight: 700; line-height: 1.25; letter-spacing: -0.01em; }
+.t-h2      { font-size: var(--text-h2);      font-weight: 700; line-height: 1.3; }
+.t-h3      { font-size: var(--text-h3);      font-weight: 600; line-height: 1.4; }
+.t-body    { font-size: var(--text-body);    font-weight: 400; line-height: 1.6; }
+.t-caption { font-size: var(--text-caption); font-weight: 500; line-height: 1.4; }
+.t-micro   { font-size: var(--text-micro);   font-weight: 600; line-height: 1.2; letter-spacing: 0.02em; }
+
+/* ── Motion restraint ─────────────────────────────────────── */
+/* Wrap entrance animations with this; they are suppressed for */
+/* users who prefer reduced motion.                            */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Global focus ring ────────────────────────────────────── */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}

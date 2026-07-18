@@ -1,0 +1,314 @@
+import { useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Upload, X, Plus, Images } from 'lucide-react';
+import { useIsDesktop } from '../../hooks/useMediaQuery';
+import { useAuth } from '../../context/AuthContext';
+import ImageViewer from './ImageViewer';
+import ChatInterface from './ChatInterface';
+import { VedaAvatarLg, VedaChip } from '../ui/VedaAvatar';
+
+function getSubjectChips(userProfile) {
+  const exam = userProfile?.target_exam || 'NEET';
+  const isBoard = /^(CBSE|ICSE|Class \d+|State Board)/.test(exam);
+  const isJEE   = exam === 'JEE_MAIN' || exam === 'JEE_ADVANCED';
+  const isBoth  = exam === 'BOTH';
+
+  if (isBoard) {
+    return [
+      { emoji: '📐', label: 'Math & Science',  desc: 'Physics, Chemistry, Maths numericals' },
+      { emoji: '📚', label: 'English',          desc: 'Essays, comprehension, grammar' },
+      { emoji: '🌍', label: 'Social Studies',   desc: 'History, Geography, Civics, Economics' },
+      { emoji: '📝', label: 'All subjects',     desc: 'Any subject from your board curriculum' },
+    ];
+  }
+  if (isJEE) {
+    return [
+      { emoji: '📐', label: 'Physics',     desc: 'Numericals, formula errors, unit mistakes' },
+      { emoji: '⚗️', label: 'Chemistry',   desc: 'Mechanisms, balancing, IUPAC naming' },
+      { emoji: '📊', label: 'Mathematics', desc: 'Calculus, algebra, coordinate geometry' },
+    ];
+  }
+  if (isBoth) {
+    return [
+      { emoji: '📐', label: 'Physics',     desc: 'Numericals, formula errors, unit mistakes' },
+      { emoji: '⚗️', label: 'Chemistry',   desc: 'Mechanisms, balancing, IUPAC naming' },
+      { emoji: '🧬', label: 'Biology',     desc: 'Diagrams, definitions, concept gaps' },
+      { emoji: '📊', label: 'Mathematics', desc: 'Calculus, algebra, coordinate geometry' },
+    ];
+  }
+  return [
+    { emoji: '📐', label: 'Physics',   desc: 'Numericals, formula errors, unit mistakes' },
+    { emoji: '⚗️', label: 'Chemistry', desc: 'Mechanisms, balancing, IUPAC naming' },
+    { emoji: '🧬', label: 'Biology',   desc: 'Diagrams, definitions, concept gaps' },
+  ];
+}
+
+function DropZone({ onFiles, hasImages }) {
+  const inputRef        = useRef(null);
+  const [drag, setDrag] = useState(false);
+
+  const handleFiles = (fileList) => {
+    const imgs = Array.from(fileList).filter((f) => f.type.startsWith('image/'));
+    if (imgs.length) onFiles(imgs);
+  };
+
+  return (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setDrag(true);  }}
+      onDragLeave={() => setDrag(false)}
+      onDrop={(e)  => { e.preventDefault(); setDrag(false); handleFiles(e.dataTransfer.files); }}
+      onClick={() => inputRef.current?.click()}
+      className={[
+        'border-2 border-dashed rounded-2xl transition-all duration-200 cursor-pointer',
+        'flex flex-col items-center justify-center gap-3 p-8 text-center',
+        drag
+          ? 'border-primary-400 bg-primary-50'
+          : 'border-slate-300 bg-slate-50 hover:border-primary-300 hover:bg-primary-50/40',
+      ].join(' ')}
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        capture="environment"
+        className="hidden"
+        onChange={(e) => handleFiles(e.target.files)}
+      />
+      <div className={`h-14 w-14 rounded-2xl flex items-center justify-center transition-colors ${drag ? 'bg-primary-100' : 'bg-slate-200'}`}>
+        {hasImages ? <Plus size={24} className={drag ? 'text-primary-600' : 'text-slate-500'} /> : <Upload size={24} className={drag ? 'text-primary-600' : 'text-slate-500'} />}
+      </div>
+      <div>
+        <p className="font-semibold text-slate-700">
+          {hasImages ? 'Add more pages' : 'Drop your answer sheets here'}
+        </p>
+        <p className="text-sm text-slate-400 mt-0.5">
+          {hasImages ? 'or tap to select · multiple pages supported' : 'or tap to select · camera supported · multiple pages'}
+        </p>
+      </div>
+      {!hasImages && (
+        <div className="flex gap-2">
+          {['PNG', 'JPG', 'HEIC'].map((t) => (
+            <span key={t} className="badge bg-white border border-slate-200 text-slate-400">{t}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Thumbnail strip for multiple images */
+function ImageStrip({ imageUrls, onRemove, onPreview }) {
+  return (
+    <div className="flex gap-2 flex-wrap">
+      {imageUrls.map((url, i) => (
+        <div key={i} className="relative group">
+          <img
+            src={url}
+            alt={`Page ${i + 1}`}
+            onClick={() => onPreview(i)}
+            className="h-20 w-16 object-cover rounded-xl border-2 border-white cursor-pointer hover:border-primary-400 transition-colors"
+          />
+          <button
+            onClick={(e) => { e.stopPropagation(); onRemove(i); }}
+            className="absolute -top-1.5 -right-1.5 h-5 w-5 bg-red-500 rounded-full flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            <X size={10} />
+          </button>
+          <span className="absolute bottom-1 left-0 right-0 text-center text-[9px] font-bold text-white bg-black/50 rounded-b-xl py-0.5">
+            {i + 1}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* Veda intro card shown before any image is uploaded */
+function VedaIntro({ userProfile }) {
+  const chips = getSubjectChips(userProfile);
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3 p-4 bg-primary-50 rounded-2xl border border-primary-100">
+        <div className="shrink-0">
+          <VedaAvatarLg />
+        </div>
+        <div>
+          <p className="font-semibold text-primary-900">Meet EWE</p>
+          <p className="text-sm text-primary-700 mt-0.5 leading-relaxed">
+            Upload your answer sheets — EWE will evaluate every step and find exactly where things went wrong. Multiple pages supported.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">EWE evaluates</p>
+        {chips.map(({ emoji, label, desc }) => (
+          <div key={label} className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50">
+            <span className="text-lg">{emoji}</span>
+            <div>
+              <p className="text-sm font-medium text-slate-700">{label}</p>
+              <p className="text-xs text-slate-400">{desc}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default function DoubtStudio() {
+  const isDesktop = useIsDesktop();
+  const { userProfile } = useAuth();
+  const [imageFiles, setImageFiles] = useState([]);
+  const [imageUrls,  setImageUrls]  = useState([]);
+  const [previewIdx, setPreviewIdx] = useState(null);
+
+  const addFiles = (files) => {
+    const newUrls = files.map((f) => URL.createObjectURL(f));
+    setImageFiles((prev) => [...prev, ...files]);
+    setImageUrls((prev)  => [...prev, ...newUrls]);
+  };
+
+  const removeImage = (idx) => {
+    URL.revokeObjectURL(imageUrls[idx]);
+    setImageFiles((prev) => prev.filter((_, i) => i !== idx));
+    setImageUrls((prev)  => prev.filter((_, i) => i !== idx));
+    if (previewIdx === idx) setPreviewIdx(null);
+  };
+
+  const clearAll = () => {
+    imageUrls.forEach((u) => URL.revokeObjectURL(u));
+    setImageFiles([]);
+    setImageUrls([]);
+    setPreviewIdx(null);
+  };
+
+  const hasImages = imageFiles.length > 0;
+
+  /* ── Desktop: side-by-side ──────────────────────────── */
+  if (isDesktop) {
+    return (
+      <div className="flex gap-0 h-[calc(100vh-128px)] bg-white rounded-2xl shadow-card border border-slate-100 overflow-hidden">
+
+        {/* Left — document viewer */}
+        <div className="w-[45%] border-r border-slate-100 flex flex-col">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <p className="font-semibold text-slate-700 text-sm">Answer Sheets</p>
+              {hasImages && (
+                <span className="text-[10px] bg-primary-100 text-primary-700 font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <Images size={10} /> {imageFiles.length} page{imageFiles.length > 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+            {hasImages && (
+              <button onClick={clearAll} className="h-7 w-7 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-400" title="Remove all">
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <div className="flex-1 overflow-y-auto p-5 space-y-4">
+            <AnimatePresence mode="wait">
+              {hasImages ? (
+                <motion.div key="viewer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+                  {/* Thumbnail strip */}
+                  <ImageStrip
+                    imageUrls={imageUrls}
+                    onRemove={removeImage}
+                    onPreview={setPreviewIdx}
+                  />
+                  {/* Main preview */}
+                  <ImageViewer src={imageUrls[previewIdx ?? 0]} />
+                  {/* Add more */}
+                  <DropZone onFiles={addFiles} hasImages />
+                </motion.div>
+              ) : (
+                <motion.div key="intro" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+                  <DropZone onFiles={addFiles} hasImages={false} />
+                  <VedaIntro userProfile={userProfile} />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+
+        {/* Right — Veda chat */}
+        <div className="flex-1 flex flex-col">
+          <div className="px-5 py-3.5 border-b border-slate-100">
+            <VedaChip />
+          </div>
+          <div className="flex-1 overflow-hidden">
+            <ChatInterface imageFiles={imageFiles} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── Mobile: stacked ─────────────────────────────────── */
+  return (
+    <div className="flex flex-col h-[calc(100vh-120px)]">
+      <AnimatePresence>
+        {hasImages ? (
+          <motion.div
+            className="shrink-0 border-b border-slate-100 bg-white"
+            initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }}
+            style={{ overflow: 'hidden' }}
+          >
+            <div className="p-3 space-y-2">
+              {/* Thumbnail strip */}
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {imageUrls.map((url, i) => (
+                  <div key={i} className="relative shrink-0 group">
+                    <img
+                      src={url}
+                      alt={`Page ${i + 1}`}
+                      onClick={() => setPreviewIdx(previewIdx === i ? null : i)}
+                      className={`h-16 w-12 object-cover rounded-lg cursor-pointer border-2 transition-colors ${previewIdx === i ? 'border-primary-500' : 'border-white'}`}
+                    />
+                    <button
+                      onClick={() => removeImage(i)}
+                      className="absolute -top-1 -right-1 h-4 w-4 bg-red-500 rounded-full flex items-center justify-center text-white"
+                    >
+                      <X size={8} />
+                    </button>
+                  </div>
+                ))}
+                {/* Add more button */}
+                <button
+                  onClick={() => {
+                    const inp = document.createElement('input');
+                    inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
+                    inp.onchange = (e) => addFiles(Array.from(e.target.files || []));
+                    inp.click();
+                  }}
+                  className="h-16 w-12 rounded-lg border-2 border-dashed border-slate-300 flex items-center justify-center shrink-0 text-slate-400 hover:border-primary-400 transition-colors"
+                >
+                  <Plus size={16} />
+                </button>
+              </div>
+              {/* Preview of selected */}
+              {previewIdx !== null && (
+                <div className="relative h-40 rounded-xl overflow-hidden bg-black">
+                  <img src={imageUrls[previewIdx]} alt="Preview" className="h-full w-full object-contain" />
+                  <button onClick={() => setPreviewIdx(null)} className="absolute top-2 right-2 h-6 w-6 bg-black/60 rounded-full flex items-center justify-center text-white">
+                    <X size={11} />
+                  </button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div className="shrink-0 p-4 bg-white border-b border-slate-100 space-y-3" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+            <DropZone onFiles={addFiles} hasImages={false} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="flex-1 bg-white overflow-hidden">
+        <ChatInterface imageFiles={imageFiles} />
+      </div>
+    </div>
+  );
+}

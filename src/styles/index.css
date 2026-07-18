@@ -1,0 +1,128 @@
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
+    /* This app is light-themed only — without this, a browser/OS with forced
+       dark mode (common on Android) auto-inverts text and native form controls
+       to their own dark-mode colors, producing invisible text on pages whose
+       CSS is correctly light but never says so explicitly. */
+    color-scheme: light;
+  }
+
+  body {
+    @apply font-sans text-slate-900 bg-slate-50 antialiased;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  :root {
+    --sidebar-w: 250px;
+    --header-h: 64px;
+    --bottom-nav-h: 65px;
+  }
+}
+
+@layer components {
+  /* --- Sidebar active link --- */
+  .nav-link {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400
+           transition-all duration-150 text-sm font-medium;
+  }
+  .nav-link:hover  { @apply bg-white/10 text-white; }
+  .nav-link.active { @apply bg-gradient-to-r from-primary-600 to-primary-500 text-white shadow-float; }
+
+  /* --- Card surface --- */
+  .card {
+    @apply bg-white rounded-2xl shadow-card border border-slate-100 p-5;
+  }
+
+  /* --- Interactive card — for clickable cards only (quick actions, list
+     rows, StatCard onClick). Not applied to .card by default since plenty
+     of cards are static display surfaces with nothing to click. --- */
+  .card-interactive {
+    @apply transition-all duration-200 ease-out;
+  }
+  .card-interactive:hover {
+    @apply -translate-y-0.5 shadow-lg;
+  }
+  .card-interactive:active {
+    @apply translate-y-0 shadow-card;
+  }
+
+  /* --- Pill badge --- */
+  .badge {
+    @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full
+           text-xs font-semibold;
+  }
+
+  /* --- Skeleton shimmer --- */
+  .skeleton {
+    @apply bg-slate-200 rounded-lg overflow-hidden relative;
+  }
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.6) 50%, transparent 100%);
+    animation: shimmer 1.4s infinite;
+  }
+  @keyframes shimmer {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+
+  /* --- Touch target helper --- */
+  .touch-target {
+    @apply min-h-[48px] min-w-[48px] flex items-center justify-center;
+  }
+
+  /* --- Question palette cell — min 44px touch target on mobile --- */
+  .q-cell {
+    @apply w-9 h-9 rounded-lg flex items-center justify-center text-xs font-semibold
+           cursor-pointer transition-all duration-100 select-none
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400;
+    /* Expand tap area to 44px without changing visual size */
+    position: relative;
+  }
+  .q-cell::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .q-cell.not-visited { @apply bg-slate-100 text-slate-500; }
+  .q-cell.unanswered  { @apply bg-red-50   text-red-600   ring-1 ring-red-200; }
+  .q-cell.answered    { @apply bg-emerald-500 text-white; }
+  .q-cell.review      { @apply bg-violet-500  text-white; }
+  .q-cell.review-done { @apply bg-violet-700  text-white; }
+  .q-cell.current     { @apply ring-2 ring-primary-500 scale-110; }
+
+  /* --- Fluid typography using clamp --- */
+  .text-fluid-sm { font-size: clamp(0.75rem, 1.5vw, 0.875rem); }
+  .text-fluid-md { font-size: clamp(0.875rem, 2vw, 1rem); }
+  .text-fluid-lg { font-size: clamp(1rem, 2.5vw, 1.25rem); }
+  .text-fluid-xl { font-size: clamp(1.25rem, 3vw, 1.75rem); }
+
+  /* --- Bottom sheet --- */
+  .bottom-sheet {
+    @apply fixed inset-x-0 bottom-0 z-50 bg-white rounded-t-3xl shadow-lg;
+    max-height: 75vh;
+    overflow-y: auto;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+  .no-tap-highlight { -webkit-tap-highlight-color: transparent; }
+}
