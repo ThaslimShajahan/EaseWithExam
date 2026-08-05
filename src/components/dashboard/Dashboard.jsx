@@ -105,13 +105,13 @@ export default function Dashboard() {
   useEffect(() => {
     if (!currentUser) return;
     Promise.all([
-      getTestSessions(currentUser.uid, 10),
+      getTestSessions(currentUser.uid, 10, userProfile?.target_exam),
       getUserGamification(currentUser.uid),
     ])
       .then(([s, g]) => { setSessions(s); setGamification(g); })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [currentUser]);
+  }, [currentUser, userProfile?.target_exam]);
 
   const name      = userProfile?.display_name || currentUser?.displayName || 'Student';
   const exam      = userProfile?.target_exam;
@@ -218,7 +218,15 @@ export default function Dashboard() {
         </div>
       </motion.div>
 
-      {/* Stats row */}
+      {/* Quick-glance summary strip */}
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-1">
+        <span className="text-2xl font-extrabold text-slate-900">{count}</span>
+        <span className="text-sm text-slate-500 mr-3">Tests Taken</span>
+        <span className="text-2xl font-extrabold text-slate-900">{avgScore != null ? `${avgScore}%` : '—'}</span>
+        <span className="text-sm text-slate-500">Average Score</span>
+      </div>
+
+      {/* Stats row — dense instrument-panel tiles, one glance covers everything */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard
           label="Tests Taken"     value={count || '—'}

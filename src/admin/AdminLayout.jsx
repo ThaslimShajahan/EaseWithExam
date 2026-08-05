@@ -2,7 +2,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useEffect, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  LayoutDashboard, Inbox, FileText, BookOpenText, Users,
+  LayoutDashboard, Inbox, FileText, Users,
   Settings, FlaskConical, UserCog,
   ArrowLeft, Shield, Search, AlertTriangle, LogOut,
 } from 'lucide-react';
@@ -18,7 +18,6 @@ const BASE_NAV = [
   { to: '/admin',          icon: LayoutDashboard, label: 'Overview', end: true },
   { to: '/admin/content',  icon: Inbox,           label: 'Content'   },
   { to: '/admin/publish',  icon: FileText,        label: 'Publish'   },
-  { to: '/admin/academic', icon: BookOpenText,    label: 'Academic'  },
   { to: '/admin/students', icon: Users,           label: 'Students'  },
 ];
 
@@ -88,7 +87,7 @@ export default function AdminLayout() {
       >
         {/* Brand */}
         <div className="flex items-center gap-3 px-5 py-5 border-b border-white/5">
-          <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-primary-500 to-violet-600 flex items-center justify-center shrink-0">
+          <div className="h-8 w-8 rounded-xl bg-gradient-to-br from-primary-400 to-primary-700 flex items-center justify-center shrink-0">
             <Shield size={15} className="text-white" />
           </div>
           <div>

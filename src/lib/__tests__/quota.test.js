@@ -22,17 +22,25 @@ function mockRpc(returnVal = null) {
   supabase.rpc.mockResolvedValue({ data: returnVal, error: null });
 }
 
-function mockFrom({ override = null, config = null, usage = null } = {}) {
+// `usageRows` backs the weekly-field code path (mock_tests_used), which
+// awaits the query directly instead of calling .maybeSingle() — Supabase's
+// real query builder is thenable, so the mock needs its own `.then()` to
+// resolve that shape; `.gte`/`.lte` just need to chain like `.eq` does.
+function mockFrom({ override = null, config = null, usage = null, usageRows = null } = {}) {
   supabase.from.mockImplementation((table) => {
     const self = {
       select: () => self,
       eq:     () => self,
+      gte:    () => self,
+      lte:    () => self,
       maybeSingle: () => {
         if (table === 'quota_overrides')   return Promise.resolve({ data: override });
         if (table === 'quota_config')      return Promise.resolve({ data: config });
         if (table === 'daily_usage_quota') return Promise.resolve({ data: usage });
         return Promise.resolve({ data: null });
       },
+      then: (resolve, reject) =>
+        Promise.resolve({ data: table === 'daily_usage_quota' ? (usageRows ?? []) : null }).then(resolve, reject),
     };
     return self;
   });
@@ -85,7 +93,30 @@ describe('checkQuota', () => {
     expect(result.allowed).toBe(false);
     expect(result.used).toBe(15);
     expect(result.limit).toBe(15);
-    expect(result.reason).toContain('Daily limit reached');
+    expect(result.reason).toContain("reached your daily limit");
+  });
+
+  // Regression test: a student at 8/15 requesting a 30-question paper used to
+  // pass this check (8 < 15) and then incrementQuota added the full 30,
+  // landing at 38/15 — visibly over the limit and never actually blocked.
+  // Passing the batch size as `amount` must reject the request up front.
+  it('blocks a batch request that would push usage past the limit, even though current usage is still under it', async () => {
+    mockFrom({
+      config: { ai_questions: 15 },
+      usage:  { ai_questions_used: 8 },
+    });
+    const result = await checkQuota('uid_123', 'ai_questions_used', false, undefined, 30);
+    expect(result.allowed).toBe(false);
+    expect(result.remaining).toBe(7);
+  });
+
+  it('allows a batch request that fits within the remaining allowance', async () => {
+    mockFrom({
+      config: { ai_questions: 15 },
+      usage:  { ai_questions_used: 8 },
+    });
+    const result = await checkQuota('uid_123', 'ai_questions_used', false, undefined, 5);
+    expect(result.allowed).toBe(true);
   });
 
   it('falls back to FREE_LIMITS when no quota_config row', async () => {
@@ -104,7 +135,7 @@ describe('checkQuota', () => {
       usage:  { ai_questions_used: 9999 },
     });
     const result = await checkQuota('uid_123', 'ai_questions_used', true, 'premium_yearly');
-    expect(result).toEqual({ allowed: true, unlimited: true });
+    expect(result).toEqual({ allowed: true, unlimited: true, used: 9999 });
   });
 
   it('respects active quota override over config', async () => {
@@ -128,6 +159,43 @@ describe('checkQuota', () => {
     const result = await checkQuota('uid_123', 'ai_questions_used', false);
     expect(result.limit).toBe(15);
     expect(result.allowed).toBe(true);
+  });
+});
+
+// mock_tests_used is the one WEEKLY_FIELDS entry (free tier: "1 mock test per
+// week", not per day) — these confirm usage sums across the whole week's
+// daily_usage_quota rows rather than reading a single day, which is what
+// makes the weekly cap actually weekly instead of silently daily.
+describe('checkQuota — weekly fields (mock_tests_used)', () => {
+  it('sums usage across multiple days this week, not just today', async () => {
+    mockFrom({
+      config: { mock_tests: 1 },
+      usageRows: [{ mock_tests_used: 1 }, { mock_tests_used: 0 }], // e.g. Mon + today
+    });
+    const result = await checkQuota('uid_123', 'mock_tests_used', false);
+    expect(result.used).toBe(1);
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain('weekly limit');
+  });
+
+  it('allows a fresh week with no usage rows yet', async () => {
+    mockFrom({
+      config: { mock_tests: 1 },
+      usageRows: [],
+    });
+    const result = await checkQuota('uid_123', 'mock_tests_used', false);
+    expect(result.used).toBe(0);
+    expect(result.allowed).toBe(true);
+  });
+
+  it('still reads a single day for non-weekly fields (ai_questions_used)', async () => {
+    mockFrom({
+      config: { ai_questions: 10 },
+      usage:  { ai_questions_used: 3 },
+    });
+    const result = await checkQuota('uid_123', 'ai_questions_used', false);
+    expect(result.used).toBe(3);
+    expect(result.reason).toBeUndefined();
   });
 });
 

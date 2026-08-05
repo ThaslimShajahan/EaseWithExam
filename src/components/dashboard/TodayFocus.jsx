@@ -86,7 +86,7 @@ export default function TodayFocus() {
       {/* Progress bar */}
       <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mb-3">
         <motion.div
-          className="h-full bg-gradient-to-r from-primary-500 to-violet-500 rounded-full"
+          className="h-full bg-gradient-to-r from-primary-400 to-primary-600 rounded-full"
           initial={{ width: 0 }}
           animate={{ width: `${pct}%` }}
           transition={{ duration: 0.5 }}

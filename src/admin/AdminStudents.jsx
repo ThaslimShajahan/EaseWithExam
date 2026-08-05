@@ -1,17 +1,22 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Users, Search, RefreshCw, Pencil, X, Save, Check, Crown } from 'lucide-react';
-import { adminGetAllUsers, adminGetAllTestSessions, adminGetAllSubscriptions, updateUser, adminGrantPremium } from '../lib/supabase';
+import { Users, Search, RefreshCw, Pencil, X, Save, Check, Crown, Trash2, AlertTriangle } from 'lucide-react';
+import { adminGetAllUsers, adminGetAllTestSessions, adminGetAllSubscriptions, updateUser, adminGrantPremium, adminDeleteStudent } from '../lib/supabase';
+import { EXAM_TYPE_GROUPS, BOARDS, CLASS_LEVELS } from '../lib/categories';
 
-// Must match categories.js keys exactly so target_exam reads back correctly
-const ALL_EXAMS = [
-  'NEET', 'JEE Main', 'JEE Advanced', 'BOTH',
-  'Class 8', 'Class 9', 'Class 10', 'Class 11', 'Class 12',
-  'CUET', 'UPSC', 'SSC CGL', 'Olympiad',
-  'CBSE', 'ICSE', 'State Board',
-];
-const ALL_BOARDS   = ['CBSE', 'ICSE', 'Kerala State', 'Other State', 'NA'];
-const ALL_CLASSES  = ['8', '9', '10', '11', '12', 'REPEATER'];
+function getCallerUid() {
+  try {
+    const key = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch { return ''; }
+}
+
+// Live-derived from Admin > Categories, plus onboarding-only sentinel values
+// ('BOTH' = NEET+JEE combined prep, 'REPEATER' = dropper year, 'Other State'/
+// 'NA' = syllabus fallbacks) that aren't real category rows.
+const getAllExams   = () => [...EXAM_TYPE_GROUPS.flatMap((g) => g.items), 'BOTH'];
+const getAllBoards  = () => [...BOARDS, 'Other State', 'NA'];
+const getAllClasses = () => [...CLASS_LEVELS, 'REPEATER'];
 
 const EXAM_BADGE = {
   'NEET':         'bg-emerald-900 text-emerald-300',
@@ -132,7 +137,7 @@ function EditDrawer({ user, onClose, onSaved }) {
               onChange={(e) => set('target_exam', e.target.value)}
               className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary-500"
             >
-              {ALL_EXAMS.map((e) => (
+              {getAllExams().map((e) => (
                 <option key={e} value={e}>{e.replace(/_/g, ' ')}</option>
               ))}
             </select>
@@ -144,7 +149,7 @@ function EditDrawer({ user, onClose, onSaved }) {
               onChange={(e) => set('syllabus', e.target.value)}
               className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary-500"
             >
-              {ALL_BOARDS.map((b) => (
+              {getAllBoards().map((b) => (
                 <option key={b} value={b}>{b.replace(/_/g, ' ')}</option>
               ))}
             </select>
@@ -156,7 +161,7 @@ function EditDrawer({ user, onClose, onSaved }) {
               onChange={(e) => set('class_level', e.target.value)}
               className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary-500"
             >
-              {ALL_CLASSES.map((c) => (
+              {getAllClasses().map((c) => (
                 <option key={c} value={c}>{c === 'REPEATER' ? 'Repeater / Dropper' : `Class ${c}`}</option>
               ))}
             </select>
@@ -211,6 +216,74 @@ function EditDrawer({ user, onClose, onSaved }) {
   );
 }
 
+/* ── Delete confirm — type the student's name to confirm, since this ── */
+/* ── permanently deletes their account and all history everywhere.   ── */
+function DeleteConfirmModal({ user, onClose, onDeleted }) {
+  const [typed,   setTyped]   = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [error,   setError]   = useState('');
+  const name = user.display_name || user.email || user.firebase_uid;
+
+  const handleDelete = async () => {
+    setDeleting(true); setError('');
+    try {
+      await adminDeleteStudent(getCallerUid(), user.firebase_uid);
+      onDeleted(user.firebase_uid);
+      onClose();
+    } catch (e) {
+      setError(e.message);
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+    >
+      <motion.div
+        className="bg-slate-900 border border-red-500/30 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4"
+        initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+      >
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-xl bg-red-900/30 border border-red-500/30 flex items-center justify-center shrink-0">
+            <AlertTriangle size={16} className="text-red-400" />
+          </div>
+          <h3 className="font-bold text-white">Delete "{name}"?</h3>
+        </div>
+        <p className="text-sm text-slate-400 leading-relaxed">
+          This permanently deletes this student's account, subscription, test history, progress, flashcards,
+          and every other record tied to them. <strong className="text-red-400">This cannot be undone.</strong>
+        </p>
+        <div>
+          <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide block mb-1.5">
+            Type <span className="text-white">{name}</span> to confirm
+          </label>
+          <input
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-red-500"
+            autoFocus
+          />
+        </div>
+        {error && <p className="text-xs text-red-400 bg-red-900/30 rounded-xl p-3">{error}</p>}
+        <div className="flex gap-3 pt-1">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-white/10 text-slate-400 hover:text-white text-sm font-medium transition-colors">
+            Cancel
+          </button>
+          <button
+            onClick={handleDelete}
+            disabled={typed !== name || deleting}
+            className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-sm font-bold transition-colors disabled:opacity-40"
+          >
+            {deleting ? 'Deleting…' : 'Delete permanently'}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 function Field({ label, children }) {
   return (
     <div>
@@ -229,6 +302,7 @@ export default function AdminStudents() {
   const [query,    setQuery]    = useState('');
   const [loading,  setLoading]  = useState(true);
   const [editing,  setEditing]  = useState(null);
+  const [deleting, setDeleting] = useState(null);
 
   const load = () => {
     setLoading(true);
@@ -262,6 +336,10 @@ export default function AdminStudents() {
 
   const handleSaved = (updated) => {
     setUsers((prev) => prev.map((u) => u.firebase_uid === updated.firebase_uid ? { ...u, ...updated } : u));
+  };
+
+  const handleDeleted = (firebaseUid) => {
+    setUsers((prev) => prev.filter((u) => u.firebase_uid !== firebaseUid));
   };
 
   return (
@@ -306,7 +384,7 @@ export default function AdminStudents() {
             <span>Exam</span>
             <span>Class</span>
             <span>Tests</span>
-            <span>Edit</span>
+            <span>Actions</span>
           </div>
           <div className="divide-y divide-white/5">
             {filtered.map((u, idx) => {
@@ -358,13 +436,22 @@ export default function AdminStudents() {
 
                   <span className="text-sm text-slate-300 text-right">{tests}</span>
 
-                  <button
-                    onClick={() => setEditing(u)}
-                    className="h-7 w-7 flex items-center justify-center rounded-lg bg-slate-700 hover:bg-primary-700 text-slate-400 hover:text-white transition-colors"
-                    title="Edit / Grant Premium"
-                  >
-                    <Pencil size={12} />
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => setEditing(u)}
+                      className="h-7 w-7 flex items-center justify-center rounded-lg bg-slate-700 hover:bg-primary-700 text-slate-400 hover:text-white transition-colors"
+                      title="Edit / Grant Premium"
+                    >
+                      <Pencil size={12} />
+                    </button>
+                    <button
+                      onClick={() => setDeleting(u)}
+                      className="h-7 w-7 flex items-center justify-center rounded-lg bg-slate-700 hover:bg-red-700 text-slate-400 hover:text-white transition-colors"
+                      title="Delete student"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
                 </motion.div>
               );
             })}
@@ -379,6 +466,17 @@ export default function AdminStudents() {
             user={editing}
             onClose={() => setEditing(null)}
             onSaved={handleSaved}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Delete confirm */}
+      <AnimatePresence>
+        {deleting && (
+          <DeleteConfirmModal
+            user={deleting}
+            onClose={() => setDeleting(null)}
+            onDeleted={handleDeleted}
           />
         )}
       </AnimatePresence>

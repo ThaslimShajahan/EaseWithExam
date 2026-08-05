@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Check, ChevronRight, LogOut, Pencil, Save, X,
-  Lock, Mail, Flame, Zap, Trophy, Gift, Copy,
+  Lock, Mail, Flame, Zap, Trophy, Gift, Copy, Gauge,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { updateUser, supabase } from '../lib/supabase';
 import { getUserGamification, getLevelProgress, LEVEL_TITLES } from '../lib/gamification';
 import { PLANS } from '../lib/subscription';
+import { getQuotaSnapshot, FIELD_LABELS } from '../lib/quota';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import NotificationSettings from '../components/ui/NotificationSettings';
@@ -50,11 +51,11 @@ function ProfileHero({ avatar, name, email, editName, setEditName, nameVal, setN
       <div className="relative z-10 flex flex-col sm:flex-row items-center sm:items-end gap-5">
         <div className="shrink-0 relative">
           <div className="p-[3px] rounded-full bg-gradient-to-br from-amber-300 via-primary-300 to-violet-400 shadow-xl">
-            <div className="p-[3px] rounded-full bg-gradient-to-br from-primary-800 to-violet-900">
+            <div className="p-[3px] rounded-full bg-gradient-to-br from-primary-700 to-primary-900">
               {avatar ? (
                 <img src={avatar} alt={name} className="h-[84px] w-[84px] rounded-full object-cover" />
               ) : (
-                <div className="h-[84px] w-[84px] rounded-full bg-gradient-to-br from-primary-500 to-violet-600 flex items-center justify-center text-3xl font-bold text-white">
+                <div className="h-[84px] w-[84px] rounded-full bg-gradient-to-br from-primary-400 to-primary-700 flex items-center justify-center text-3xl font-bold text-white">
                   {initials}
                 </div>
               )}
@@ -104,8 +105,9 @@ function ProfileHero({ avatar, name, email, editName, setEditName, nameVal, setN
 }
 
 export default function ProfilePage() {
-  const { currentUser, userProfile, subscription, signOut } = useAuth();
+  const { currentUser, userProfile, subscription, isPremium, signOut } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [editName,     setEditName]     = useState(false);
   const [name,         setName]         = useState(userProfile?.display_name || currentUser?.displayName || '');
@@ -115,6 +117,7 @@ export default function ProfilePage() {
   const [gam,          setGam]          = useState(null);
   const [referral,     setReferral]     = useState(null);
   const [copied,       setCopied]       = useState(false);
+  const [quotaUsage,   setQuotaUsage]   = useState(null); // { field: {used, limit, unlimited} }
 
   const avatar = userProfile?.photo_url || currentUser?.photoURL;
   const email  = userProfile?.email     || currentUser?.email;
@@ -126,6 +129,39 @@ export default function ProfilePage() {
       .then(({ data }) => { if (data?.[0]) setReferral(data[0]); })
       .catch(() => {});
   }, [currentUser]);
+
+  // Usage & Limits panel — same quota fields every metered feature checks
+  // against (Practice, Mock Tests, EWE Chat, Paper Mode), shown for both
+  // free and premium students so "Premium" isn't just a label with no
+  // visible numbers behind it. Refreshes live off the same 'ewe:quota-updated'
+  // event the Sidebar listens for (fired by incrementQuota in lib/quota.js),
+  // instead of only ever reflecting numbers from page load.
+  useEffect(() => {
+    if (!currentUser) return;
+    const fields = Object.keys(FIELD_LABELS);
+    const refresh = () => {
+      Promise.all(fields.map((f) => getQuotaSnapshot(currentUser.uid, f, isPremium, subscription?.plan)))
+        .then((results) => {
+          const byField = {};
+          fields.forEach((f, i) => { byField[f] = results[i]; });
+          setQuotaUsage(byField);
+        })
+        .catch(() => {});
+    };
+    refresh();
+    window.addEventListener('ewe:quota-updated', refresh);
+    return () => window.removeEventListener('ewe:quota-updated', refresh);
+  }, [currentUser, isPremium, subscription?.plan]);
+
+  // Sidebar's "Notifications" shortcut links here as /profile#notifications —
+  // React Router doesn't auto-scroll to a hash on SPA navigation, so this
+  // section needs to bring itself into view once its content (and therefore
+  // its real position on the page) has actually rendered.
+  useEffect(() => {
+    if (location.hash !== '#notifications') return;
+    const el = document.getElementById('notifications');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [location.hash, quotaUsage]);
 
   const handleSaveName = async () => {
     if (!currentUser || !name.trim()) return;
@@ -225,7 +261,7 @@ export default function ProfilePage() {
                 </div>
                 <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                   <motion.div
-                    className="h-full bg-gradient-to-r from-violet-500 to-primary-500 rounded-full"
+                    className="h-full bg-gradient-to-r from-primary-600 to-primary-400 rounded-full"
                     initial={{ width: 0 }} animate={{ width: `${levelInfo.pct}%` }}
                     transition={{ duration: 0.8 }}
                   />
@@ -250,7 +286,7 @@ export default function ProfilePage() {
             <div className="text-xs text-slate-500 leading-relaxed">
               Academic settings can only be changed by an admin.{' '}
               <a
-                href="mailto:support@acenzos.com?subject=Profile change request"
+                href="mailto:info@acenzos.com?subject=Profile change request"
                 className="text-primary-600 hover:underline font-semibold"
               >
                 Contact admin
@@ -261,11 +297,54 @@ export default function ProfilePage() {
         </Section>
       </motion.div>
 
+      {/* Usage & Limits — shown for free AND premium so the plan isn't just a label */}
+      {quotaUsage && (
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.11 }}>
+          <Section title="Usage & Limits">
+            <div className="flex items-center gap-2 -mt-1 mb-1">
+              <Gauge size={13} className="text-slate-400" />
+              <span className="text-xs text-slate-500">Resets daily at midnight IST · {planName} plan</span>
+            </div>
+            <div className="space-y-3">
+              {Object.entries(FIELD_LABELS).map(([field, label]) => {
+                const q = quotaUsage[field];
+                if (!q) return null;
+                const pct = q.unlimited ? 0 : Math.min(100, Math.round((q.used / Math.max(q.limit, 1)) * 100));
+                return (
+                  <div key={field}>
+                    <div className="flex justify-between text-xs text-slate-500 mb-1">
+                      <span className="capitalize">{label}</span>
+                      <span className="font-medium text-slate-700">
+                        {q.unlimited ? `${q.used} used · Unlimited` : `${q.used} / ${q.limit}`}
+                      </span>
+                    </div>
+                    <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${q.unlimited ? 'bg-emerald-400' : pct >= 100 ? 'bg-red-400' : 'bg-primary-500'}`}
+                        style={{ width: q.unlimited ? '100%' : `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {!isPremium && (
+              <button
+                onClick={() => navigate('/pricing')}
+                className="w-full mt-1 py-2.5 rounded-xl bg-primary-50 hover:bg-primary-100 text-primary-700 text-xs font-bold transition-colors"
+              >
+                Upgrade for unlimited access →
+              </button>
+            )}
+          </Section>
+        </motion.div>
+      )}
+
       {/* Referral card */}
       {referral && (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }}>
           <Section title="Refer &amp; Earn">
-            <div className="bg-gradient-to-br from-violet-50 to-primary-50 border border-violet-100 rounded-2xl p-4 space-y-3">
+            <div className="bg-gradient-to-br from-primary-100 to-primary-50 border border-primary-200 rounded-2xl p-4 space-y-3">
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 rounded-xl bg-violet-100 flex items-center justify-center shrink-0">
                   <Gift size={18} className="text-violet-600" />
@@ -309,7 +388,7 @@ export default function ProfilePage() {
       )}
 
       {/* Notifications */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.13 }}>
+      <motion.div id="notifications" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.13 }}>
         <Section title="Notifications">
           <NotificationSettings />
         </Section>

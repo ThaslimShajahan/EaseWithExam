@@ -114,16 +114,65 @@ export function preFilterUrl(pdfUrl) {
 
 /* ── PDF text extraction ─────────────────────────────────── */
 
-export async function extractPdfText(arrayBuffer) {
-  const pdf       = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const pageLimit = Math.min(pdf.numPages, 20);
-  let text = '';
-  for (let i = 1; i <= pageLimit; i++) {
+/**
+ * Returns an array of one string per PDF page (1-indexed by array position),
+ * in original document order. Callers that need the exact, unparaphrased
+ * source text for a specific page range (e.g. a literature lesson's real
+ * passage, for extract-based English/Hindi/Sanskrit questions) should slice
+ * this array directly instead of asking an LLM to "reproduce" the text —
+ * models paraphrase even when told not to, so the only reliable verbatim
+ * copy is the one taken straight from extraction, never round-tripped
+ * through a chat completion.
+ */
+export async function extractPdfPages(arrayBuffer) {
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  // No page cap — a whole textbook unit (or a full past-paper compilation) must
+  // be read in full regardless of how many pages it runs to. This used to be
+  // capped (first 20, then 60) to bound how much text a single downstream AI
+  // call had to swallow, but that just moved the truncation here instead of
+  // fixing it: any cap silently drops whatever content comes after it. The
+  // real fix is downstream — callers now split long text into page-aligned
+  // batches for AI processing (see splitIntoBatches below) — so every page
+  // gets extracted here and nothing is dropped before it even reaches the AI.
+  const pages = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
     const page    = await pdf.getPage(i);
     const content = await page.getTextContent();
-    text += content.items.map((s) => s.str).join(' ') + '\n\n';
+    pages.push(content.items.map((s) => s.str).join(' '));
   }
-  return text.trim();
+  return pages;
+}
+
+export async function extractPdfText(arrayBuffer) {
+  const pages = await extractPdfPages(arrayBuffer);
+  return pages.join('\n\n').trim();
+}
+
+/**
+ * Splits long extracted text into batches small enough for a single AI call to
+ * process without hitting its output-token ceiling, cutting only at page
+ * boundaries (extractPdfText joins pages with "\n\n") so a page is never split
+ * across two batches. Use this whenever raw PDF text is being sent to an LLM
+ * for exhaustive extraction (study notes, PYQs, paper structure, etc.) instead
+ * of truncating with a flat `.slice(0, N)`, which silently drops everything
+ * past N — a page count that "may vary" upload-to-upload should never mean
+ * some uploads quietly lose their later pages.
+ */
+export function splitIntoBatches(text, maxLen = 30000) {
+  const pages = text.split(/\n\n+/);
+  const batches = [];
+  let current = '';
+  for (const page of pages) {
+    const candidate = current ? `${current}\n\n${page}` : page;
+    if (candidate.length > maxLen && current) {
+      batches.push(current);
+      current = page;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) batches.push(current);
+  return batches;
 }
 
 /* ── Stage 2: GPT classification + structured analysis ───── */
@@ -144,6 +193,7 @@ Return ONLY valid JSON:
 - subject: "Physics"|"Chemistry"|"Biology"|"Mathematics"|"Mixed"|"Unknown"
 - year: integer | null
 - board: "NEET"|"JEE Main"|"JEE Advanced"|"CBSE"|"Kerala Board"|"Other"|null
+- classLevel: integer 6-12 | null (school grade, ONLY for board content — null for NEET/JEE/competitive)
 - paperType: "Question Paper"|"Answer Key"|"Syllabus"|"Notes"|"Other"
 - topics: string[] (max 10)
 - questions: string[] (up to 5 verbatim questions)
@@ -166,6 +216,9 @@ function inferFromFilename(filename) {
     /jee/.test(n)          ? 'JEE Main' :
     /cbse/.test(n)         ? 'CBSE'     : null;
 
+  const classMatch = n.match(/class\s*(\d{1,2})/);
+  const classLevel = (board === 'CBSE' && classMatch) ? parseInt(classMatch[1], 10) : null;
+
   const subject =
     /chemistry/.test(n)         ? 'Chemistry'   :
     /physics/.test(n)           ? 'Physics'     :
@@ -184,6 +237,7 @@ function inferFromFilename(filename) {
     subject,
     year,
     board,
+    classLevel,
     paperType,
     topics:    [],
     questions: [],
@@ -194,7 +248,7 @@ function inferFromFilename(filename) {
 export async function analyzeText(text, filename) {
   const fallback = {
     isEducational: false, skipReason: 'Could not extract readable text',
-    subject: 'Unknown', year: null, board: null, paperType: 'Other',
+    subject: 'Unknown', year: null, board: null, classLevel: null, paperType: 'Other',
     topics: [], questions: [], summary: 'Text extraction returned empty content.',
   };
 
@@ -230,11 +284,14 @@ export async function analyzeText(text, filename) {
 
 /* ── Text chunker for knowledge base ────────────────────── */
 
-export function chunkText(text, subject) {
+// examTag (optional) is the snake_case board/class tag (e.g. "cbse_class_8", "neet")
+// — without it, crawled content has no way to be scoped to a class/exam filter and
+// bleeds into every subject-matching query regardless of board/class.
+export function chunkText(text, subject, examTag = null) {
   const chunks = [];
   for (let i = 0; i < text.length; i += 800) {
     const content = text.slice(i, i + 800).trim();
-    if (content.length > 50) chunks.push({ subject, content, tags: [subject] });
+    if (content.length > 50) chunks.push({ subject, content, tags: [subject, examTag].filter(Boolean) });
   }
   return chunks;
 }

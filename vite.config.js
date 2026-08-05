@@ -12,7 +12,7 @@ export default defineConfig({
         name: 'EaseWithExam',
         short_name: 'EWE',
         description: 'AI-powered NEET / JEE / CBSE prep — mock tests, Veda AI, spaced repetition',
-        theme_color: '#41A2B6',
+        theme_color: '#21A375',
         background_color: '#0f172a',
         display: 'standalone',
         orientation: 'portrait',

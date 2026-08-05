@@ -47,7 +47,7 @@ export default function PaywallModal({ onClose, feature, firebaseUid, email, nam
           transition={{ duration: 0.2 }}
         >
           {/* Header */}
-          <div className="relative bg-gradient-to-br from-primary-600 to-violet-700 px-6 py-6 text-white text-center">
+          <div className="relative bg-gradient-to-br from-primary-500 to-primary-800 px-6 py-6 text-white text-center">
             <button
               onClick={onClose}
               className="absolute top-4 right-4 h-7 w-7 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/30"

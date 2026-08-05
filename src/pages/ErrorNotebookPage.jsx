@@ -13,6 +13,9 @@ import {
   recordReview, getWeakTopics,
 } from '../lib/errorNotebook';
 import MathText from '../components/ui/MathText';
+import HubPageHeader from '../components/ui/HubPageHeader';
+import StatCard from '../components/ui/StatCard';
+import EmptyState from '../components/ui/EmptyState';
 
 const OPT_LETTERS = ['A', 'B', 'C', 'D'];
 
@@ -25,22 +28,12 @@ const SUBJECT_COLORS = {
 };
 
 /* ── Stats bar ─────────────────────────────────────────────── */
-function StatsBar({ stats, onReview }) {
+function StatsBar({ stats }) {
   return (
-    <div className="grid grid-cols-3 gap-3 mb-6">
-      {[
-        { label: 'Total Errors', val: stats.total, icon: BookMarked, color: 'text-slate-700', bg: 'bg-slate-100' },
-        { label: 'Due Today',    val: stats.due,   icon: Clock,      color: 'text-amber-600', bg: 'bg-amber-50' },
-        { label: 'Mastered',     val: stats.mastered, icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-      ].map(({ label, val, icon: Icon, color, bg }) => (
-        <div key={label} className="card p-4 text-center">
-          <div className={`h-9 w-9 rounded-xl ${bg} flex items-center justify-center mx-auto mb-2`}>
-            <Icon size={16} className={color} />
-          </div>
-          <p className="text-2xl font-bold text-slate-900">{val}</p>
-          <p className="text-xs text-slate-500 mt-0.5">{label}</p>
-        </div>
-      ))}
+    <div className="grid grid-cols-3 gap-3">
+      <StatCard icon={BookMarked}   iconColor="text-slate-600"   iconBg="bg-slate-100" value={stats.total}    label="Total Errors" />
+      <StatCard icon={Clock}        iconColor="text-amber-600"   iconBg="bg-amber-50"  value={stats.due}      label="Due Today" />
+      <StatCard icon={CheckCircle2} iconColor="text-emerald-600" iconBg="bg-emerald-50" value={stats.mastered} label="Mastered" />
     </div>
   );
 }
@@ -333,25 +326,17 @@ export default function ErrorNotebookPage() {
 
   return (
     <div className="space-y-5 p-4 lg:p-0 max-w-2xl">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <button onClick={() => navigate('/dashboard')}
-          className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition-colors">
-          <ArrowLeft size={18} />
-        </button>
-        <div className="flex-1">
-          <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-            <BookMarked size={20} className="text-primary-500" /> Error Notebook
-          </h1>
-          <p className="text-xs text-slate-500 mt-0.5">Spaced repetition — review at the perfect moment</p>
-        </div>
-        {!isPremium && (
+      <HubPageHeader
+        icon={BookMarked}
+        title="Error Notebook"
+        subtitle="Spaced repetition — review at the perfect moment"
+        right={!isPremium && (
           <button onClick={() => navigate('/pricing')}
-            className="flex items-center gap-1.5 text-xs font-semibold text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-full hover:bg-amber-100 transition-colors">
+            className="shrink-0 flex items-center gap-1.5 text-xs font-semibold text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-full hover:bg-amber-100 transition-colors">
             <Zap size={11} /> Premium
           </button>
         )}
-      </div>
+      />
 
       {loading ? (
         <div className="space-y-3">
@@ -372,7 +357,7 @@ export default function ErrorNotebookPage() {
           {stats.due > 0 && (
             <motion.div
               initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-              className="card bg-gradient-to-r from-primary-600 to-violet-600 text-white border-0"
+              className="card bg-gradient-to-r from-primary-500 to-primary-700 text-white border-0"
             >
               <div className="flex items-center justify-between">
                 <div>
@@ -422,10 +407,8 @@ export default function ErrorNotebookPage() {
           {tab === 'weak' && (
             <div className="space-y-2">
               {weakTopics.length === 0 ? (
-                <div className="card text-center py-10 text-slate-400">
-                  <Target size={28} className="mx-auto mb-2 text-slate-300" />
-                  <p className="text-sm font-medium">No weak topics yet</p>
-                  <p className="text-xs mt-1">Complete some practice sessions to identify your weak areas.</p>
+                <div className="card">
+                  <EmptyState icon={Target} title="No weak topics yet" body="Complete some practice sessions to identify your weak areas." size="sm" />
                 </div>
               ) : weakTopics.map((t, i) => (
                 <motion.div key={i}
@@ -459,14 +442,13 @@ export default function ErrorNotebookPage() {
           {(tab === 'due' || tab === 'all') && (
             <div className="space-y-2">
               {filtered.length === 0 ? (
-                <div className="card text-center py-10 text-slate-400">
-                  <BookOpen size={28} className="mx-auto mb-2 text-slate-300" />
-                  <p className="text-sm font-medium">
-                    {tab === 'due' ? 'No questions due — check back tomorrow!' : 'No errors recorded yet.'}
-                  </p>
-                  {tab === 'due' && stats.total === 0 && (
-                    <p className="text-xs mt-1">Complete a practice session to start building your notebook.</p>
-                  )}
+                <div className="card">
+                  <EmptyState
+                    icon={BookOpen}
+                    title={tab === 'due' ? 'No questions due — check back tomorrow!' : 'No errors recorded yet.'}
+                    body={tab === 'due' && stats.total === 0 ? 'Complete a practice session to start building your notebook.' : undefined}
+                    size="sm"
+                  />
                 </div>
               ) : (
                 filtered.map((item) => (

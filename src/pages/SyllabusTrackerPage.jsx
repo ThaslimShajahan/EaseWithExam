@@ -233,7 +233,7 @@ export default function SyllabusTrackerPage() {
         </div>
         <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
           <motion.div
-            className="h-full bg-gradient-to-r from-primary-500 to-violet-500 rounded-full"
+            className="h-full bg-gradient-to-r from-primary-400 to-primary-600 rounded-full"
             initial={{ width: 0 }} animate={{ width: `${overallPct}%` }}
             transition={{ duration: 0.8, ease: 'easeOut' }}
           />

@@ -15,6 +15,7 @@ import { saveTestSession } from '../../lib/supabase';
 import { awardXP, incrementActivityCount } from '../../lib/gamification';
 import { saveWrongAnswers } from '../../lib/errorNotebook';
 import { createNotification } from '../../lib/notifications';
+import { checkQuota, incrementQuota } from '../../lib/quota';
 import QuestionView from './QuestionView';
 import QuestionPalette from './QuestionPalette';
 import ProgressShareCard from './ProgressShareCard';
@@ -160,7 +161,7 @@ function computeResults(questions, answers, evaluations = {}) {
 }
 
 /* ─── Result screen ─────────────────────────────────────────── */
-function ResultScreen({ questions, answers, results, evaluations, timeTaken, testTitle, onRetake }) {
+function ResultScreen({ questions, answers, results, evaluations, timeTaken, testTitle, onRetake, saveError, onRetrySave, gradingLimited }) {
   const navigate = useNavigate();
   const [showShare,  setShowShare]  = useState(false);
   const [expandedQ,  setExpandedQ]  = useState(new Set());
@@ -217,6 +218,35 @@ function ResultScreen({ questions, answers, results, evaluations, timeTaken, tes
       )}
 
       <div className="p-4 space-y-4 max-w-2xl mx-auto">
+        {/* Save-failure warning — result is scored and shown below, but if this
+            wasn't actually saved to your account, it won't show up in Analytics
+            or history later. Previously this failed completely silently. */}
+        {saveError && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+            <AlertCircle size={16} className="text-amber-500 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-800">Result not saved yet</p>
+              <p className="text-xs text-amber-700 mt-0.5">Your score is shown below, but it hasn't been saved to your account — it won't appear in Analytics until this succeeds. Check your connection and retry.</p>
+            </div>
+            <button
+              onClick={onRetrySave}
+              className="shrink-0 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {gradingLimited && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+            <AlertCircle size={16} className="text-amber-500 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-800">Descriptive answers not AI-graded</p>
+              <p className="text-xs text-amber-700 mt-0.5">You've reached today's AI evaluation limit, so your Short/Long Answer responses aren't scored below — your MCQ/objective score is still accurate. Upgrade to Premium for unlimited AI grading.</p>
+            </div>
+          </div>
+        )}
+
         {/* Score card */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 flex items-center gap-5">
           <div className="relative h-24 w-24 shrink-0">
@@ -643,7 +673,7 @@ export default function MockTestEngine({
   testId     = null,
 }) {
   const totalSeconds    = (testConfig.duration ?? 180) * 60;
-  const { currentUser } = useAuth();
+  const { currentUser, userProfile, isPremium } = useAuth();
   const isDesktop       = useIsDesktop();
   const navigate        = useNavigate();
 
@@ -662,6 +692,8 @@ export default function MockTestEngine({
   const [results,      setResults]      = useState(null);
   const [timeTaken,    setTimeTaken]    = useState(0);
   const [evalProgress, setEvalProgress] = useState('');
+  const [gradingLimited, setGradingLimited] = useState(false);
+  const [saveError,    setSaveError]    = useState('');
   const [hasSaved,     setHasSaved]     = useState(() => {
     try { return !!localStorage.getItem(storageKey); } catch { return false; }
   });
@@ -686,6 +718,12 @@ export default function MockTestEngine({
       setSecondsLeft((s) => {
         const next = s - 1;
         secondsLeftRef.current = next;
+        // Persist secondsLeft periodically (not just on answer/nav changes — see
+        // the persist-on-change effect below). Without this, a student who sits
+        // on one question for minutes without answering or navigating keeps a
+        // STALE secondsLeft in localStorage; refreshing then resumes with more
+        // time than actually remained, silently defeating the exam timer.
+        if (next % 5 === 0) persistProgressRef.current?.();
         if (next <= 0) {
           clearInterval(timerRef.current);
           // Use ref so the callback always sees the latest finishTest closure (not a stale capture)
@@ -755,19 +793,30 @@ export default function MockTestEngine({
     return n;
   });
 
-  /* ── Persist progress to localStorage while in-progress ── */
+  /* ── Persist progress to localStorage while in-progress ──
+   * persistProgressRef is refreshed on every render so the timer tick (which
+   * only depends on `status`, not on answers/currentIdx/etc.) always calls
+   * through to a fresh closure instead of a stale one. */
+  const persistProgressRef = useRef(() => {});
+  useEffect(() => {
+    persistProgressRef.current = () => {
+      if (status !== 'in_progress') return;
+      try {
+        localStorage.setItem(storageKey, JSON.stringify({
+          answers,
+          currentIdx,
+          marked:     [...marked],
+          visited:    [...visited],
+          secondsLeft: secondsLeftRef.current,
+          savedAt:    Date.now(),
+        }));
+      } catch { /* storage full — non-fatal */ }
+    };
+  });
+
   useEffect(() => {
     if (status !== 'in_progress') return;
-    try {
-      localStorage.setItem(storageKey, JSON.stringify({
-        answers,
-        currentIdx,
-        marked:     [...marked],
-        visited:    [...visited],
-        secondsLeft: secondsLeftRef.current,
-        savedAt:    Date.now(),
-      }));
-    } catch { /* storage full — non-fatal */ }
+    persistProgressRef.current();
   }, [answers, currentIdx, marked, visited, status]);
 
   /* ── Resume saved session ── */
@@ -789,6 +838,18 @@ export default function MockTestEngine({
       const restored = saved.secondsLeft ?? totalSeconds;
       setSecondsLeft(restored);
       secondsLeftRef.current = restored;
+      qStartRef.current = Date.now();
+      // `submitting: true` means the student had already submitted (or the
+      // timer expired) and evaluation/save was interrupted mid-flight (tab
+      // crash/close) — previously the local backup was deleted the instant
+      // submission started, so this state was unrecoverable and the whole
+      // attempt was simply lost. Re-run the finish flow with the recovered
+      // answers instead of dropping them back into "keep answering."
+      if (saved.submitting) {
+        setStatus('in_progress');
+        setTimeout(() => finishTestRef.current?.(false), 50);
+        return;
+      }
     } catch { /* ignore corrupt data */ }
     qStartRef.current = Date.now();
     setStatus('in_progress');
@@ -817,10 +878,66 @@ export default function MockTestEngine({
     qStartRef.current = Date.now();
   };
 
+  /* ── Save the test session, surfacing failures instead of swallowing them ──
+   * Previously fire-and-forget (`.catch(() => {})`) — a student would see the
+   * full results screen with no indication their result was never persisted;
+   * it just wouldn't show up later in analytics/history with no way to know
+   * or retry. Now: on failure, keep the local backup (don't delete it) and
+   * show a visible warning + retry option; on success, clear the backup. */
+  const attemptSaveSession = async (res, evals, taken) => {
+    if (!currentUser) return;
+    try {
+      await saveTestSession(currentUser.uid, {
+        test_name:          testConfig.title,
+        ...(testId ? { test_id: testId } : {}),
+        score:              res.score,
+        total_marks:        res.totalMarks,
+        correct:            res.correct,
+        wrong:              res.wrong,
+        skipped:            res.skipped,
+        question_count:     questions.length,
+        time_taken_seconds: taken,
+        subject_breakdown:  res.bySubject,
+        exam_type:          userProfile?.target_exam || null,
+        // `test_sessions` has no `evaluations` column — this insert silently
+        // failed on every mock-test submission via PostgREST error PGRST204
+        // (confirmed live), previously invisible because the caller swallowed
+        // it with .catch(() => {}). The per-question AI evaluation data maps
+        // onto the existing (otherwise-unused-by-this-insert) `answers` jsonb
+        // column instead of a nonexistent one.
+        answers:            evals,
+      });
+      setSaveError('');
+      try { localStorage.removeItem(storageKey); } catch { /* ignore */ }
+    } catch (e) {
+      setSaveError(e?.message || 'Your result was scored but could not be saved.');
+    }
+  };
+
+  const retrySaveSession = () => {
+    if (!results) return;
+    attemptSaveSession(results, evaluations, timeTaken);
+  };
+
   /* ── Finish + evaluate ── */
   const finishTest = async (auto = false) => {
+    // Re-entrancy guard — without this, a timer hitting 0 in the same tick as
+    // a manual "Submit test" tap (or a double-tap before the confirm overlay
+    // unmounts) could run this whole function twice: duplicate test_sessions
+    // rows, double XP/activity-count awards, and a concurrent double insert
+    // into the error notebook.
+    if (status === 'evaluating' || status === 'submitted') return;
     clearInterval(timerRef.current);
-    try { localStorage.removeItem(storageKey); } catch { /* ignore */ }
+    // Don't delete the local backup yet — mark it "submitting" instead. The AI
+    // evaluation below can take ~15s; if the tab crashes or is closed during
+    // that window, deleting the backup up-front would lose the attempt
+    // entirely with no way to recover the answers. It's only removed once
+    // saveTestSession actually succeeds, further down.
+    try {
+      const raw = localStorage.getItem(storageKey);
+      const saved = raw ? JSON.parse(raw) : {};
+      localStorage.setItem(storageKey, JSON.stringify({ ...saved, submitting: true, savedAt: Date.now() }));
+    } catch { /* ignore */ }
     const taken = totalSeconds - secondsLeftRef.current; // use ref, not stale state
 
     if (question) {
@@ -836,13 +953,24 @@ export default function MockTestEngine({
     let evals = {};
 
     if (descriptiveQs.length > 0) {
-      setEvalProgress(`Evaluating ${descriptiveQs.length} descriptive answer${descriptiveQs.length > 1 ? 's' : ''} with AI…`);
-      try {
-        evals = await evaluateDescriptiveAnswers(questions, answers);
-      } catch {
-        // non-fatal — descriptive answers just won't show evaluations
+      // AI-grading descriptive answers is the same cost/action as Paper Mode's
+      // answer-sheet evaluation (an AI reads and scores a student's written
+      // answers) — reuses that same quota bucket instead of running unmetered.
+      // Checked once per submission (not once per question) since a single
+      // test's worth of grading is one "evaluation", same as one uploaded paper.
+      const quota = currentUser ? await checkQuota(currentUser.uid, 'paper_evaluations_used', isPremium) : { allowed: true };
+      if (!quota.allowed) {
+        setGradingLimited(true);
+      } else {
+        setEvalProgress(`Evaluating ${descriptiveQs.length} descriptive answer${descriptiveQs.length > 1 ? 's' : ''} with AI…`);
+        try {
+          evals = await evaluateDescriptiveAnswers(questions, answers);
+          if (currentUser) incrementQuota(currentUser.uid, 'paper_evaluations_used').catch(() => {});
+        } catch {
+          // non-fatal — descriptive answers just won't show evaluations
+        }
+        setEvalProgress('');
       }
-      setEvalProgress('');
     }
 
     setEvaluations(evals);
@@ -851,23 +979,18 @@ export default function MockTestEngine({
     setStatus('submitted');
 
     if (currentUser) {
-      saveTestSession(currentUser.uid, {
-        test_name:          testConfig.title,
-        ...(testId ? { test_id: testId } : {}),
-        score:              res.score,
-        total_marks:        res.totalMarks,
-        correct:            res.correct,
-        wrong:              res.wrong,
-        skipped:            res.skipped,
-        question_count:     questions.length,
-        time_taken_seconds: taken,
-        subject_breakdown:  res.bySubject,
-        evaluations:        evals,
-      }).catch(() => {});
+      await attemptSaveSession(res, evals, taken);
       const xpAction = res.totalMarks > 0 && res.score / res.totalMarks >= 0.9 ? 'perfect_score' : 'mock_test';
       awardXP(currentUser.uid, xpAction).catch(() => {});
       incrementActivityCount(currentUser.uid, 'total_tests_taken').catch(() => {});
-      saveWrongAnswers(currentUser.uid, questions, answers, 'mock_test', testConfig.title).catch(() => {});
+      // Descriptive (Short/Long Answer) questions are excluded here — the Error
+      // Notebook's wrongness check compares against `correctOption`, which
+      // descriptive questions don't have, so every attempted descriptive answer
+      // was being logged as "wrong" regardless of the AI's actual evaluation,
+      // and the answer object ({text, imageDataUrl}) was stringifying into the
+      // literal text "[object Object]" in the stored user_answer.
+      const objectiveQuestions = questions.filter((q) => !isDescriptiveType(q.type));
+      saveWrongAnswers(currentUser.uid, objectiveQuestions, answers, 'mock_test', testConfig.title).catch(() => {});
       const pct = res.totalMarks > 0 ? Math.round((res.score / res.totalMarks) * 100) : 0;
       createNotification(
         currentUser.uid,
@@ -925,6 +1048,9 @@ export default function MockTestEngine({
         timeTaken={timeTaken}
         testTitle={testConfig.title}
         onRetake={resetExam}
+        saveError={saveError}
+        onRetrySave={retrySaveSession}
+        gradingLimited={gradingLimited}
       />
     );
   }

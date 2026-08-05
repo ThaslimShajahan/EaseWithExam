@@ -9,7 +9,7 @@ const COUNTRY_CODES = [
   { code: '+44', label: '🇬🇧 +44', country: 'UK'    },
 ];
 
-export default function PhoneOTP({ onError }) {
+export default function PhoneOTP({ onError, onStepChange }) {
   const { sendOTP, verifyOTP } = useAuth();
   const [step,        setStep]        = useState('phone');  // 'phone' | 'otp'
   const [countryCode, setCountryCode] = useState('+91');
@@ -39,6 +39,7 @@ export default function PhoneOTP({ onError }) {
     try {
       await sendOTP(`${countryCode}${cleaned}`);
       setStep('otp');
+      onStepChange?.(true);
       startCountdown();
     } catch (err) {
       onError?.(err.message || 'Could not send OTP. Check the number and try again.');
@@ -114,7 +115,7 @@ export default function PhoneOTP({ onError }) {
             <p className="text-sm text-slate-400">Resend in {countdown}s</p>
           ) : (
             <button
-              onClick={() => { setOtp(['', '', '', '', '', '']); setStep('phone'); }}
+              onClick={() => { setOtp(['', '', '', '', '', '']); setStep('phone'); onStepChange?.(false); }}
               className="text-sm text-primary-600 font-medium flex items-center gap-1 mx-auto hover:underline"
             >
               <RefreshCw size={13} /> Change number
@@ -170,7 +171,8 @@ export default function PhoneOTP({ onError }) {
       </Button>
 
       <p className="text-xs text-center text-slate-400">
-        By continuing you agree to our Terms of Service & Privacy Policy.
+        By continuing, you agree to our{' '}
+        <a href="/privacy" className="text-primary-600 hover:underline font-medium">Terms &amp; Privacy Policy</a>.
       </p>
 
       {/* Invisible reCAPTCHA anchor required by Firebase's signInWithPhoneNumber */}

@@ -1,0 +1,12 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /dashboard
+Disallow: /study
+Disallow: /exams
+Disallow: /progress
+Disallow: /profile
+Disallow: /test
+Disallow: /coaching
+
+Sitemap: https://www.easewithexam.com/sitemap.xml

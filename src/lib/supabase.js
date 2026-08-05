@@ -31,6 +31,12 @@ export async function upsertUser(firebaseUid, fields) {
   return data;
 }
 
+export async function adminDeleteStudent(callerUid, firebaseUid) {
+  const { error } = await supabase.rpc('admin_delete_student', { p_caller: callerUid, p_firebase_uid: firebaseUid });
+  if (error) throw new Error(error.message);
+  logChange(ENTITY.SYSTEM, firebaseUid, ACTION.DELETE_REQUEST, null, 'Admin permanently deleted a student account and all associated data');
+}
+
 export async function updateUser(firebaseUid, fields) {
   const { data, error } = await supabase
     .from('users')
@@ -69,11 +75,19 @@ export async function saveTestSession(firebaseUid, session) {
   return data;
 }
 
-export async function getTestSessions(firebaseUid, limit = 10) {
-  const { data, error } = await supabase
+// examType, when passed, scopes results to that exam so a student who has
+// since switched their target exam doesn't get old unrelated-exam sessions
+// blended into current analytics/predictions. Legacy rows recorded before
+// exam_type existed (or from a caller that didn't have it available) are
+// NULL and always included — otherwise this filter would instantly hide
+// every user's pre-existing history.
+export async function getTestSessions(firebaseUid, limit = 10, examType = null) {
+  let query = supabase
     .from('test_sessions')
     .select('*')
-    .eq('firebase_uid', firebaseUid)
+    .eq('firebase_uid', firebaseUid);
+  if (examType) query = query.or(`exam_type.eq.${examType},exam_type.is.null`);
+  const { data, error } = await query
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw error;
@@ -111,10 +125,10 @@ export async function getCompletedTestIds(firebaseUid) {
 
 /* ── Doubt chats ────────────────────────────────────────── */
 
-export async function createDoubtChat(firebaseUid) {
+export async function createDoubtChat(firebaseUid, subject = null) {
   const { data, error } = await supabase
     .from('doubt_chats')
-    .insert({ firebase_uid: firebaseUid })
+    .insert({ firebase_uid: firebaseUid, subject })
     .select()
     .single();
 
@@ -222,6 +236,7 @@ export async function adminGrantPremium(firebaseUid, plan = 'premium_yearly') {
       starts_at:  new Date().toISOString(),
       expires_at,
       amount_paid: 0,
+      reminder_sent_at: null,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id' });
   if (error) throw error;
@@ -378,11 +393,16 @@ export async function adminClearAllData(callerUid) {
 
 /* ── Published tests ────────────────────────────────────── */
 
-export async function publishTest({ title, subject, examType, difficulty, questions, durationMinutes, blueprintMatchPct }) {
+// createdBy distinguishes who published the test ('admin' | 'student') — both
+// AdminPaperGen and the student's own Exam Center "New Paper" generator write
+// into this same table, and without this marker admin has no way to tell an
+// admin-curated paper apart from one a random student auto-generated.
+export async function publishTest({ title, subject, examType, difficulty, questions, durationMinutes, blueprintMatchPct, createdBy = 'admin' }) {
   const insertRow = {
     title, subject, exam_type: examType, difficulty, questions,
     duration_minutes: durationMinutes, is_published: true,
     question_count: Array.isArray(questions) ? questions.length : 0,
+    created_by: createdBy,
   };
   if (blueprintMatchPct !== undefined) insertRow.blueprint_match_pct = blueprintMatchPct;
 
@@ -403,6 +423,19 @@ export async function publishPYQPaper({ title, examType, subject, durationMinute
   const batchId = Date.now().toString(36);
   const LETTER_IDX = { A: 0, B: 1, C: 2, D: 3 };
   const DESCRIPTIVE = new Set(['Short Answer', 'Long Answer']);
+
+  // Dedup by question text — re-run extractions/uploads can leave duplicate
+  // rows in pyq_questions, and this is a straight 1:1 map with no other
+  // dedup step, so a duplicate row here means a duplicate question in the
+  // published test a student actually sits.
+  const seenText = new Set();
+  pyqRows = pyqRows.filter((q) => {
+    const key = (q.question_text || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!key) return true;
+    if (seenText.has(key)) return false;
+    seenText.add(key);
+    return true;
+  });
 
   const questions = pyqRows.map((q, i) => {
     const type       = q.question_type || 'MCQ';
@@ -440,6 +473,7 @@ export async function publishPYQPaper({ title, examType, subject, durationMinute
       duration_minutes: durationMinutes,
       is_published:     true,
       question_count:   questions.length,
+      created_by:       'pyq_auto',
     })
     .select()
     .single();
@@ -453,62 +487,24 @@ export async function publishPYQPaper({ title, examType, subject, durationMinute
 export async function getPublishedTests() {
   const { data } = await supabase
     .from('published_tests')
-    .select('id, title, subject, exam_type, difficulty, duration_minutes, question_count, created_at, is_published')
+    .select('id, title, subject, exam_type, difficulty, duration_minutes, question_count, created_at, is_published, created_by')
     .order('created_at', { ascending: false });
   return data ?? [];
 }
 
 export async function getPublishedTest(id) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('published_tests')
     .select('*')
     .eq('id', id)
     .single();
+  if (error) throw error;
   return data;
 }
 
 export async function deletePublishedTest(id) {
   await supabase.from('published_tests').delete().eq('id', id);
   logChange(ENTITY.PUBLISHED_TEST, id, ACTION.DELETE_REQUEST, null, 'Admin deleted published test');
-}
-
-/* ── Crawl job persistence ──────────────────────────────── */
-
-export async function adminCreateCrawlJob(url) {
-  const { data } = await supabase
-    .from('crawl_jobs')
-    .insert({ url, status: 'running' })
-    .select()
-    .single();
-  return data;
-}
-
-export async function adminUpdateCrawlJob(id, fields) {
-  await supabase.from('crawl_jobs').update(fields).eq('id', id);
-}
-
-export async function adminBulkInsertCrawlPdfs(jobId, pdfs) {
-  // pdfs: [{ source_url, filename, status, skip_reason }]
-  if (!pdfs.length) return [];
-  const { data } = await supabase
-    .from('crawl_pdfs')
-    .insert(pdfs.map((p) => ({ job_id: jobId, ...p })))
-    .select();
-  return data ?? [];
-}
-
-export async function adminUpdateCrawlPdf(id, fields) {
-  await supabase.from('crawl_pdfs').update(fields).eq('id', id);
-}
-
-export async function adminGetLatestCrawlJob() {
-  const { data } = await supabase
-    .from('crawl_jobs')
-    .select('*, crawl_pdfs(*)')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return data;
 }
 
 /* ── Exam notifications ─────────────────────────────────── */
@@ -550,13 +546,15 @@ export async function addMonitoredSource({ name, url, examCategory }) {
 }
 
 export async function deleteMonitoredSource(id) {
-  await supabase.from('monitored_sources').delete().eq('id', id);
+  const { error } = await supabase.from('monitored_sources').delete().eq('id', id);
+  if (error) throw new Error(error.message);
   logChange(ENTITY.SYSTEM, id, ACTION.BULK_DELETE,
     null, 'Monitored source removed');
 }
 
 export async function deactivateExamNotification(id) {
-  await supabase.from('exam_notifications').update({ is_active: false }).eq('id', id);
+  const { error } = await supabase.from('exam_notifications').update({ is_active: false }).eq('id', id);
+  if (error) throw new Error(error.message);
   logChange(ENTITY.SYSTEM, id, ACTION.ARCHIVE,
     { after: { is_active: false } }, 'Exam notification deactivated');
 }

@@ -3,15 +3,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   BookOpen, Plus, X, Loader2, Edit3, Trash2, Eye, EyeOff,
   Search, Tag, Globe, Building2, Upload, Sparkles, FileText, Check,
+  List, Layers, ChevronDown,
 } from 'lucide-react';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 import { supabase } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { chatComplete } from '../lib/aiProxy';
 import { extractPdfText } from '../lib/pdfAnalyzer';
-import { getAllExamTypes } from '../lib/categories';
-
-const SUBJECTS = ['Biology', 'Physics', 'Chemistry', 'Mathematics', 'Mixed'];
+import { getAllExamTypes, getSubjectsForExam, BOARDS, CLASS_LEVELS } from '../lib/categories';
 const SUBJ_COLORS = {
   Biology:     'bg-violet-900/30 text-violet-300 border border-violet-700/30',
   Physics:     'bg-blue-900/30 text-blue-300 border border-blue-700/30',
@@ -180,6 +179,10 @@ function NoteModal({ note, centres, examTypes, onClose, onSaved }) {
     centre_id:    note?.centre_id    ?? '',
     is_published: note?.is_published ?? false,
     tags:         note?.tags?.join(', ') ?? '',
+    unit:         note?.unit         ?? '',
+    page_start:   note?.page_start   ?? '',
+    page_end:     note?.page_end     ?? '',
+    sort_order:   note?.sort_order   ?? 0,
   });
   const [saving,          setSaving]         = useState(false);
   const [err,             setErr]            = useState('');
@@ -218,6 +221,10 @@ function NoteModal({ note, centres, examTypes, onClose, onSaved }) {
         p_centre_id:    form.centre_id || null,
         p_is_published: form.is_published,
         p_tags:         form.tags.split(',').map(t => t.trim()).filter(Boolean),
+        p_unit:         form.unit.trim() || null,
+        p_page_start:   form.page_start === '' ? null : Number(form.page_start),
+        p_page_end:     form.page_end === '' ? null : Number(form.page_end),
+        p_sort_order:   Number(form.sort_order) || 0,
       });
       if (error) throw error;
       logChange(ENTITY.STUDY_NOTE, data?.id ?? 'unknown', isEdit ? ACTION.UPDATE : ACTION.CREATE,
@@ -271,7 +278,7 @@ function NoteModal({ note, centres, examTypes, onClose, onSaved }) {
             <div>
               <label className={labelCls}>Subject</label>
               <select value={form.subject} onChange={set('subject')} className={inputCls}>
-                {SUBJECTS.map(s => <option key={s}>{s}</option>)}
+                {[...new Set([...getSubjectsForExam(form.exam_type), 'Mixed'])].map(s => <option key={s}>{s}</option>)}
               </select>
             </div>
             <div>
@@ -285,6 +292,21 @@ function NoteModal({ note, centres, examTypes, onClose, onSaved }) {
           <div>
             <label className={labelCls}>Chapter / Topic</label>
             <input value={form.chapter} onChange={set('chapter')} placeholder="e.g. Cell Division" className={inputCls} />
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-1">
+              <label className={labelCls}>Unit <span className="font-normal text-slate-500">(for Contents view)</span></label>
+              <input value={form.unit} onChange={set('unit')} placeholder="e.g. Unit 1: Wit and Wisdom" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Page start</label>
+              <input type="number" min="1" value={form.page_start} onChange={set('page_start')} placeholder="e.g. 1" className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Page end</label>
+              <input type="number" min="1" value={form.page_end} onChange={set('page_end')} placeholder="e.g. 14" className={inputCls} />
+            </div>
           </div>
 
           {form.pdf_url && (
@@ -340,15 +362,136 @@ function NoteModal({ note, centres, examTypes, onClose, onSaved }) {
   );
 }
 
+/* ── Single note row — shared by List view and Contents (Table of Contents) view ── */
+function NoteRow({ note, centres, showPages, onTogglePublish, onEdit, onDelete }) {
+  const subjCls = SUBJ_COLORS[note.subject] || 'bg-slate-800 text-slate-400 border border-white/10';
+  return (
+    <motion.div className="bg-slate-900/60 rounded-xl border border-white/8 p-4" layout initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            {showPages && (note.page_start || note.page_end) && (
+              <span className="text-[10px] font-mono bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full border border-white/10 shrink-0">
+                pg {note.page_start ?? '?'}{note.page_end && note.page_end !== note.page_start ? `–${note.page_end}` : ''}
+              </span>
+            )}
+            <p className="font-semibold text-white text-sm">{note.title}</p>
+            {!note.is_published && <span className="text-[10px] bg-amber-900/30 text-amber-400 font-bold px-2 py-0.5 rounded-full">DRAFT</span>}
+            {note.pdf_url && <span className="flex items-center gap-1 text-[10px] bg-primary-900/30 text-primary-300 font-bold px-2 py-0.5 rounded-full"><FileText size={8} />PDF</span>}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {note.subject && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${subjCls}`}>{note.subject}</span>}
+            {note.chapter && <span className="text-[10px] text-slate-500">{note.chapter}</span>}
+            {note.exam_type && <span className="text-[10px] text-slate-500">{note.exam_type.replace('_', ' ')}</span>}
+            {note.centre_id
+              ? <span className="flex items-center gap-1 text-[10px] text-violet-300 bg-violet-900/30 px-2 py-0.5 rounded-full"><Building2 size={9} />{centres.find(c => c.id === note.centre_id)?.name ?? 'Specific centre'}</span>
+              : <span className="flex items-center gap-1 text-[10px] text-emerald-300 bg-emerald-900/30 px-2 py-0.5 rounded-full"><Globe size={9} />Global</span>}
+          </div>
+          {note.tags?.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {[...new Set(note.tags)].map(t => <span key={t} className="flex items-center gap-1 text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded-full border border-white/5"><Tag size={7} />{t}</span>)}
+            </div>
+          )}
+          {note.content && <p className="mt-1 px-1 text-xs text-slate-400 line-clamp-2 leading-relaxed">{note.content}</p>}
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          <button onClick={() => onTogglePublish(note)} title={note.is_published ? 'Unpublish' : 'Publish'}
+            className={`p-2 rounded-lg transition-colors ${note.is_published ? 'text-emerald-400 hover:bg-emerald-900/20' : 'text-slate-500 hover:bg-white/5'}`}>
+            {note.is_published ? <Eye size={15} /> : <EyeOff size={15} />}
+          </button>
+          <button onClick={() => onEdit(note)} className="p-2 rounded-lg text-slate-500 hover:text-primary-400 hover:bg-primary-900/20 transition-colors">
+            <Edit3 size={15} />
+          </button>
+          <button onClick={() => onDelete(note)} title="Delete note"
+            className="p-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20 transition-colors">
+            <Trash2 size={15} />
+          </button>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+/* ── Table of Contents view — groups notes by `unit` (e.g. "Unit 1: Wit and
+ * Wisdom"), ordered by sort_order/page_start, mirroring the source book's
+ * real contents page. Notes without a unit (older/manually-added notes)
+ * fall into an "Other Notes" bucket at the end so nothing is hidden. ── */
+function ContentsView({ notes, centres, onTogglePublish, onEdit, onDelete }) {
+  const [collapsed, setCollapsed] = useState({});
+
+  const groups = new Map();
+  for (const n of notes) {
+    const key = n.unit?.trim() || '__ungrouped__';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(n);
+  }
+  const ordered = [...groups.entries()]
+    .sort(([a], [b]) => {
+      if (a === '__ungrouped__') return 1;
+      if (b === '__ungrouped__') return -1;
+      return a.localeCompare(b, undefined, { numeric: true });
+    })
+    .map(([unit, list]) => [
+      unit,
+      [...list].sort((x, y) => (x.sort_order ?? 0) - (y.sort_order ?? 0) || (x.page_start ?? 0) - (y.page_start ?? 0)),
+    ]);
+
+  if (notes.length === 0) return null;
+
+  return (
+    <div className="space-y-3">
+      {ordered.map(([unit, list]) => {
+        const isUngrouped = unit === '__ungrouped__';
+        const pages = list.filter(n => n.page_start != null).flatMap(n => [n.page_start, n.page_end ?? n.page_start]);
+        const range = pages.length ? `pg ${Math.min(...pages)}–${Math.max(...pages)}` : null;
+        const isOpen = !collapsed[unit];
+        return (
+          <div key={unit} className="bg-slate-900/40 rounded-2xl border border-white/8 overflow-hidden">
+            <button
+              onClick={() => setCollapsed(c => ({ ...c, [unit]: !c[unit] }))}
+              className="w-full flex items-center justify-between gap-3 p-4 hover:bg-white/5 transition-colors"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Layers size={15} className={isUngrouped ? 'text-slate-500' : 'text-primary-400'} />
+                <p className="font-bold text-white text-sm truncate">{isUngrouped ? 'Other Notes' : unit}</p>
+                <span className="text-[10px] text-slate-500 shrink-0">({list.length})</span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {range && <span className="text-[10px] font-mono text-slate-500">{range}</span>}
+                <ChevronDown size={15} className={`text-slate-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+              </div>
+            </button>
+            {isOpen && (
+              <div className="p-3 pt-0 space-y-2">
+                {list.map(note => (
+                  <NoteRow key={note.id} note={note} centres={centres} showPages
+                    onTogglePublish={onTogglePublish} onEdit={onEdit} onDelete={onDelete} />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function AdminStudyNotes() {
   const [notes,      setNotes]     = useState([]);
   const [centres,    setCentres]   = useState([]);
   const [loading,    setLoading]   = useState(true);
   const [search,     setSearch]    = useState('');
   const [subjectF,   setSubjectF]  = useState('All');
+  // Board/Class filters — with 668 notes spanning CBSE Class 8-12 across many
+  // subjects, the subject-only filter left "Mathematics" mixing every class's
+  // notes together with no way to narrow to just one board/class combo.
+  const [boardF,     setBoardF]    = useState(null);
+  const [classF,     setClassF]    = useState(null);
   const [modal,      setModal]     = useState(null);
   const [deleting,   setDeleting]  = useState(false);
   const [confirmNote, setConfirmNote] = useState(null); // note to delete
+  const [viewMode,   setViewMode]  = useState('list'); // 'list' | 'contents'
   const callerUid = getCallerUid();
   const examTypes = getAllExamTypes();
 
@@ -391,12 +534,31 @@ export default function AdminStudyNotes() {
     setModal(null);
   }
 
-  const subjects = ['All', ...SUBJECTS];
+  // Derived from the actual notes loaded (all of them, not filtered — `notes`
+  // is fetched once up-front, not re-queried per filter), so a CBSE Class 8
+  // Social Studies/Hindi note has a real filter option instead of only the
+  // NEET/JEE subject set.
+  const subjects = ['All', ...new Set(notes.map(n => n.subject).filter(Boolean))];
+
+  // exam_type is stored as "Board Class N" (e.g. "CBSE Class 10") — board and
+  // class filters are independent (picking a board alone should show every
+  // class of that board), same matching rule used everywhere else content is
+  // scoped to a board+class combo (see isRelevantToStudent in categories.js).
+  function matchesBoardClass(examType) {
+    if (!boardF && !classF) return true;
+    const m = (examType || '').match(/^(.+?)\s+Class\s+(\d+)$/);
+    if (!m) return false;
+    const [, board, cls] = m;
+    if (boardF && board !== boardF) return false;
+    if (classF && cls !== classF) return false;
+    return true;
+  }
+
   const filtered = notes.filter(n => {
     const q = search.toLowerCase();
     const matchSearch = !search || n.title.toLowerCase().includes(q) || (n.chapter || '').toLowerCase().includes(q);
     const matchSubj   = subjectF === 'All' || n.subject === subjectF;
-    return matchSearch && matchSubj;
+    return matchSearch && matchSubj && matchesBoardClass(n.exam_type);
   });
 
   return (
@@ -424,18 +586,64 @@ export default function AdminStudyNotes() {
         ))}
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="relative">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search notes…"
             className="pl-8 pr-3 py-2 text-xs rounded-xl bg-slate-800 border border-white/10 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500 w-52" />
         </div>
-        {subjects.map(s => (
-          <button key={s} onClick={() => setSubjectF(s)}
-            className={['px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors', subjectF === s ? 'bg-primary-600 text-white border-primary-600' : 'bg-slate-800 text-slate-400 border-white/10 hover:border-primary-500/50 hover:text-primary-300'].join(' ')}>
-            {s}
+        <div className="flex items-center gap-0.5 bg-slate-800 rounded-xl border border-white/10 p-0.5">
+          <button onClick={() => setViewMode('list')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-semibold transition-colors ${viewMode === 'list' ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+            <List size={13} /> List
           </button>
-        ))}
+          <button onClick={() => setViewMode('contents')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-semibold transition-colors ${viewMode === 'contents' ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+            <Layers size={13} /> Contents
+          </button>
+        </div>
+        {(boardF || classF) && (
+          <button onClick={() => { setBoardF(null); setClassF(null); }}
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors">
+            Clear board/class ✕
+          </button>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-[10px] font-bold text-slate-500 uppercase">Board</p>
+        <div className="flex flex-wrap gap-1.5">
+          {BOARDS.map(b => (
+            <button key={b} onClick={() => setBoardF(prev => prev === b ? null : b)}
+              className={['px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors', boardF === b ? 'bg-primary-600 text-white border-primary-600' : 'bg-slate-800 text-slate-400 border-white/10 hover:border-primary-500/50 hover:text-primary-300'].join(' ')}>
+              {b}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-[10px] font-bold text-slate-500 uppercase">Class</p>
+        <div className="flex flex-wrap gap-1.5">
+          {CLASS_LEVELS.map(cl => (
+            <button key={cl} onClick={() => setClassF(prev => prev === cl ? null : cl)}
+              className={['px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors', classF === cl ? 'bg-primary-600 text-white border-primary-600' : 'bg-slate-800 text-slate-400 border-white/10 hover:border-primary-500/50 hover:text-primary-300'].join(' ')}>
+              Class {cl}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <p className="text-[10px] font-bold text-slate-500 uppercase">Subject</p>
+        <div className="flex flex-wrap gap-1.5">
+          {subjects.map(s => (
+            <button key={s} onClick={() => setSubjectF(s)}
+              className={['px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors', subjectF === s ? 'bg-primary-600 text-white border-primary-600' : 'bg-slate-800 text-slate-400 border-white/10 hover:border-primary-500/50 hover:text-primary-300'].join(' ')}>
+              {s}
+            </button>
+          ))}
+        </div>
       </div>
 
       {loading ? (
@@ -443,54 +651,25 @@ export default function AdminStudyNotes() {
       ) : filtered.length === 0 ? (
         <div className="bg-slate-900/60 rounded-2xl border border-white/8 p-10 text-center">
           <BookOpen size={28} className="text-slate-700 mx-auto mb-2" />
-          <p className="text-sm text-slate-400">No study notes yet. Add your first one!</p>
+          <p className="text-sm text-slate-400">
+            {notes.length === 0 ? 'No study notes yet. Add your first one!' : 'No notes match this filter combination.'}
+          </p>
+          {notes.length > 0 && (
+            <button onClick={() => { setBoardF(null); setClassF(null); setSubjectF('All'); setSearch(''); }}
+              className="mt-2 text-xs text-primary-400 hover:underline">
+              Clear filters
+            </button>
+          )}
         </div>
+      ) : viewMode === 'contents' ? (
+        <ContentsView notes={filtered} centres={centres}
+          onTogglePublish={togglePublish} onEdit={(n) => setModal(n)} onDelete={(n) => setConfirmNote(n)} />
       ) : (
         <div className="space-y-2">
-          {filtered.map(note => {
-            const subjCls = SUBJ_COLORS[note.subject] || 'bg-slate-800 text-slate-400 border border-white/10';
-            return (
-              <motion.div key={note.id} className="bg-slate-900/60 rounded-xl border border-white/8 p-4" layout initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                <div className="flex items-start gap-3">
-                  <div className="flex-1 min-w-0 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-semibold text-white text-sm">{note.title}</p>
-                      {!note.is_published && <span className="text-[10px] bg-amber-900/30 text-amber-400 font-bold px-2 py-0.5 rounded-full">DRAFT</span>}
-                      {note.pdf_url && <span className="flex items-center gap-1 text-[10px] bg-primary-900/30 text-primary-300 font-bold px-2 py-0.5 rounded-full"><FileText size={8} />PDF</span>}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      {note.subject && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${subjCls}`}>{note.subject}</span>}
-                      {note.chapter && <span className="text-[10px] text-slate-500">{note.chapter}</span>}
-                      {note.exam_type && <span className="text-[10px] text-slate-500">{note.exam_type.replace('_', ' ')}</span>}
-                      {note.centre_id
-                        ? <span className="flex items-center gap-1 text-[10px] text-violet-300 bg-violet-900/30 px-2 py-0.5 rounded-full"><Building2 size={9} />{centres.find(c => c.id === note.centre_id)?.name ?? 'Specific centre'}</span>
-                        : <span className="flex items-center gap-1 text-[10px] text-emerald-300 bg-emerald-900/30 px-2 py-0.5 rounded-full"><Globe size={9} />Global</span>}
-                    </div>
-                    {note.tags?.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {note.tags.map(t => <span key={t} className="flex items-center gap-1 text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded-full border border-white/5"><Tag size={7} />{t}</span>)}
-                      </div>
-                    )}
-                    {note.content && <p className="mt-1 px-1 text-xs text-slate-400 line-clamp-2 leading-relaxed">{note.content}</p>}
-                  </div>
-
-                  <div className="flex items-center gap-1 shrink-0">
-                    <button onClick={() => togglePublish(note)} title={note.is_published ? 'Unpublish' : 'Publish'}
-                      className={`p-2 rounded-lg transition-colors ${note.is_published ? 'text-emerald-400 hover:bg-emerald-900/20' : 'text-slate-500 hover:bg-white/5'}`}>
-                      {note.is_published ? <Eye size={15} /> : <EyeOff size={15} />}
-                    </button>
-                    <button onClick={() => { setModal(note); }} className="p-2 rounded-lg text-slate-500 hover:text-primary-400 hover:bg-primary-900/20 transition-colors">
-                      <Edit3 size={15} />
-                    </button>
-                    <button onClick={() => setConfirmNote(note)} title="Delete note"
-                      className="p-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20 transition-colors">
-                      <Trash2 size={15} />
-                    </button>
-                  </div>
-                </div>
-              </motion.div>
-            );
-          })}
+          {filtered.map(note => (
+            <NoteRow key={note.id} note={note} centres={centres}
+              onTogglePublish={togglePublish} onEdit={(n) => setModal(n)} onDelete={(n) => setConfirmNote(n)} />
+          ))}
         </div>
       )}
 

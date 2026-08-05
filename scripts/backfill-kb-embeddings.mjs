@@ -7,7 +7,7 @@
  *   node scripts/backfill-kb-embeddings.mjs --reset    # delete checkpoint and restart from beginning
  *
  * Requires:
- *   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_OPENAI_API_KEY in .env
+ *   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY in .env
  *
  * The script maintains a checkpoint file (.backfill-checkpoint) containing the
  * last successfully processed row ID so it can resume after interruption.
@@ -15,7 +15,6 @@
 
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs';
 import { createClient } from '@supabase/supabase-js';
-import OpenAI from 'openai';
 
 // ── Load .env manually (no dotenv dependency required) ───────────────
 
@@ -32,15 +31,17 @@ loadEnv('.env.local');
 
 const SUPABASE_URL  = process.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY  = process.env.VITE_SUPABASE_ANON_KEY;
-const OPENAI_KEY    = process.env.VITE_OPENAI_API_KEY;
 
-if (!SUPABASE_URL || !SUPABASE_KEY || !OPENAI_KEY) {
-  console.error('[backfill] Missing required env vars: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_OPENAI_API_KEY');
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error('[backfill] Missing required env vars: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY');
   process.exit(1);
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-const openai   = new OpenAI({ apiKey: OPENAI_KEY });
+const supabase  = createClient(SUPABASE_URL, SUPABASE_KEY);
+const PROXY_URL = `${SUPABASE_URL}/functions/v1/ai-proxy`;
+// VITE_OPENAI_API_KEY in .env is a deliberately-revoked key — route through the
+// same ai-proxy edge function the app itself uses, which holds the real key
+// server-side (see scripts/ingest-ncert-folder.mjs for the same pattern).
 
 // ── Config ────────────────────────────────────────────────────────────
 
@@ -74,8 +75,14 @@ function saveCheckpoint(lastId) {
 
 async function embedText(text) {
   try {
-    const res = await openai.embeddings.create({ model: 'text-embedding-3-small', input: text });
-    return res.data?.[0]?.embedding ?? null;
+    const res = await fetch(`${PROXY_URL}?route=embeddings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_KEY}` },
+      body: JSON.stringify({ model: 'text-embedding-3-small', input: text }),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json?.data?.[0]?.embedding ?? null;
   } catch { return null; }
 }
 

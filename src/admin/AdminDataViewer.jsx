@@ -167,8 +167,8 @@ export default function AdminDataViewer() {
         )}
       </SectionCard>
 
-      {/* 2. Crawled Papers */}
-      <SectionCard icon={<FileText size={16} />} title={`Crawled Papers (${papers.length})`} loading={loading}>
+      {/* 2. Uploaded Papers */}
+      <SectionCard icon={<FileText size={16} />} title={`Uploaded Papers (${papers.length})`} loading={loading}>
         {papers.length === 0 ? (
           <p className="text-slate-500 text-sm">No papers crawled yet.</p>
         ) : (

@@ -103,7 +103,7 @@ export default function StreakWidget() {
         </div>
         <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
           <motion.div
-            className="h-full bg-gradient-to-r from-violet-500 to-primary-500 rounded-full"
+            className="h-full bg-gradient-to-r from-primary-600 to-primary-400 rounded-full"
             initial={{ width: 0 }}
             animate={{ width: `${pct}%` }}
             transition={{ duration: 0.8, ease: 'easeOut' }}

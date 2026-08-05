@@ -3,20 +3,19 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import {
   Sparkles, Play, Clock, FileText, Plus, Loader2, Trophy,
-  Target, BookOpen, X, ChevronRight, Zap, GraduationCap, Printer,
+  Target, BookOpen, X, ChevronRight, Zap, GraduationCap, Printer, ClipboardList,
 } from 'lucide-react';
 import { generateQuestionPaper, toEngineFormat } from '../lib/questionGen';
 import { getExamPattern, getMarkingLabel, getSubjectQuestionCount, getTestDurationMinutes } from '../lib/examPattern';
-import { publishTest, getPublishedTests, getCompletedTestIds, supabase } from '../lib/supabase';
+import { publishTest, getPublishedTests, getCompletedTestIds, supabase, publishPYQPaper } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { checkQuota, incrementQuota } from '../lib/quota';
 import { getFeatureFlag, FLAGS } from '../lib/featureFlags';
+import PaywallModal from '../components/ui/PaywallModal';
 
 import { useSyllabusSubjects } from '../hooks/useSyllabusSubjects';
 import { useSyllabusChapters } from '../hooks/useSyllabusChapters';
-import { buildExamType } from '../lib/categories';
-
-const EXAM_FILTERS = ['All', 'NEET', 'JEE Main', 'JEE Advanced', 'CBSE', 'Class 10', 'Class 12', 'UPSC', 'CUET'];
+import { buildExamType, isRelevantToStudent } from '../lib/categories';
 
 // Question types per exam (mirrors what the real paper uses)
 const EXAM_QTYPES = {
@@ -110,6 +109,7 @@ function GenerateModal({ onClose, onDone }) {
   const [chapters,   setChapters]   = useState([]);
   const [status,     setStatus]     = useState('idle');
   const [error,      setError]      = useState('');
+  const [showPaywall, setShowPaywall] = useState(false);
 
   // Keep the selected subject valid once the live subject list loads/changes.
   useEffect(() => {
@@ -122,8 +122,8 @@ function GenerateModal({ onClose, onDone }) {
 
   const handleGenerate = async () => {
     setError('');
-    const quota = await checkQuota(currentUser?.uid, 'ai_questions_used', isPremium);
-    if (!quota.allowed) { setError(quota.reason); return; }
+    const quota = await checkQuota(currentUser?.uid, 'ai_questions_used', isPremium, undefined, questionCount);
+    if (!quota.allowed) { setShowPaywall(true); return; }
     setStatus('generating');
     const examQTypes = EXAM_QTYPES[examType] || ['MCQ'];
     try {
@@ -148,6 +148,7 @@ function GenerateModal({ onClose, onDone }) {
         difficulty,
         questions:       formatted,
         durationMinutes: duration,
+        createdBy:       'student',
       });
 
       incrementQuota(currentUser?.uid, 'ai_questions_used', formatted.length).catch(() => {});
@@ -244,6 +245,16 @@ function GenerateModal({ onClose, onDone }) {
             : <><Sparkles size={16} /> Generate &amp; Start Exam</>}
         </button>
       </motion.div>
+
+      {showPaywall && (
+        <PaywallModal
+          onClose={() => setShowPaywall(false)}
+          feature="AI exam paper generation"
+          firebaseUid={currentUser?.uid}
+          email={currentUser?.email}
+          name={userProfile?.display_name}
+        />
+      )}
     </motion.div>
   );
 }
@@ -375,6 +386,136 @@ function CoachingTestsSection({ firebaseUid, onStart, onStartPaper, paperModeEna
   );
 }
 
+
+/* ── Previous Year Papers (from uploaded PYQs) ─────────────── */
+function PYQBankSection() {
+  const navigate = useNavigate();
+  const { userProfile } = useAuth();
+  const [groups,     setGroups]    = useState([]);
+  const [loading,    setLoading]   = useState(true);
+  const [launching,  setLaunching] = useState(null); // group key being launched
+
+  useEffect(() => {
+    supabase
+      .from('pyq_questions')
+      .select('id, exam_type, subject, chapter, marks, section, question_type, question_text, options, correct_answer, explanation, year, image_url')
+      // KB_NOTE rows are content-review chunks, not real questions — they
+      // have no answerable options and were showing up as unanswerable
+      // "questions" in published tests (e.g. a plain paragraph with no
+      // input, no options, yet already marked "answered"). status must also
+      // be 'published' — 'in_review' rows haven't been admin-approved yet.
+      .neq('question_type', 'KB_NOTE')
+      .eq('status', 'published')
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        const relevant = (data ?? []).filter((q) => isRelevantToStudent(q.exam_type, userProfile));
+        if (!relevant.length) { setLoading(false); return; }
+        // Group by exam_type + subject
+        const map = {};
+        relevant.forEach((q) => {
+          const key = `${q.exam_type || 'General'}||${q.subject || 'Mixed'}`;
+          if (!map[key]) map[key] = { examType: q.exam_type, subject: q.subject, rows: [] };
+          map[key].rows.push(q);
+        });
+        setGroups(Object.values(map));
+        setLoading(false);
+      });
+  }, [userProfile?.syllabus, userProfile?.class_level, userProfile?.target_exam]);
+
+  const handleLaunch = async (group) => {
+    const key = `${group.examType}||${group.subject}`;
+    setLaunching(key);
+    try {
+      const title = `${group.examType || 'PYQ'} · ${group.subject} · Question Bank`;
+      const dur   = Math.max(10, Math.ceil(group.rows.length * 1.5));
+      const pub   = await publishPYQPaper({
+        title,
+        examType: group.examType || 'CBSE',
+        subject:  group.subject  || 'Mixed',
+        durationMinutes: dur,
+        pyqRows: group.rows,
+      });
+      navigate(`/test?id=${pub.id}`);
+    } catch (e) {
+      alert(`Launch failed: ${e.message}`);
+    } finally {
+      setLaunching(null);
+    }
+  };
+
+  if (loading) return (
+    <div className="flex items-center gap-2 text-slate-400 text-sm py-4">
+      <Loader2 size={14} className="animate-spin" /> Loading previous year papers…
+    </div>
+  );
+  if (!groups.length) return null;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <ClipboardList size={16} className="text-violet-600" />
+        <h3 className="font-bold text-slate-900 text-sm">Previous Year Question Papers</h3>
+        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">
+          {groups.length} set{groups.length !== 1 ? 's' : ''}
+        </span>
+      </div>
+      <div className="grid sm:grid-cols-2 gap-4">
+        {groups.map((g) => {
+          const key        = `${g.examType}||${g.subject}`;
+          const isLaunch   = launching === key;
+          const chapters   = [...new Set(g.rows.map((r) => r.chapter).filter(Boolean))];
+          const totalMarks = g.rows.reduce((s, r) => s + (r.marks ?? 1), 0);
+          return (
+            <motion.div
+              key={key}
+              className="card p-4 space-y-3 hover:shadow-md transition-shadow"
+              initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">{g.examType || 'General'}</span>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{g.subject || 'Mixed'}</span>
+                  </div>
+                  <h4 className="font-semibold text-slate-900 text-sm">{g.examType} {g.subject} PYQ Set</h4>
+                </div>
+              </div>
+
+              <div className="flex gap-3 text-xs text-slate-500">
+                <span className="flex items-center gap-1"><Target size={11} /> {g.rows.length} questions</span>
+                <span className="flex items-center gap-1"><Clock size={11} /> ~{Math.ceil(g.rows.length * 1.5)} min</span>
+                <span className="flex items-center gap-1">✦ {totalMarks} marks</span>
+              </div>
+
+              {chapters.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {chapters.slice(0, 4).map((ch) => (
+                    <span key={ch} className="text-[10px] bg-slate-50 border border-slate-200 text-slate-500 px-2 py-0.5 rounded-full">{ch}</span>
+                  ))}
+                  {chapters.length > 4 && (
+                    <span className="text-[10px] text-slate-400">+{chapters.length - 4} more</span>
+                  )}
+                </div>
+              )}
+
+              <button
+                onClick={() => handleLaunch(g)}
+                disabled={!!launching}
+                className="w-full py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+              >
+                {isLaunch
+                  ? <><Loader2 size={13} className="animate-spin" /> Preparing test…</>
+                  : <><Play size={13} /> Start PYQ Practice</>
+                }
+              </button>
+            </motion.div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ── Empty state ─────────────────────────────────────────── */
 function EmptyState({ onGenerate }) {
   return (
@@ -435,7 +576,11 @@ export default function ExamCenterPage() {
   }, []);
 
   // Students only see papers for their own exam type
-  const gradeFiltered = papers.filter((p) => !p.exam_type || p.exam_type === userExam);
+  // getPublishedTests() is shared with admin screens that need to see drafts
+  // too, so it can't filter is_published itself — that check belongs here,
+  // at the student-facing consumer. Without it, a draft/unpublished test was
+  // fully visible and launchable by students exactly like a real one.
+  const gradeFiltered = papers.filter((p) => p.is_published !== false && (!p.exam_type || p.exam_type === userExam));
   const filtered = filter === 'All'
     ? gradeFiltered
     : gradeFiltered.filter((p) => p.exam_type === filter);
@@ -484,6 +629,15 @@ export default function ExamCenterPage() {
 
       {/* Coaching centre tests */}
       <CoachingTestsSection firebaseUid={currentUser?.uid} onStart={handleStart} onStartPaper={handleStartPaper} paperModeEnabled={paperModeEnabled} />
+
+      {/* Previous year question papers */}
+      <PYQBankSection />
+
+      <div className="flex items-center gap-3">
+        <div className="flex-1 h-px bg-slate-100" />
+        <span className="text-xs text-slate-400 font-medium">AI-Generated & Admin Papers</span>
+        <div className="flex-1 h-px bg-slate-100" />
+      </div>
 
       {/* Filter chips — derived from the student's visible papers so no ghost chips appear */}
       <div className="flex flex-wrap gap-2">

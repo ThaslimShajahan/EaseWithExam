@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-  CreditCard, Loader2, Search, RefreshCw, TrendingUp, Users, IndianRupee,
+  CreditCard, Loader2, Search, RefreshCw, TrendingUp, Users, IndianRupee, UserMinus,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { PLANS } from '../lib/subscription';
+import { logChange, ENTITY, ACTION } from '../lib/changelog';
+import ConfirmDialog from '../components/ui/ConfirmDialog';
 
 function getCallerUid() {
   try {
@@ -24,9 +26,9 @@ function planBadge(plan) {
 }
 
 function statusBadge(status) {
-  return status === 'active'
-    ? 'bg-emerald-900 text-emerald-300'
-    : 'bg-red-900/50 text-red-400';
+  if (status === 'active')    return 'bg-emerald-900 text-emerald-300';
+  if (status === 'expired')   return 'bg-amber-900/50 text-amber-400';
+  return 'bg-red-900/50 text-red-400'; // cancelled
 }
 
 export default function AdminSubscriptions() {
@@ -35,6 +37,8 @@ export default function AdminSubscriptions() {
   const [loading, setLoading] = useState(true);
   const [search,  setSearch]  = useState('');
   const [stats,   setStats]   = useState(null);
+  const [confirmRow, setConfirmRow] = useState(null); // subscription row to cancel
+  const [cancelling, setCancelling] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -51,6 +55,23 @@ export default function AdminSubscriptions() {
   };
 
   useEffect(() => { load(); }, []);
+
+  const handleCancel = async (row) => {
+    setCancelling(true);
+    try {
+      const { error } = await supabase.rpc('admin_cancel_subscription', { p_caller: callerUid, p_user_id: row.user_id });
+      if (error) throw error;
+      logChange(ENTITY.SYSTEM, row.user_id, ACTION.UPDATE,
+        { before: { status: row.status }, after: { status: 'cancelled' } },
+        `Admin downgraded ${row.user_id} from ${row.plan} to free`);
+      setConfirmRow(null);
+      await load();
+    } catch (e) {
+      console.error('Cancel subscription failed:', e);
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const filtered = rows.filter(r =>
     !search ||
@@ -112,7 +133,7 @@ export default function AdminSubscriptions() {
           <table className="w-full text-sm">
             <thead className="border-b border-white/5 bg-slate-900/30">
               <tr>
-                {['User ID', 'Plan', 'Status', 'Starts', 'Expires', 'Paid', 'Payment ID'].map(h => (
+                {['User ID', 'Plan', 'Status', 'Starts', 'Expires', 'Paid', 'Payment ID', 'Actions'].map(h => (
                   <th key={h} className="text-left px-4 py-3 text-slate-400 font-semibold text-xs whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -120,13 +141,13 @@ export default function AdminSubscriptions() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center">
+                  <td colSpan={8} className="px-4 py-12 text-center">
                     <Loader2 size={20} className="animate-spin text-primary-500 mx-auto" />
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center text-slate-500 text-sm">
+                  <td colSpan={8} className="px-4 py-12 text-center text-slate-500 text-sm">
                     {rows.length > 0 ? 'No results match your search.' : 'No subscriptions yet.'}
                   </td>
                 </tr>
@@ -161,12 +182,33 @@ export default function AdminSubscriptions() {
                   <td className="px-4 py-3 font-mono text-xs text-slate-500 max-w-[120px] truncate">
                     {r.razorpay_payment_id ?? '—'}
                   </td>
+                  <td className="px-4 py-3">
+                    {r.status === 'active' && r.plan !== 'free' && (
+                      <button
+                        onClick={() => setConfirmRow(r)}
+                        title="Downgrade to free"
+                        className="flex items-center gap-1 text-xs font-semibold text-red-400 hover:text-red-300 hover:bg-red-900/20 px-2 py-1 rounded-lg transition-colors"
+                      >
+                        <UserMinus size={12} /> Downgrade
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={!!confirmRow}
+        onClose={() => setConfirmRow(null)}
+        onConfirm={() => handleCancel(confirmRow)}
+        title={`Downgrade ${confirmRow?.user_id ?? 'this user'} to Free?`}
+        description={`This immediately ends their ${confirmRow ? (PLANS?.[confirmRow.plan]?.name ?? confirmRow.plan) : ''} access — they'll drop to free-plan daily limits right away. This does not process any refund in Razorpay.`}
+        confirmLabel="Downgrade to Free"
+        loading={cancelling}
+      />
     </div>
   );
 }

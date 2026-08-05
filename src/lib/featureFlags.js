@@ -149,4 +149,5 @@ export const FLAGS = {
   CENTRE_INVITES:        'centre_invites_enabled',
   BLUEPRINT_V2:          'blueprint_v2_enabled',
   PAPER_MODE_V2:         'paper_mode_v2_enabled',
+  MAINTENANCE_MODE:      'maintenance_mode_enabled',
 };

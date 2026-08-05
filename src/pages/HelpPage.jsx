@@ -249,7 +249,7 @@ export default function HelpPage() {
     <div className="space-y-8 p-4 lg:p-0 max-w-3xl">
 
       {/* ── Hero header ── */}
-      <div className="bg-gradient-to-br from-primary-600 to-violet-700 rounded-3xl p-6 text-white space-y-4">
+      <div className="bg-gradient-to-br from-primary-500 to-primary-800 rounded-3xl p-6 text-white space-y-4">
         <div>
           <div className="flex items-center gap-2 mb-1.5">
             <Sparkles size={14} className="text-primary-200" />

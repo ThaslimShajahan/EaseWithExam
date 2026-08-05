@@ -6,10 +6,16 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { ROLE_KEY } from './AdminGuard';
-import { useAuth } from '../context/AuthContext';
 import StudentPicker from '../components/admin/StudentPicker';
 
 const isSuperAdmin = () => sessionStorage.getItem(ROLE_KEY) === 'superadmin';
+
+function getCallerUid() {
+  try {
+    const key = Object.keys(sessionStorage).find(k => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch { return ''; }
+}
 
 /* All reads/writes go through SECURITY DEFINER RPCs — the anon
    key cannot touch the admins table directly. */
@@ -190,14 +196,13 @@ function EditPasscodeModal({ admin, callerUid, onClose, onSaved }) {
 }
 
 export default function AdminAdmins() {
-  const { currentUser } = useAuth();
   const [admins,  setAdmins]  = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [editPc,  setEditPc]  = useState(null);
 
   const superadmin = isSuperAdmin();
-  const callerUid  = currentUser?.uid;
+  const callerUid  = getCallerUid();
 
   const load = async () => {
     setLoading(true);

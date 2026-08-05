@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Send, Loader2, AlertCircle, User, Mic, MicOff } from 'lucide-react';
 import katex from 'katex';
 import { VedaAvatarSm } from '../ui/VedaAvatar';
-import { searchKnowledgeBase } from '../../lib/supabase';
+import { searchKnowledgeBase, createDoubtChat, saveDoubtMessage } from '../../lib/supabase';
 import { chatCompleteStream } from '../../lib/aiProxy';
 import MathText from '../ui/MathText';
 import { awardXP } from '../../lib/gamification';
@@ -11,11 +11,15 @@ import { createNotification } from '../../lib/notifications';
 import { useAuth } from '../../context/AuthContext';
 import { checkQuota, incrementQuota } from '../../lib/quota';
 import PaywallModal from '../ui/PaywallModal';
+import { buildExamType } from '../../lib/categories';
 
 function buildSystemPrompt(userProfile) {
-  const exam    = userProfile?.target_exam || 'NEET';
-  const isBoard = /^(CBSE|ICSE|State Board|Class \d+)/.test(exam);
-  const isBoth  = exam === 'BOTH';
+  // target_exam alone is the raw onboarding enum (e.g. 'CLASS_10', 'JEE_MAIN') —
+  // never a string like "CBSE Class 10", so the isBoard regex must run against
+  // the resolved buildExamType() combo, not the raw field, or it never matches.
+  const exam    = buildExamType(userProfile?.target_exam, userProfile?.syllabus, userProfile?.class_level);
+  const isBoard = /^(CBSE|ICSE|State Board|Kerala State|Class \d+)/.test(exam);
+  const isBoth  = userProfile?.target_exam === 'BOTH';
 
   const scopeLine = isBoard
     ? `You strictly follow the ${exam} syllabus as prescribed by the official board curriculum.`
@@ -25,7 +29,7 @@ function buildSystemPrompt(userProfile) {
 
   const subjectLine = isBoard
     ? 'You help with all subjects: Mathematics, Science (Physics, Chemistry, Biology), Social Studies, English, and others as needed.'
-    : exam === 'JEE_MAIN' || exam === 'JEE_ADVANCED'
+    : exam === 'JEE Main' || exam === 'JEE Advanced'
     ? 'Your core subjects are Physics, Chemistry, and Mathematics.'
     : 'Your core subjects are Physics, Chemistry, and Biology.';
 
@@ -314,6 +318,27 @@ export default function ChatInterface({ imageFiles = [] }) {
   const inputRef     = useRef(null);
   const historyRef   = useRef([]);
   const recognRef    = useRef(null);
+  const chatIdRef    = useRef(null);
+  const chatIdPromiseRef = useRef(null);
+
+  // Lazily creates one doubt_chats row per session (admin visibility into
+  // real chat activity) — never blocks the actual chat UX if it fails.
+  const ensureChatId = () => {
+    if (chatIdRef.current) return Promise.resolve(chatIdRef.current);
+    if (!currentUser?.uid) return Promise.resolve(null);
+    if (!chatIdPromiseRef.current) {
+      chatIdPromiseRef.current = createDoubtChat(currentUser.uid, userProfile?.target_exam ?? null)
+        .then((chat) => { chatIdRef.current = chat.id; return chat.id; })
+        .catch(() => null);
+    }
+    return chatIdPromiseRef.current;
+  };
+
+  const persistMessage = (role, content) => {
+    ensureChatId().then((chatId) => {
+      if (chatId) saveDoubtMessage(chatId, role, content).catch(() => {});
+    });
+  };
 
   const toggleVoice = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -378,6 +403,16 @@ export default function ChatInterface({ imageFiles = [] }) {
 
   /* Called explicitly by the Analyse button */
   const runAnalysis = async () => {
+    // This is the most expensive call in the app (GPT-4o vision over full-page
+    // images) and had NO quota check at all — a free-tier student could run
+    // unlimited answer-sheet analyses per day while a single typed follow-up
+    // question correctly counted against their daily veda_messages_used cap.
+    const uid = currentUser?.uid;
+    if (uid) {
+      const quota = await checkQuota(uid, 'veda_messages_used', isPremium);
+      if (!quota.allowed) { setShowPaywall(true); return; }
+    }
+
     const ver = ++analysisVerRef.current;
     setAnalysisStarted(true);
     setLoading(true);
@@ -463,6 +498,9 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
         { id: aiId, role: 'ai', content: full, streaming: false },
       ]);
       historyRef.current.push({ role: 'assistant', content: full });
+      if (uid) incrementQuota(uid, 'veda_messages_used').catch(() => {});
+      persistMessage('user', `[Uploaded ${imageFiles.length > 1 ? `${imageFiles.length} pages` : '1 page'} for answer-sheet analysis]`);
+      persistMessage('assistant', full);
 
       if (!xpAwardedRef.current && currentUser) {
         xpAwardedRef.current = true;
@@ -507,6 +545,7 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
     const userMsg = { id: Date.now().toString(), role: 'user', content: text };
     setMessages((m) => [...m, userMsg]);
     setLoading(true);
+    persistMessage('user', text);
 
     // Award XP once per text-message session (images award XP in the analysis effect)
     if (!xpAwardedRef.current && currentUser && !hasImages) {
@@ -562,6 +601,7 @@ const chunks = await searchKnowledgeBase(text);
       historyRef.current.push({ role: 'assistant', content: full });
       // Increment quota after successful response
       if (uid) incrementQuota(uid, 'veda_messages_used').catch(() => {});
+      persistMessage('assistant', full);
     } catch (err) {
       setMessages((m) => m.filter((msg) => msg.id !== aiId));
       setApiError(
@@ -579,6 +619,18 @@ const chunks = await searchKnowledgeBase(text);
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   };
+
+  // The textarea had rows={1} with no auto-grow — typing a paragraph just
+  // overflowed a fixed-height box instead of expanding like a normal chat
+  // input (WhatsApp-style: grows with content, caps out and scrolls
+  // internally past max-h-28, Shift+Enter for a newline already worked via
+  // handleKeyDown above).
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [input]);
 
   return (
     <div className="flex flex-col h-full">
@@ -641,7 +693,13 @@ const chunks = await searchKnowledgeBase(text);
             placeholder={hasImages ? "Ask EWE about a specific step or page…" : "Ask EWE your doubt…"}
             rows={1}
             className="flex-1 bg-transparent resize-none outline-none text-sm text-slate-800
-                       placeholder:text-slate-400 max-h-28 leading-relaxed"
+                       placeholder:text-slate-400 max-h-28 overflow-y-auto leading-relaxed"
+            /* The browser's native focus ring was showing through the
+             * outline-none utility class (Windows/Chrome sometimes renders
+             * its own accessibility focus rect regardless of author CSS) —
+             * inline style wins over any stylesheet source, so it actually
+             * suppresses it. */
+            style={{ outline: 'none', boxShadow: 'none' }}
           />
           {/* Voice input */}
           <button

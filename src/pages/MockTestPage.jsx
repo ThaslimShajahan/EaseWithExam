@@ -5,6 +5,8 @@ import MockTestEngine from '../components/exam/MockTestEngine';
 import SkeletonLoader from '../components/ui/SkeletonLoader';
 import { useAuth } from '../context/AuthContext';
 import { checkQuota, incrementQuota } from '../lib/quota';
+import { getExamPattern, isCBSEStyle } from '../lib/examPattern';
+import PaywallModal from '../components/ui/PaywallModal';
 
 export default function MockTestPage() {
   const [params]    = useSearchParams();
@@ -14,47 +16,89 @@ export default function MockTestPage() {
   const [loading,      setLoading]      = useState(true);
   const [quotaErr,     setQuotaErr]     = useState('');
   const [priorAttempt, setPriorAttempt] = useState(null);
+  const [loadErr,      setLoadErr]      = useState('');
   const { currentUser, isPremium } = useAuth();
 
   useEffect(() => {
     async function init() {
       if (!testId) { navigate('/exam-center', { replace: true }); return; }
 
-      // One-time attempt check — before quota so re-viewers don't burn quota
-      const attempt = await getTestAttempt(currentUser?.uid, testId);
-      if (attempt) {
+      try {
+        // One-time attempt check — before quota so re-viewers don't burn quota
+        const attempt = await getTestAttempt(currentUser?.uid, testId);
+        if (attempt) {
+          const data = await getPublishedTest(testId);
+          if (!data) { setLoadErr('This test could not be found. It may have been removed.'); setLoading(false); return; }
+          setTest(data);
+          setPriorAttempt(attempt);
+          setLoading(false);
+          return;
+        }
+
+        // An IN-PROGRESS attempt (not yet submitted) also must not re-charge quota —
+        // getTestAttempt only sees completed test_sessions rows, so a mid-exam
+        // refresh (MockTestEngine saves progress to localStorage, keyed by test
+        // TITLE — see the matching storageKey in MockTestEngine.jsx) would otherwise
+        // burn quota again on every remount, and a free-tier student who refreshes
+        // a couple of times mid-exam could get shown "Daily Limit Reached" with no
+        // way back into their in-progress answers. Fetch the test first (needed to
+        // compute the same key) before deciding whether to charge quota at all.
         const data = await getPublishedTest(testId);
+        if (!data) { setLoadErr('This test could not be found. It may have been removed.'); setLoading(false); return; }
+        // The Exam Center listing already hides drafts, but a direct/bookmarked
+        // link to a test's id bypassed that entirely — nothing here checked
+        // is_published, so an unpublished (or since-unpublished) test was
+        // still fully launchable.
+        if (data.is_published === false) { setLoadErr('This test is not currently available.'); setLoading(false); return; }
+
+        const storageKey = `ewe_exam_${String(data.title || '').replace(/\W+/g, '_').slice(0, 40)}`;
+        const hasLocalProgress = (() => {
+          try { return !!localStorage.getItem(storageKey); } catch { return false; }
+        })();
+        if (hasLocalProgress) {
+          setTest(data);
+          setLoading(false);
+          return;
+        }
+
+        const quota = await checkQuota(currentUser?.uid, 'mock_tests_used', isPremium);
+        if (!quota.allowed) { setQuotaErr(quota.reason); setLoading(false); return; }
+
         setTest(data);
-        setPriorAttempt(attempt);
+        await incrementQuota(currentUser?.uid, 'mock_tests_used');
         setLoading(false);
-        return;
+      } catch (err) {
+        setLoadErr(err?.message || 'Could not load this test. Please try again.');
+        setLoading(false);
       }
-
-      const quota = await checkQuota(currentUser?.uid, 'mock_tests_used', isPremium);
-      if (!quota.allowed) { setQuotaErr(quota.reason); setLoading(false); return; }
-
-      const data = await getPublishedTest(testId);
-      if (!data) { navigate('/exam-center', { replace: true }); return; }
-      setTest(data);
-      await incrementQuota(currentUser?.uid, 'mock_tests_used');
-      setLoading(false);
     }
     init();
   }, [testId, currentUser?.uid, isPremium]);
 
   if (loading) return <SkeletonLoader type="test" />;
 
-  if (quotaErr) {
+  if (loadErr) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] p-8 text-center gap-4">
         <div className="text-4xl">⚠️</div>
-        <h2 className="text-xl font-bold text-slate-900">Daily Limit Reached</h2>
-        <p className="text-slate-600 max-w-sm">{quotaErr}</p>
+        <h2 className="text-xl font-bold text-slate-900">Couldn't load test</h2>
+        <p className="text-slate-600 max-w-sm">{loadErr}</p>
         <button onClick={() => navigate('/exam-center')}
           className="mt-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-semibold hover:bg-indigo-700 transition-colors">
           Back to Exam Center
         </button>
       </div>
+    );
+  }
+
+  if (quotaErr) {
+    return (
+      <PaywallModal
+        onClose={() => navigate('/exam-center')}
+        feature="Mock tests"
+        firebaseUid={currentUser?.uid}
+        email={currentUser?.email}
+      />
     );
   }
 
@@ -103,8 +147,7 @@ export default function MockTestPage() {
           title:        test.title,
           duration:     test.duration_minutes,
           instructions: (() => {
-            const cbseExams = new Set(['CBSE','ICSE','State Board','Class 8','Class 9','Class 10','Class 11','Class 12']);
-            const isCBSE    = cbseExams.has(test.exam_type);
+            const isCBSE = isCBSEStyle(getExamPattern(test.exam_type));
             return [
               `${test.questions.length} questions · ${test.exam_type} style`,
               isCBSE

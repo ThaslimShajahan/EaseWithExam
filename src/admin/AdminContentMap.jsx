@@ -2,14 +2,21 @@ import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Network, ChevronRight, ChevronDown, FileQuestion, BookOpen,
-  Loader2, AlertTriangle, Search, Info,
+  Loader2, AlertTriangle, Search, Info, Trash2, Check, X,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import TabRow from '../components/admin/TabRow';
+import { EXAM_TYPE_GROUPS } from '../lib/categories';
+import { logChange, ENTITY, ACTION } from '../lib/changelog';
 
-const EXAM_TABS = [
-  'CBSE', 'ICSE', 'State Board', 'Kerala State', 'NEET', 'JEE Main', 'JEE Advanced',
-];
+// Live-derived from Admin > Categories — boards first (this page groups by
+// board), then competitive exams. Excludes the "Classes" group since class
+// is tracked per-board within baseExamType(), not as its own top-level tab.
+function getExamTabs() {
+  const boards = EXAM_TYPE_GROUPS.find((g) => g.label === 'Boards')?.items ?? [];
+  const competitive = EXAM_TYPE_GROUPS.find((g) => g.label === 'Competitive')?.items ?? [];
+  return [...boards, ...competitive];
+}
 
 function getCallerUid() {
   try {
@@ -47,7 +54,7 @@ function buildTree(syllabusRows, pyqRows, noteRows) {
     tree[exam] ??= { classes: {} };
     tree[exam].classes[cls] ??= { subjects: {} };
     tree[exam].classes[cls].subjects[subject] ??= { chapters: {} };
-    tree[exam].classes[cls].subjects[subject].chapters[chapter] ??= { pyq: 0, notes: 0, inSyllabus: false };
+    tree[exam].classes[cls].subjects[subject].chapters[chapter] ??= { pyq: 0, notes: 0, inSyllabus: false, pyqIds: [], noteIds: [] };
     return tree[exam].classes[cls].subjects[subject].chapters[chapter];
   };
 
@@ -65,7 +72,7 @@ function buildTree(syllabusRows, pyqRows, noteRows) {
   // should be used directly instead of guessing. Only fall back to "which class
   // already has a matching syllabus chapter" for genuinely class-ambiguous
   // exam_types (a bare "CBSE" or "NEET" with no class suffix at all).
-  const applyContent = (rows, field) => {
+  const applyContent = (rows, field, idField) => {
     rows.forEach((r) => {
       const exam    = baseExamType(r.exam_type);
       const subject = r.subject || 'Unmapped';
@@ -73,7 +80,8 @@ function buildTree(syllabusRows, pyqRows, noteRows) {
 
       const explicitClass = classFromExamType(r.exam_type, null);
       if (explicitClass) {
-        ensureChapter(exam, explicitClass, subject, chapter)[field] += 1;
+        const node = ensureChapter(exam, explicitClass, subject, chapter);
+        node[field] += 1; node[idField].push(r.id);
         return;
       }
 
@@ -82,19 +90,43 @@ function buildTree(syllabusRows, pyqRows, noteRows) {
         ? Object.keys(examNode.classes).filter((cls) => examNode.classes[cls].subjects[subject]?.chapters[chapter])
         : [];
       const targets = matchingClasses.length ? matchingClasses : ['All'];
-      targets.forEach((cls) => { ensureChapter(exam, cls, subject, chapter)[field] += 1; });
+      targets.forEach((cls) => {
+        const node = ensureChapter(exam, cls, subject, chapter);
+        node[field] += 1; node[idField].push(r.id);
+      });
     });
   };
-  applyContent(pyqRows, 'pyq');
-  applyContent(noteRows, 'notes');
+  applyContent(pyqRows, 'pyq', 'pyqIds');
+  applyContent(noteRows, 'notes', 'noteIds');
 
   return tree;
 }
 
-function ChapterRow({ name, data, approximate }) {
+function ChapterRow({ name, data, approximate, onDelete, isDeleting }) {
   const empty = data.pyq === 0 && data.notes === 0;
+  const [confirming, setConfirming] = useState(false);
+
+  if (confirming) {
+    return (
+      <div className="flex items-center justify-between gap-3 pl-9 pr-3 py-2 rounded-lg bg-red-950/30 border border-red-700/30">
+        <p className="text-xs text-red-300 min-w-0 truncate">
+          Delete {data.pyq} PYQ{data.pyq !== 1 ? 's' : ''} + {data.notes} note{data.notes !== 1 ? 's' : ''} tagged "{name}"? This can't be undone.
+        </p>
+        <div className="flex items-center gap-1 shrink-0">
+          <button disabled={isDeleting} onClick={() => onDelete(name, data).finally(() => setConfirming(false))}
+            className="p-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
+            {isDeleting ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+          </button>
+          <button disabled={isDeleting} onClick={() => setConfirming(false)} className="p-1.5 rounded-lg text-slate-400 hover:bg-white/10">
+            <X size={13} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className={`flex items-center justify-between gap-3 pl-9 pr-3 py-2 rounded-lg ${empty ? 'bg-amber-950/20' : 'hover:bg-white/5'}`}>
+    <div className={`group flex items-center justify-between gap-3 pl-9 pr-3 py-2 rounded-lg ${empty ? 'bg-amber-950/20' : 'hover:bg-white/5'}`}>
       <div className="flex items-center gap-2 min-w-0">
         {!data.inSyllabus && (
           <span title="Not in Admin > Syllabus — content only" className="shrink-0">
@@ -110,12 +142,18 @@ function ChapterRow({ name, data, approximate }) {
         <span className={`flex items-center gap-1 ${data.notes === 0 ? 'text-slate-600' : 'text-emerald-400'}`} title={approximate ? 'Notes count not split by class in the data — shown for this chapter name across the board' : undefined}>
           <BookOpen size={11} /> {data.notes}
         </span>
+        {!empty && (
+          <button onClick={() => setConfirming(true)} title="Delete all PYQs/notes tagged with this chapter"
+            className="p-1 rounded-lg text-slate-600 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-900/20 transition-colors">
+            <Trash2 size={13} />
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
-function SubjectBlock({ subject, data, search, approximate }) {
+function SubjectBlock({ subject, data, search, approximate, onDeleteChapter, deletingKey }) {
   const [open, setOpen] = useState(!!search);
   const chapters = Object.entries(data.chapters)
     .filter(([name]) => !search || name.toLowerCase().includes(search.toLowerCase()));
@@ -143,7 +181,11 @@ function SubjectBlock({ subject, data, search, approximate }) {
         {open && (
           <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
             <div className="py-1.5 space-y-0.5">
-              {chapters.map(([name, data]) => <ChapterRow key={name} name={name} data={data} approximate={approximate} />)}
+              {chapters.map(([name, data]) => (
+                <ChapterRow key={name} name={name} data={data} approximate={approximate}
+                  isDeleting={deletingKey === `${subject}::${name}`}
+                  onDelete={(n, d) => onDeleteChapter(subject, n, d)} />
+              ))}
             </div>
           </motion.div>
         )}
@@ -153,38 +195,68 @@ function SubjectBlock({ subject, data, search, approximate }) {
 }
 
 export default function AdminContentMap() {
-  const [examTab,  setExamTab]  = useState('NEET');
-  const [classTab, setClassTab] = useState('All');
-  const [search,   setSearch]   = useState('');
-  const [loading,  setLoading]  = useState(true);
-  const [error,    setError]    = useState('');
-  const [tree,     setTree]     = useState({});
+  const [examTab,     setExamTab]     = useState('NEET');
+  const [classTab,    setClassTab]    = useState('All');
+  const [search,      setSearch]      = useState('');
+  const [loading,     setLoading]     = useState(true);
+  const [error,       setError]       = useState('');
+  const [tree,        setTree]        = useState({});
+  const [deletingKey, setDeletingKey] = useState(null);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true); setError('');
-      try {
-        const [syllabusRes, pyqRes, notesRes] = await Promise.all([
-          supabase.from('syllabus_nodes').select('exam_type, class_level, subject, chapter_name').eq('is_active', true).limit(5000),
-          supabase.from('pyq_questions').select('exam_type, subject, chapter').limit(5000),
-          supabase.rpc('admin_list_study_notes', { p_caller: getCallerUid() }),
-        ]);
-        if (syllabusRes.error) throw syllabusRes.error;
-        if (pyqRes.error) throw pyqRes.error;
+  async function loadAll() {
+    setLoading(true); setError('');
+    try {
+      const [syllabusRes, pyqRes, notesRes] = await Promise.all([
+        supabase.from('syllabus_nodes').select('exam_type, class_level, subject, chapter_name').eq('is_active', true).limit(5000),
+        supabase.from('pyq_questions').select('id, exam_type, subject, chapter').limit(5000),
+        supabase.rpc('admin_list_study_notes', { p_caller: getCallerUid() }),
+      ]);
+      if (syllabusRes.error) throw syllabusRes.error;
+      if (pyqRes.error) throw pyqRes.error;
 
-        const noteRows = Array.isArray(notesRes.data) ? notesRes.data : [];
-        setTree(buildTree(syllabusRes.data ?? [], pyqRes.data ?? [], noteRows));
-      } catch (e) {
-        setError(e.message || 'Failed to load content map');
-      } finally {
-        setLoading(false);
+      const noteRows = Array.isArray(notesRes.data) ? notesRes.data : [];
+      setTree(buildTree(syllabusRes.data ?? [], pyqRes.data ?? [], noteRows));
+    } catch (e) {
+      setError(e.message || 'Failed to load content map');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { loadAll(); }, []);
+
+  async function handleDeleteChapter(subject, chapterName, data) {
+    const key = `${subject}::${chapterName}`;
+    setDeletingKey(key);
+    const callerUid = getCallerUid();
+    try {
+      if (data.pyqIds.length) {
+        const { error } = await supabase.from('pyq_questions').delete().in('id', data.pyqIds);
+        if (error) throw error;
+        logChange(ENTITY.PYQ_QUESTION, data.pyqIds.join(','), ACTION.BULK_DELETE,
+          { count: data.pyqIds.length, subject, chapter: chapterName },
+          `Admin bulk-deleted ${data.pyqIds.length} PYQ(s) from Content Map (mis-tagged chapter cleanup)`);
       }
-    })();
-  }, []);
+      if (data.noteIds.length) {
+        await Promise.all(data.noteIds.map((id) =>
+          supabase.rpc('admin_delete_study_note', { p_caller: callerUid, p_id: id })
+        ));
+        logChange(ENTITY.STUDY_NOTE, data.noteIds.join(','), ACTION.BULK_DELETE,
+          { count: data.noteIds.length, subject, chapter: chapterName },
+          `Admin bulk-deleted ${data.noteIds.length} note(s) from Content Map (mis-tagged chapter cleanup)`);
+      }
+      await loadAll();
+    } catch (e) {
+      setError(e.message || 'Delete failed');
+    } finally {
+      setDeletingKey(null);
+    }
+  }
 
   const examKeys = useMemo(() => {
-    const known = EXAM_TABS.filter((e) => tree[e]);
-    const extra = Object.keys(tree).filter((e) => !EXAM_TABS.includes(e));
+    const examTabs = getExamTabs();
+    const known = examTabs.filter((e) => tree[e]);
+    const extra = Object.keys(tree).filter((e) => !examTabs.includes(e));
     return [...known, ...extra];
   }, [tree]);
 
@@ -275,7 +347,8 @@ export default function AdminContentMap() {
           ) : (
             <div className="space-y-2">
               {Object.entries(activeSubjects).map(([subject, data]) => (
-                <SubjectBlock key={subject} subject={subject} data={data} search={search} approximate={multiClass} />
+                <SubjectBlock key={subject} subject={subject} data={data} search={search} approximate={multiClass}
+                  onDeleteChapter={handleDeleteChapter} deletingKey={deletingKey} />
               ))}
             </div>
           )}

@@ -49,6 +49,7 @@ async function activateSubscription(supabase: any, firebaseUid: string, planId: 
     starts_at:  new Date().toISOString(),
     expires_at: expiresAt,
     payment_id: paymentId,
+    reminder_sent_at: null,
     updated_at: new Date().toISOString(),
   }, { onConflict: 'user_id' });
 

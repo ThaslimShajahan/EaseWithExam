@@ -12,7 +12,7 @@ import { getExamPattern, getMarkingLabel, getTestDurationMinutes } from '../lib/
 import { publishTest, getPYQCount, clearPYQQuestions, supabase } from '../lib/supabase';
 import { broadcastNotification } from '../lib/notifications';
 import MathText from '../components/ui/MathText';
-import { CATEGORIES, EXAM_TYPE_GROUPS, BOARDS, CLASS_LEVELS } from '../lib/categories';
+import { CATEGORIES, EXAM_TYPE_GROUPS, BOARDS, CLASS_LEVELS, getSubjectsForExam } from '../lib/categories';
 import { useSyllabusSubjects } from '../hooks/useSyllabusSubjects';
 import { useSyllabusChapters } from '../hooks/useSyllabusChapters';
 
@@ -41,7 +41,6 @@ async function generateDiagramImage(description, questionIndex) {
 }
 
 /* ── Config options ─────────────────────────────────────── */
-const COMPETITIVE_EXAMS = ['NEET', 'JEE Main', 'JEE Advanced'];
 const DIFFS  = ['Easy', 'Medium', 'Hard', 'Mixed'];
 const COUNTS = [10, 15, 20, 30, 35, 40, 50];
 
@@ -81,8 +80,11 @@ function QuestionCard({ q, index, showAnswer, onImageUpload, onRemoveImage }) {
   const [uploading,   setUploading]   = useState(false);
   const [generating,  setGenerating]  = useState(false);
   const [genError,    setGenError]    = useState('');
+  const [imgBroken,   setImgBroken]   = useState(false);
   const fileRef = useRef(null);
   const badge   = TYPE_COLOR[q.type] || 'bg-slate-700 text-slate-300';
+
+  useEffect(() => { setImgBroken(false); }, [q.image_url]);
 
   const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
@@ -135,7 +137,18 @@ function QuestionCard({ q, index, showAnswer, onImageUpload, onRemoveImage }) {
       {/* Uploaded image preview */}
       {q.image_url && (
         <div className="ml-7 relative rounded-xl overflow-hidden border border-white/10">
-          <img src={q.image_url} alt="Question figure" className="w-full max-h-40 object-contain bg-white" />
+          {imgBroken ? (
+            <div className="flex items-center gap-2 px-3 py-3 bg-red-950/30 text-red-300 text-xs">
+              <AlertTriangle size={13} className="shrink-0" /> Image failed to load — try replacing it.
+            </div>
+          ) : (
+            <img
+              src={q.image_url}
+              alt="Question figure"
+              className="w-full max-h-40 object-contain bg-white"
+              onError={() => setImgBroken(true)}
+            />
+          )}
           <button
             onClick={() => onRemoveImage?.()}
             className="absolute top-1 right-1 p-1 rounded-full bg-black/60 hover:bg-red-900/80"
@@ -272,7 +285,11 @@ function printPaper(questions, config) {
       ? `<div class="writebox" style="height:${q.type === 'Long Answer' ? 120 : 56}px"></div>`
       : '';
     const numBox = q.type === 'Numerical' ? '<div class="numbox"></div>' : '';
-    const imgTag = q.image_url ? `<div class="diagram"><img src="${q.image_url}" alt="Figure" /></div>` : '';
+    // onerror fallback: if the storage URL is unreachable at print time (deleted,
+    // network hiccup), swap to the text description instead of a broken-image icon.
+    const imgTag = q.image_url
+      ? `<div class="diagram"><img src="${q.image_url}" alt="Figure" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'diagdesc',textContent:${JSON.stringify(`[Figure could not load: ${q.diagram_description || 'image unavailable'}]`)}}))" /></div>`
+      : '';
     const diagDesc = (!q.image_url && q.diagram_description)
       ? `<div class="diagdesc">[Figure: ${q.diagram_description}]</div>`
       : '';
@@ -536,16 +553,16 @@ function PYQExtractPanel() {
               <div className="flex flex-wrap gap-2">
                 <div className="space-y-1">
                   <label className="text-[10px] text-slate-500 uppercase">Exam</label>
-                  <div className="flex gap-1.5">
-                    {['NEET','JEE Main','JEE Advanced'].map((e) => (
+                  <div className="flex flex-wrap gap-1.5">
+                    {(EXAM_TYPE_GROUPS.find((g) => g.label === 'Competitive')?.items ?? []).map((e) => (
                       <Toggle key={e} label={e} active={examType === e} onClick={() => setExam(e)} />
                     ))}
                   </div>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] text-slate-500 uppercase">Subject</label>
-                  <div className="flex gap-1.5">
-                    {['Physics','Chemistry','Biology','Mixed'].map((s) => (
+                  <div className="flex flex-wrap gap-1.5">
+                    {[...getSubjectsForExam(examType), 'Mixed'].map((s) => (
                       <Toggle key={s} label={s} active={subject === s} onClick={() => setSubj(s)} />
                     ))}
                   </div>
@@ -1132,9 +1149,13 @@ export default function AdminPaperGen() {
 
   const handlePublish = async () => {
     if (!pubTitle.trim() || publishing) return;
+    const engineQs = toEngineFormat(questions, subject, examType);
+    if (engineQs.length === 0) {
+      alert('None of the generated questions are in a publishable format (e.g. every "Match the Following" question came back without the required options) — nothing was published. Try regenerating.');
+      return;
+    }
     setPublishing(true);
     try {
-      const engineQs = toEngineFormat(questions, subject, examType);
       const durationMin = getTestDurationMinutes(getExamPattern(examType));
       await publishTest({
         title:              pubTitle.trim(),
@@ -1144,6 +1165,7 @@ export default function AdminPaperGen() {
         questions:          engineQs,
         durationMinutes:    durationMin,
         blueprintMatchPct:  blueprintMatchPct ?? undefined,
+        createdBy:          'admin',
       });
       setPublished(true);
       setShowPubDlg(false);
@@ -1227,9 +1249,17 @@ export default function AdminPaperGen() {
                     className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-primary-500"
                   />
                 </div>
-                <div className="text-xs text-slate-500">
-                  {toEngineFormat(questions, subject, examType).length} of {questions.length} questions compatible with test engine (MCQ + A-R + Match)
-                </div>
+                {(() => {
+                  const compatCount = toEngineFormat(questions, subject, examType).length;
+                  const dropped = questions.length - compatCount;
+                  return (
+                    <div className={`text-xs rounded-lg px-2.5 py-1.5 ${dropped > 0 ? 'bg-amber-900/20 text-amber-300 border border-amber-700/30' : 'text-slate-500'}`}>
+                      {compatCount} of {questions.length} questions compatible with test engine (MCQ + A-R + Match)
+                      {dropped > 0 && ` — ${dropped} will be dropped (usually malformed "Match the Following" questions missing options)`}
+                      {compatCount === 0 && ' — publishing is blocked until at least one question is compatible'}
+                    </div>
+                  );
+                })()}
                 <div className="flex gap-2">
                   <button onClick={() => setShowPubDlg(false)}
                     className="flex-1 py-2 rounded-xl text-sm text-slate-400 hover:bg-slate-700 transition-colors">
@@ -1258,30 +1288,32 @@ export default function AdminPaperGen() {
         <div className="bg-slate-800 border border-white/5 rounded-2xl p-5 space-y-5 xl:sticky xl:top-0">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Configuration</p>
 
-          {/* Exam — three independent selectors that combine */}
+          {/* Exam — pick ONE: a competitive exam, OR a board + class combo */}
           <div className="space-y-3">
-            <label className="text-xs text-slate-400">Exam</label>
+            <div>
+              <label className="text-xs text-slate-400">Exam</label>
+              <p className="text-[10px] text-slate-500 mt-0.5">
+                Pick a competitive exam, <span className="italic">or</span> a board + class — not both.
+              </p>
+            </div>
 
             <div className="space-y-1.5">
-              <p className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">Competitive</p>
+              <p className="text-[10px] font-bold text-primary-400 uppercase tracking-wider">🏆 Competitive exam</p>
               <div className="flex flex-wrap gap-1.5">
-                {COMPETITIVE_EXAMS.map((e) => (
+                {(EXAM_TYPE_GROUPS.find((g) => g.label === 'Competitive')?.items ?? []).map((e) => (
                   <Toggle key={e} label={e} active={competitive === e} onClick={() => pickCompetitive(e)} />
                 ))}
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <p className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">Class</p>
-              <div className="flex flex-wrap gap-1.5">
-                {CLASS_LEVELS.map((cl) => (
-                  <Toggle key={cl} label={`Class ${cl}`} active={selClass === cl} onClick={() => pickClass(cl)} />
-                ))}
-              </div>
+            <div className="flex items-center gap-2 py-0.5">
+              <div className="flex-1 h-px bg-white/10" />
+              <span className="text-[9px] font-bold text-slate-600 uppercase">or</span>
+              <div className="flex-1 h-px bg-white/10" />
             </div>
 
             <div className="space-y-1.5">
-              <p className="text-[9px] font-bold text-slate-600 uppercase tracking-wider">Board</p>
+              <p className="text-[10px] font-bold text-violet-400 uppercase tracking-wider">🎓 Board</p>
               <div className="flex flex-wrap gap-1.5">
                 {BOARDS.map((b) => (
                   <Toggle key={b} label={b} active={selBoard === b} onClick={() => pickBoard(b)} />
@@ -1289,11 +1321,18 @@ export default function AdminPaperGen() {
               </div>
             </div>
 
-            {(selBoard || selClass) && (
-              <p className="text-[11px] text-primary-400 font-semibold">
-                Generating for: <span className="font-bold text-white">{examType}</span>
-              </p>
-            )}
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-bold text-violet-400 uppercase tracking-wider">📚 Class</p>
+              <div className="flex flex-wrap gap-1.5">
+                {CLASS_LEVELS.map((cl) => (
+                  <Toggle key={cl} label={`Class ${cl}`} active={selClass === cl} onClick={() => pickClass(cl)} />
+                ))}
+              </div>
+            </div>
+
+            <p className="text-[11px] text-primary-300 font-semibold bg-primary-900/20 border border-primary-700/20 rounded-lg px-2.5 py-1.5">
+              Generating for: <span className="font-bold text-white">{examType}</span>
+            </p>
           </div>
 
           {/* Subject — dynamic based on selected exam, live from Admin > Syllabus */}
@@ -1373,7 +1412,7 @@ export default function AdminPaperGen() {
           <button
             onClick={handleGenerate}
             disabled={generating || qTypes.length === 0}
-            className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-primary-600 to-violet-600 hover:from-primary-700 hover:to-violet-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-white font-bold text-sm transition-all"
+            className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-primary-500 to-primary-700 hover:from-primary-600 hover:to-primary-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-white font-bold text-sm transition-all"
           >
             {generating
               ? <><Loader2 size={15} className="animate-spin" /> Generating…</>
@@ -1385,7 +1424,7 @@ export default function AdminPaperGen() {
           <div className="flex items-start gap-2 bg-amber-900/20 border border-amber-700/30 rounded-xl p-3">
             <AlertTriangle size={12} className="text-amber-400 shrink-0 mt-0.5" />
             <p className="text-[10px] text-amber-300 leading-relaxed">
-              Diagram-based questions are auto-converted to text descriptions. No image generation needed.
+              Diagram-based questions get a text description by default — no action needed. If you want a real image instead, use "Generate with AI" (or upload one manually) on that question below.
             </p>
           </div>
         </div>

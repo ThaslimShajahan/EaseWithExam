@@ -1,24 +1,23 @@
 import { lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { BarChart3, BookMarked, ListChecks, Trophy } from 'lucide-react';
+import { BarChart3, ListChecks, Trophy } from 'lucide-react';
 import SkeletonLoader from '../components/ui/SkeletonLoader';
 import HubTabBar from '../components/ui/HubTabBar';
 
 const AnalyticsPage     = lazy(() => import('./AnalyticsPage'));
-const ErrorNotebookPage = lazy(() => import('./ErrorNotebookPage'));
 const SyllabusPage      = lazy(() => import('./SyllabusTrackerPage'));
 const LeaderboardPage   = lazy(() => import('./LeaderboardPage'));
 
+// Error Notebook lives under Study Hub (/study?tab=notebook) — it's revision
+// material tied to a student's own mistakes, same category as Notes/Study Plan.
 const TABS = [
   { key: 'analytics', label: 'Analytics',     icon: BarChart3  },
-  { key: 'notebook',  label: 'Error Notebook', icon: BookMarked },
   { key: 'syllabus',  label: 'Syllabus',       icon: ListChecks },
   { key: 'leaderboard', label: 'Leaderboard',  icon: Trophy     },
 ];
 
 const PAGES = {
   analytics:   <AnalyticsPage />,
-  notebook:    <ErrorNotebookPage />,
   syllabus:    <SyllabusPage />,
   leaderboard: <LeaderboardPage />,
 };
@@ -31,9 +30,11 @@ export default function ProgressHubPage() {
   return (
     <>
       <HubTabBar layoutId="progress-hub-underline" tabs={TABS} active={tab} onChange={(key) => setParams({ tab: key }, { replace: true })} />
-      <Suspense fallback={<SkeletonLoader type="page" />}>
-        {PAGES[tab]}
-      </Suspense>
+      <div className="pt-4 lg:pt-6">
+        <Suspense fallback={<SkeletonLoader type="page" />}>
+          {PAGES[tab]}
+        </Suspense>
+      </div>
     </>
   );
 }

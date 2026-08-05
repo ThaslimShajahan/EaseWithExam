@@ -6,17 +6,24 @@ import { Trophy, Flame, Zap, ArrowLeft, Crown, Star, TrendingUp } from 'lucide-r
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { LEVEL_TITLES } from '../lib/gamification';
-
-const EXAM_LABELS = {
-  NEET: 'NEET', JEE_MAIN: 'JEE', JEE_ADVANCED: 'JEE Adv',
-  BOTH: 'NEET+JEE', CBSE: 'CBSE',
-};
+import { normalizeExamType } from '../lib/categories';
 
 async function fetchLeaderboard(tab) {
   const view = tab === 'weekly' ? 'leaderboard_weekly' : 'leaderboard_alltime';
   const { data, error } = await supabase.from(view).select('*').limit(50);
   if (error) throw error;
   return data ?? [];
+}
+
+// The top-50 query above won't include students ranked lower — fetched
+// separately so "Your Rank" still shows for the majority of students who
+// aren't on the podium/first page.
+async function fetchMyRank(tab, uid) {
+  if (!uid) return null;
+  const view = tab === 'weekly' ? 'leaderboard_weekly' : 'leaderboard_alltime';
+  const { data, error } = await supabase.from(view).select('*').eq('user_id', uid).maybeSingle();
+  if (error) throw error;
+  return data;
 }
 
 function MedalIcon({ rank }) {
@@ -86,9 +93,16 @@ export default function LeaderboardPage() {
     staleTime: 60_000,
   });
 
+  const { data: myEntry } = useQuery({
+    queryKey: ['leaderboard-mine', tab, currentUser?.uid],
+    queryFn:  () => fetchMyRank(tab, currentUser?.uid),
+    enabled:  !!currentUser?.uid,
+    staleTime: 60_000,
+  });
+
   const top3    = entries.slice(0, 3);
   const rest    = entries.slice(3);
-  const myRank  = entries.find(e => e.user_id === currentUser?.uid);
+  const myRank  = entries.find(e => e.user_id === currentUser?.uid) ?? myEntry;
 
   return (
     <div className="space-y-5 p-4 lg:p-0 max-w-lg">
@@ -119,7 +133,7 @@ export default function LeaderboardPage() {
       {/* Your rank pill */}
       {myRank && (
         <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-          className="card bg-gradient-to-r from-primary-50 to-violet-50 border-primary-100 flex items-center gap-3">
+          className="card bg-gradient-to-r from-primary-50 to-primary-100 border-primary-100 flex items-center gap-3">
           <div className="h-9 w-9 rounded-xl bg-primary-100 flex items-center justify-center shrink-0">
             <Star size={16} className="text-primary-600" />
           </div>
@@ -173,7 +187,7 @@ export default function LeaderboardPage() {
                       </p>
                       <div className="flex items-center gap-2 text-xs text-slate-400">
                         <span className="flex items-center gap-0.5"><Flame size={9} className="text-amber-500" />{entry.streak_days}d</span>
-                        {entry.target_exam && <span>{EXAM_LABELS[entry.target_exam] || entry.target_exam}</span>}
+                        {entry.target_exam && <span>{normalizeExamType(entry.target_exam)}</span>}
                       </div>
                     </div>
                     <div className="text-right shrink-0">

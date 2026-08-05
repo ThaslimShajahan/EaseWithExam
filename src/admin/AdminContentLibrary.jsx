@@ -8,6 +8,7 @@ import {
 import { supabase, publishPYQPaper } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { useAdminFilter } from './hooks/useAdminFilter';
+import { BOARDS, CLASS_LEVELS, EXAM_TAG_RE, prettyExamTag, examTypeToTag } from '../lib/categories';
 
 /* ── Helpers ─────────────────────────────────────────────── */
 async function fetchPYQs({ examType, subject, search } = {}) {
@@ -22,26 +23,29 @@ async function fetchPYQs({ examType, subject, search } = {}) {
   return data ?? [];
 }
 
-async function fetchKB({ subject, examTag, search } = {}) {
-  let q = supabase.from('knowledge_base').select('id, subject, content, tags, created_at').order('created_at', { ascending: false }).limit(500);
-  if (subject && subject !== 'All') q = q.eq('subject', subject);
-  if (examTag && examTag !== 'All') q = q.contains('tags', [examTag]);
+// Board/class filtering happens client-side (see matchesExamSelection in
+// KnowledgeBaseViewer) since a board-only or class-only selection needs a
+// prefix/suffix match across multiple tags, which .contains() can't express.
+async function fetchKB({ subject, search } = {}) {
+  let q = supabase.from('knowledge_base').select('id, subject, content, tags, created_at').order('created_at', { ascending: false }).limit(1000);
+  if (subject) q = q.ilike('subject', subject); // ilike w/ no wildcards = case-insensitive equality
   if (search?.trim()) q = q.ilike('content', `%${search.trim()}%`);
   const { data } = await q;
   return data ?? [];
 }
 
-const EXAM_TAG_RE = /^(neet|jee_|cbse_class_|icse_class_|state_board_class_)/;
-
-function prettyExamTag(tag) {
-  return tag
-    .replace(/^neet$/, 'NEET')
-    .replace(/^jee_main$/, 'JEE Main')
-    .replace(/^jee_advanced$/, 'JEE Advanced')
-    .replace(/^cbse_class_(\d+)$/, (_, n) => `CBSE Class ${n}`)
-    .replace(/^icse_class_(\d+)$/, (_, n) => `ICSE Class ${n}`)
-    .replace(/^state_board_class_(\d+)$/, (_, n) => `State Board Class ${n}`)
-    .replace(/_/g, ' ');
+// Board+class combos sort after pure competitive exams, then by board name, then
+// numerically by class — so "CBSE Class 8" and "CBSE Class 12" don't scatter
+// alphabetically ("Class 12" < "Class 8" as strings).
+function sortExamTypes(values) {
+  return [...values].sort((a, b) => {
+    const am = a.match(/^(.+?)\s+Class\s+(\d+)$/);
+    const bm = b.match(/^(.+?)\s+Class\s+(\d+)$/);
+    if (am && bm) return am[1] === bm[1] ? Number(am[2]) - Number(bm[2]) : am[1].localeCompare(bm[1]);
+    if (am && !bm) return 1;
+    if (!am && bm) return -1;
+    return a.localeCompare(b);
+  });
 }
 
 async function deletePYQ(id) {
@@ -90,6 +94,9 @@ function PYQBank() {
   const [publishMsg,  setPublishMsg]  = useState('');
   const [deleting,    setDeleting]    = useState(null);
 
+  const [examOptions,    setExamOptions]    = useState(['All']);
+  const [subjectOptions, setSubjectOptions] = useState(['All']);
+
   const load = async () => {
     setLoading(true);
     const data = await fetchPYQs({ examType: examFilter, subject: subjFilter, search });
@@ -99,8 +106,42 @@ function PYQBank() {
 
   useEffect(() => { load(); }, [examFilter, subjFilter]);
 
-  const allExams    = ['All', ...new Set(rows.map((r) => r.exam_type).filter(Boolean))];
-  const allSubjects = ['All', ...new Set(rows.map((r) => r.subject).filter(Boolean))];
+  // Filter pill options must come from the FULL dataset, not the currently-filtered
+  // `rows` — otherwise picking one exam type hides every other exam pill (and picking
+  // a subject hides every other subject pill), making it impossible to switch filters.
+  useEffect(() => {
+    supabase.from('pyq_questions').select('exam_type, subject').neq('question_type', 'KB_NOTE').limit(5000)
+      .then(({ data }) => {
+        setExamOptions(['All', ...sortExamTypes(new Set((data ?? []).map((r) => r.exam_type).filter(Boolean)))]);
+        setSubjectOptions(['All', ...[...new Set((data ?? []).map((r) => r.subject).filter(Boolean))].sort()]);
+      });
+  }, []);
+
+  const allExams    = examOptions;
+  const allSubjects = subjectOptions;
+
+  // Decompose the flat examFilter string ("CBSE Class 8", "NEET", …) into
+  // separate board/class/competitive picks so they can be filtered independently
+  // instead of one long mixed pill list.
+  const parseExam = (et) => {
+    if (!et || et === 'All') return { board: null, cls: null, competitive: null };
+    const combo = et.match(/^(.+?)\s+Class\s+(\d+)$/);
+    if (combo) return { board: combo[1], cls: combo[2], competitive: null };
+    if (BOARDS.includes(et)) return { board: et, cls: null, competitive: null };
+    return { board: null, cls: null, competitive: et };
+  };
+  const parsedExam = parseExam(examFilter);
+  const competitiveExams = allExams.filter((e) => e !== 'All' && !parseExam(e).board);
+
+  const pickCompetitive = (e) => setExamFilter(examFilter === e ? 'All' : e);
+  const pickBoard = (b) => {
+    if (parsedExam.board === b) { setExamFilter('All'); return; }
+    setExamFilter(parsedExam.cls ? `${b} Class ${parsedExam.cls}` : b);
+  };
+  const pickClass = (cl) => {
+    if (parsedExam.cls === cl) { setExamFilter(parsedExam.board ?? 'All'); return; }
+    setExamFilter(parsedExam.board ? `${parsedExam.board} Class ${cl}` : `Class ${cl}`);
+  };
 
   const displayed = search.trim()
     ? rows.filter((r) => r.question_text?.toLowerCase().includes(search.toLowerCase()))
@@ -179,10 +220,34 @@ function PYQBank() {
           </button>
         </div>
 
+        {examFilter !== 'All' && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-500">Filtering:</span>
+            <span className="text-[10px] font-bold text-primary-400">{examFilter}</span>
+            <button onClick={() => setExamFilter('All')} className="text-[10px] text-slate-500 hover:text-white underline">clear</button>
+          </div>
+        )}
+
+        {competitiveExams.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-[10px] font-bold text-slate-500 uppercase">Competitive Exam</p>
+            <div className="flex flex-wrap gap-1.5">
+              {competitiveExams.map((e) => <Pill key={e} label={e} active={examFilter === e} onClick={() => pickCompetitive(e)} />)}
+            </div>
+          </div>
+        )}
+
         <div className="space-y-2">
-          <p className="text-[10px] font-bold text-slate-500 uppercase">Exam</p>
+          <p className="text-[10px] font-bold text-slate-500 uppercase">Board</p>
           <div className="flex flex-wrap gap-1.5">
-            {allExams.map((e) => <Pill key={e} label={e} active={examFilter === e} onClick={() => setExamFilter(e)} />)}
+            {BOARDS.map((b) => <Pill key={b} label={b} active={parsedExam.board === b} onClick={() => pickBoard(b)} />)}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-[10px] font-bold text-slate-500 uppercase">Class</p>
+          <div className="flex flex-wrap gap-1.5">
+            {CLASS_LEVELS.map((cl) => <Pill key={cl} label={`Class ${cl}`} active={parsedExam.cls === cl} onClick={() => pickClass(cl)} />)}
           </div>
         </div>
 
@@ -328,28 +393,85 @@ function KnowledgeBaseViewer() {
   const [chunks,        setChunks]        = useState([]);
   const [loading,       setLoading]       = useState(true);
   const [subjFilter,    setSubjFilter]    = useState('All');
-  const [examTagFilter, setExamTagFilter] = useState('All');
   const [search,        setSearch]        = useState('');
   const [deleting,      setDeleting]      = useState(null);
 
+  // Board/Class/Competitive are tracked independently (not encoded into one
+  // composed tag string) — tags in the DB are always board+class together
+  // ("cbse_class_8"), never a bare board ("cbse") on its own, so picking a
+  // board alone must prefix-match across every class of that board rather
+  // than look up a single exact tag that would never exist.
+  const [boardSel,       setBoardSel]       = useState(null);
+  const [clsSel,         setClsSel]         = useState(null);
+  const [competitiveSel, setCompetitiveSel] = useState(null);
+
+  const [subjectOptions, setSubjectOptions] = useState(['All']);
+  const [examTagOptions, setExamTagOptions] = useState(['All']);
+
   const load = async () => {
     setLoading(true);
-    const data = await fetchKB({ subject: subjFilter, examTag: examTagFilter, search });
+    const data = await fetchKB({ subject: subjFilter === 'All' ? null : subjFilter, search });
     setChunks(data);
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, [subjFilter, examTagFilter]);
+  useEffect(() => { load(); }, [subjFilter]);
 
-  const allSubjects = ['All', ...new Set(chunks.map((c) => c.subject).filter(Boolean))];
-  const allExamTags = ['All', ...new Set(
-    chunks.flatMap((c) => (c.tags ?? []).filter((t) => EXAM_TAG_RE.test(t)))
-  )];
+  // Same fix as PYQBank — options must come from the full dataset, not the
+  // currently-filtered `chunks`, or picking a filter hides the other pills.
+  // Subject casing is inconsistent across sources ("Hindi" vs "hindi") —
+  // dedupe case-insensitively so it doesn't split into two useless pills.
+  useEffect(() => {
+    supabase.from('knowledge_base').select('subject, tags').limit(5000).then(({ data }) => {
+      const subjByKey = new Map();
+      (data ?? []).forEach((c) => {
+        if (!c.subject) return;
+        const key = c.subject.toLowerCase();
+        const existing = subjByKey.get(key);
+        if (!existing || (/^[a-z]/.test(existing) && /^[A-Z]/.test(c.subject))) subjByKey.set(key, c.subject);
+      });
+      setSubjectOptions(['All', ...[...subjByKey.values()].sort()]);
+      setExamTagOptions(['All', ...sortExamTypes(new Set(
+        (data ?? []).flatMap((c) => (c.tags ?? []).filter((t) => EXAM_TAG_RE.test(t)))
+      ))]);
+    });
+  }, []);
 
-  const displayed = search.trim()
-    ? chunks.filter((c) => c.content?.toLowerCase().includes(search.toLowerCase())
-        || (c.tags ?? []).some((t) => t.toLowerCase().includes(search.toLowerCase())))
-    : chunks;
+  const allSubjects = subjectOptions;
+  const allExamTags = examTagOptions;
+  const competitiveTags = allExamTags.filter((t) => t !== 'All' && !/_class_\d+$/.test(t));
+
+  const pickCompetitiveTag = (t) => {
+    setBoardSel(null); setClsSel(null);
+    setCompetitiveSel((prev) => (prev === t ? null : t));
+  };
+  const pickBoard = (b) => { setCompetitiveSel(null); setBoardSel((prev) => (prev === b ? null : b)); };
+  const pickClass = (cl) => { setCompetitiveSel(null); setClsSel((prev) => (prev === cl ? null : cl)); };
+  const clearExamFilter = () => { setBoardSel(null); setClsSel(null); setCompetitiveSel(null); };
+
+  const hasExamFilter = !!(boardSel || clsSel || competitiveSel);
+  const examFilterLabel = competitiveSel ? prettyExamTag(competitiveSel)
+    : boardSel && clsSel ? `${boardSel} Class ${clsSel}`
+    : boardSel ? `${boardSel} (any class)`
+    : clsSel ? `Class ${clsSel} (any board)`
+    : null;
+
+  function matchesExamSelection(tags) {
+    if (!hasExamFilter) return true;
+    const t = tags ?? [];
+    if (competitiveSel) return t.includes(competitiveSel);
+    if (boardSel && clsSel) return t.includes(examTypeToTag(`${boardSel} Class ${clsSel}`));
+    if (boardSel) return t.some((tag) => tag.startsWith(examTypeToTag(boardSel) + '_class_'));
+    if (clsSel) return t.some((tag) => tag.endsWith(`_class_${clsSel}`));
+    return true;
+  }
+
+  const displayed = chunks.filter((c) => {
+    const matchSearch = !search.trim() ||
+      c.content?.toLowerCase().includes(search.toLowerCase()) ||
+      (c.tags ?? []).some((t) => t.toLowerCase().includes(search.toLowerCase()));
+    return matchSearch && matchesExamSelection(c.tags);
+  });
 
   const handleDelete = async (id) => {
     setDeleting(id);
@@ -385,21 +507,38 @@ function KnowledgeBaseViewer() {
           <button onClick={load} className="text-primary-400 hover:text-primary-300"><RefreshCw size={13} /></button>
         </div>
 
-        {allExamTags.length > 1 && (
+        {hasExamFilter && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-500">Filtering:</span>
+            <span className="text-[10px] font-bold text-primary-400">{examFilterLabel}</span>
+            <button onClick={clearExamFilter} className="text-[10px] text-slate-500 hover:text-white underline">clear</button>
+          </div>
+        )}
+
+        {competitiveTags.length > 0 && (
           <div className="space-y-2">
-            <p className="text-[10px] font-bold text-slate-500 uppercase">Exam / Class</p>
+            <p className="text-[10px] font-bold text-slate-500 uppercase">Competitive Exam</p>
             <div className="flex flex-wrap gap-1.5">
-              {allExamTags.map((t) => (
-                <Pill
-                  key={t}
-                  label={t === 'All' ? 'All' : prettyExamTag(t)}
-                  active={examTagFilter === t}
-                  onClick={() => setExamTagFilter(t)}
-                />
+              {competitiveTags.map((t) => (
+                <Pill key={t} label={prettyExamTag(t)} active={competitiveSel === t} onClick={() => pickCompetitiveTag(t)} />
               ))}
             </div>
           </div>
         )}
+
+        <div className="space-y-2">
+          <p className="text-[10px] font-bold text-slate-500 uppercase">Board</p>
+          <div className="flex flex-wrap gap-1.5">
+            {BOARDS.map((b) => <Pill key={b} label={b} active={boardSel === b} onClick={() => pickBoard(b)} />)}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-[10px] font-bold text-slate-500 uppercase">Class</p>
+          <div className="flex flex-wrap gap-1.5">
+            {CLASS_LEVELS.map((cl) => <Pill key={cl} label={`Class ${cl}`} active={clsSel === cl} onClick={() => pickClass(cl)} />)}
+          </div>
+        </div>
 
         <div className="space-y-2">
           <p className="text-[10px] font-bold text-slate-500 uppercase">Subject</p>
@@ -416,7 +555,16 @@ function KnowledgeBaseViewer() {
         </div>
       ) : displayed.length === 0 ? (
         <div className="bg-slate-800 border border-white/5 rounded-2xl p-8 text-center">
-          <p className="text-slate-400 text-sm">No study material found. Upload notes first.</p>
+          <p className="text-slate-400 text-sm">
+            {chunks.length === 0
+              ? 'No study material found. Upload notes first.'
+              : 'No chunks match this filter combination.'}
+          </p>
+          {chunks.length > 0 && (hasExamFilter || subjFilter !== 'All') && (
+            <button onClick={() => { clearExamFilter(); setSubjFilter('All'); }} className="mt-2 text-xs text-primary-400 hover:underline">
+              Clear filters
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-2">

@@ -7,13 +7,16 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import Button from '../components/ui/Button';
 
-/* Feature comparison rows — the first 3 free-tier values are overridden with live
+/* Feature comparison rows — the first 5 free-tier values are overridden with live
  * quota_config numbers once loaded (see buildCompare below); these are just the
- * fallback shown before that fetch resolves, matching quota.js's FREE_LIMITS. */
+ * fallback shown before that fetch resolves, matching quota.js's FREE_LIMITS.
+ * Mock tests is a weekly cap (not daily) — see WEEKLY_FIELDS in lib/quota.js. */
 const BASE_COMPARE = [
-  { label: 'AI practice questions',   free: '15/day',   premium: 'Unlimited' },
-  { label: 'Mock tests',              free: '3/day',    premium: 'Unlimited' },
-  { label: 'EWE AI chat',             free: '20/day',   premium: 'Unlimited' },
+  { label: 'AI practice questions',   free: '10/day',   premium: 'Unlimited' },
+  { label: 'Mock tests',              free: '1/week',   premium: 'Unlimited' },
+  { label: 'EWE AI chat',             free: '5/day',    premium: 'Unlimited' },
+  { label: 'AI paper evaluations',    free: '3/day',    premium: 'Unlimited' },
+  { label: 'AI podcasts',             free: '3/day',    premium: 'Unlimited' },
   { label: 'Daily challenge',         free: true,       premium: true        },
   { label: 'Score predictor',         free: false,      premium: true        },
   { label: 'Deep chapter notes',      free: false,      premium: true        },
@@ -24,12 +27,14 @@ const BASE_COMPARE = [
 
 function buildCompare(freeQuota) {
   if (!freeQuota) return BASE_COMPARE;
-  const [ai, mock, veda] = BASE_COMPARE;
+  const [ai, mock, veda, paperEval, podcasts] = BASE_COMPARE;
   return [
-    { ...ai,   free: `${freeQuota.ai_questions}/day` },
-    { ...mock, free: `${freeQuota.mock_tests}/day` },
-    { ...veda, free: `${freeQuota.veda_messages}/day` },
-    ...BASE_COMPARE.slice(3),
+    { ...ai,        free: `${freeQuota.ai_questions}/day` },
+    { ...mock,      free: `${freeQuota.mock_tests}/week` },
+    { ...veda,      free: `${freeQuota.veda_messages}/day` },
+    { ...paperEval, free: `${freeQuota.paper_evaluations}/day` },
+    { ...podcasts,  free: `${freeQuota.podcasts}/day` },
+    ...BASE_COMPARE.slice(5),
   ];
 }
 
@@ -49,7 +54,11 @@ function FeatureCell({ value }) {
 function PlanCard({ planId, plan: planProp, highlight, onSelect, loading, isCurrent }) {
   const plan = planProp ?? PLANS[planId];
   const isFree = planId === 'free';
-  const isOwned = isFree ? isCurrent === 'free' : isCurrent;
+  // isCurrent is already a boolean computed correctly by the caller for both
+  // the free and paid cases — this used to compare it against the string
+  // 'free' (`isCurrent === 'free'`), which is never true for a boolean, so
+  // free-tier users never saw the "Current Plan" badge/disabled state.
+  const isOwned = isCurrent;
 
   return (
     <motion.div
@@ -57,7 +66,7 @@ function PlanCard({ planId, plan: planProp, highlight, onSelect, loading, isCurr
       className={[
         'relative rounded-3xl p-6 border-2 transition-colors flex flex-col',
         highlight
-          ? 'border-primary-500 bg-gradient-to-b from-primary-600 to-violet-700 text-white shadow-xl shadow-primary-200'
+          ? 'border-primary-500 bg-gradient-to-b from-primary-500 to-primary-800 text-white shadow-xl shadow-primary-200'
           : 'border-slate-200 bg-white text-slate-900',
       ].join(' ')}
     >
@@ -150,7 +159,7 @@ export default function PricingPage() {
       setPlanData(merged);
     });
 
-    supabase.from('quota_config').select('ai_questions, mock_tests, veda_messages').eq('plan_id', 'free').maybeSingle()
+    supabase.from('quota_config').select('ai_questions, mock_tests, veda_messages, paper_evaluations, podcasts').eq('plan_id', 'free').maybeSingle()
       .then(({ data }) => { if (data) setCompare(buildCompare(data)); });
   }, []);
 
@@ -257,7 +266,7 @@ export default function PricingPage() {
 
         {/* FAQ */}
         <div className="mt-12 text-center text-slate-500 text-sm">
-          <p>Questions? Email us at <a href="mailto:support@acenzos.com" className="text-primary-600 hover:underline">support@acenzos.com</a></p>
+          <p>Questions? Email us at <a href="mailto:info@acenzos.com" className="text-primary-600 hover:underline">info@acenzos.com</a></p>
           <p className="mt-1">Payments secured by Razorpay · GST included · Refund within 7 days if unhappy.</p>
         </div>
       </div>

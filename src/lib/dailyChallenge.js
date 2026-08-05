@@ -6,7 +6,11 @@ const todayKey = () =>
   new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
 /* ── Fetch today's challenge for a user ───────────────────── */
-export async function getTodayChallenge(firebaseUid) {
+// examType (optional) is the student's CURRENT buildExamType() — a challenge
+// generated earlier under a since-changed profile (different class/board/exam)
+// is stale and must not be returned, or the student sees mismatched content
+// for the rest of the day; the caller will regenerate a fresh one instead.
+export async function getTodayChallenge(firebaseUid, examType = null) {
   const today = todayKey();
 
   /* 1. Try user-specific challenge */
@@ -17,7 +21,7 @@ export async function getTodayChallenge(firebaseUid) {
     .eq('challenge_date', today)
     .maybeSingle();
 
-  if (userRow) return userRow;
+  if (userRow && (!examType || userRow.exam_type === examType)) return userRow;
 
   /* 2. Fall back to global challenge for today */
   const { data: globalRow } = await supabase
@@ -29,7 +33,8 @@ export async function getTodayChallenge(firebaseUid) {
     .limit(1)
     .maybeSingle();
 
-  return globalRow ?? null;
+  if (globalRow && (!examType || globalRow.exam_type === examType)) return globalRow;
+  return null;
 }
 
 /* ── Save answer attempt ──────────────────────────────────── */

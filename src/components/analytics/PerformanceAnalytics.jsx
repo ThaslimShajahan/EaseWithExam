@@ -237,7 +237,7 @@ function BehavioralInsights({ sessions }) {
 
 /* ── Main component ───────────────────────────────────── */
 export default function PerformanceAnalytics() {
-  const { currentUser } = useAuth();
+  const { currentUser, userProfile } = useAuth();
   const navigate        = useNavigate();
   const [sessions, setSessions] = useState([]);
   const [loading,  setLoading]  = useState(true);
@@ -245,11 +245,11 @@ export default function PerformanceAnalytics() {
 
   useEffect(() => {
     if (!currentUser) return;
-    getTestSessions(currentUser.uid, 50)
+    getTestSessions(currentUser.uid, 50, userProfile?.target_exam)
       .then(setSessions)
       .catch((e) => setError(e.message || 'Failed to load test data.'))
       .finally(() => setLoading(false));
-  }, [currentUser]);
+  }, [currentUser, userProfile?.target_exam]);
 
   if (loading) return <SkeletonLoader type="card" />;
 

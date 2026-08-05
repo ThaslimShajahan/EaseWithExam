@@ -3,13 +3,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import EweLogo from '../ui/EweLogo';
 import {
   LayoutDashboard, FlaskConical, GraduationCap,
-  MessageCircleQuestion, BarChart3, Target,
-  User, LogOut, ShieldCheck, Crown, Users, HelpCircle, CreditCard,
+  MessageCircleQuestion, BarChart3, Target, Bell,
+  User, LogOut, ShieldCheck, Crown, Users, HelpCircle, CreditCard, Gauge,
 } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
+import { getQuotaSnapshot, FIELD_LABELS } from '../../lib/quota';
+import { useNotificationsContext } from '../../context/NotificationsContext';
 
 const NAV_ITEMS = [
   { to: '/dashboard', icon: LayoutDashboard,      label: 'Dashboard' },
@@ -31,10 +33,40 @@ function useIsAdmin(uid) {
   return isAdmin;
 }
 
+function useQuotaSummary(uid, isPremium) {
+  const [usage, setUsage] = useState(null);
+
+  useEffect(() => {
+    if (!uid) return;
+
+    const fields = Object.keys(FIELD_LABELS);
+    const refresh = () => {
+      Promise.all(fields.map((f) => getQuotaSnapshot(uid, f, isPremium)))
+        .then((results) => {
+          const byField = {};
+          fields.forEach((f, i) => { byField[f] = results[i]; });
+          setUsage(byField);
+        })
+        .catch(() => {});
+    };
+
+    refresh();
+    // incrementQuota() (src/lib/quota.js) fires this after every AI/mock-test/
+    // paper-eval action so this panel reflects usage right away instead of
+    // only on the next full page load.
+    window.addEventListener('ewe:quota-updated', refresh);
+    return () => window.removeEventListener('ewe:quota-updated', refresh);
+  }, [uid, isPremium]);
+
+  return usage;
+}
+
 export default function Sidebar() {
   const { currentUser, userProfile, isPremium, signOut } = useAuth();
   const navigate  = useNavigate();
   const isAdmin   = useIsAdmin(currentUser?.uid);
+  const quotaUsage = useQuotaSummary(currentUser?.uid, isPremium);
+  const { unreadCount } = useNotificationsContext();
   const [open, setOpen] = useState(false);
   const menuRef   = useRef(null);
   useOnClickOutside(menuRef, () => setOpen(false));
@@ -86,7 +118,66 @@ export default function Sidebar() {
             <span>{label}</span>
           </NavLink>
         ))}
+        <NavLink
+          to="/notifications"
+          className={({ isActive }) => `nav-link justify-between ${isActive ? 'active' : ''}`}
+        >
+          <span className="flex items-center gap-3">
+            <Bell size={18} className="shrink-0" />
+            <span>Notifications</span>
+          </span>
+          {unreadCount > 0 && (
+            <span className="h-5 min-w-[20px] px-1.5 bg-primary-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
+        </NavLink>
       </nav>
+
+      {/* Usage & Limits — compact teaser, full breakdown lives on /profile */}
+      {quotaUsage && (
+        <div className="mx-3 mb-3 px-3 py-3 rounded-xl bg-white/5 border border-white/5">
+          <button
+            onClick={() => navigate('/profile')}
+            className="w-full flex items-center justify-between mb-2 group"
+          >
+            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wider group-hover:text-slate-300">
+              <Gauge size={11} /> Usage
+            </span>
+            {isPremium && (
+              <span className="text-[9px] font-bold text-violet-400 flex items-center gap-0.5">
+                <Crown size={9} /> Unlimited
+              </span>
+            )}
+          </button>
+
+          {isPremium ? (
+            <p className="text-[10px] text-slate-500">All features unlimited today</p>
+          ) : (
+            <div className="space-y-1.5">
+              {Object.entries(FIELD_LABELS).map(([field, label]) => {
+                const q = quotaUsage[field];
+                if (!q) return null;
+                const pct = q.unlimited ? 0 : Math.min(100, Math.round((q.used / Math.max(q.limit, 1)) * 100));
+                return (
+                  <div key={field}>
+                    <div className="flex justify-between text-[10px] text-slate-500 mb-0.5">
+                      <span className="truncate">{label}</span>
+                      <span>{q.unlimited ? '∞' : `${q.used}/${q.limit}`}</span>
+                    </div>
+                    <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${pct >= 100 ? 'bg-red-400' : 'bg-primary-400'}`}
+                        style={{ width: q.unlimited ? '100%' : `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Avatar menu */}
       <div ref={menuRef} className="p-3 border-t border-white/10">
@@ -129,10 +220,15 @@ export default function Sidebar() {
               </div>
 
               {[
-                { icon: User,        label: 'Profile',             path: '/profile'  },
-                { icon: CreditCard,  label: 'Plans & Billing',     path: '/pricing'  },
-                { icon: Users,       label: 'Share with Parent',   path: '/parent'   },
-                { icon: HelpCircle,  label: 'Help & Guide',        path: '/help'     },
+                // "Notifications" itself (the live alert feed) now lives as its
+                // own nav-bar item above, with a real unread badge — this entry
+                // is specifically the preferences screen (In-App / Exam Alerts
+                // toggles), a different destination from the feed.
+                { icon: User,        label: 'Profile',               path: '/profile'                },
+                { icon: Bell,        label: 'Notification Settings', path: '/profile#notifications'  },
+                { icon: CreditCard,  label: 'Plans & Billing',       path: '/pricing'                },
+                { icon: Users,       label: 'Share with Parent',     path: '/parent'                 },
+                { icon: HelpCircle,  label: 'Help & Guide',          path: '/help'                   },
               ].map(({ icon: Icon, label, path }) => (
                 <button
                   key={path}

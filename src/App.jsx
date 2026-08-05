@@ -5,9 +5,10 @@ import { COACHING_MODULE_ENABLED } from './lib/moduleStatus';
 import AppShell from './components/layout/AppShell';
 import SkeletonLoader from './components/ui/SkeletonLoader';
 import PlatformChrome from './components/ui/PlatformChrome';
+import MaintenanceGate from './components/ui/MaintenanceGate';
 
 /* ── Eagerly loaded (tiny, needed on first paint) ─────────── */
-import AuthPage       from './pages/AuthPage';
+import LandingPage    from './pages/LandingPage';
 import OnboardingPage from './pages/OnboardingPage';
 import DashboardPage  from './pages/DashboardPage';
 
@@ -25,9 +26,14 @@ const DoubtStudioPage      = lazy(() => import('./pages/DoubtStudioPage'));
 const PracticeGeneratorPage= lazy(() => import('./pages/PracticeGeneratorPage'));
 const PaperModePage        = lazy(() => import('./pages/PaperModePage'));
 const ProfilePage          = lazy(() => import('./pages/ProfilePage'));
+const NotificationsPage    = lazy(() => import('./pages/NotificationsPage'));
 const PricingPage          = lazy(() => import('./pages/PricingPage'));
 const ParentDashboardPage  = lazy(() => import('./pages/ParentDashboardPage'));
 const HelpPage             = lazy(() => import('./pages/HelpPage'));
+const PrivacyPolicyPage    = lazy(() => import('./pages/PrivacyPolicyPage'));
+const TermsOfServicePage   = lazy(() => import('./pages/TermsOfServicePage'));
+const AboutPage            = lazy(() => import('./pages/AboutPage'));
+const ContactPage          = lazy(() => import('./pages/ContactPage'));
 
 /* ── Admin (fully isolated) ────────────────────────────────── */
 // ~27 individual admin screens are grouped into 8 hubs (see Admin*Hub.jsx) — each hub
@@ -37,7 +43,6 @@ const AdminGuard        = lazy(() => import('./admin/AdminGuard'));
 const AdminOverview     = lazy(() => import('./admin/AdminOverview'));
 const AdminContentHub   = lazy(() => import('./admin/AdminContentHub'));
 const AdminPublishHub   = lazy(() => import('./admin/AdminPublishHub'));
-const AdminAcademicHub  = lazy(() => import('./admin/AdminAcademicHub'));
 const AdminStudentsHub  = lazy(() => import('./admin/AdminStudentsHub'));
 const AdminPlatformHub  = lazy(() => import('./admin/AdminPlatformHub'));
 const AdminOpsHub       = lazy(() => import('./admin/AdminOpsHub'));
@@ -63,7 +68,7 @@ function PageFallback() {
 function RequireAuth({ children }) {
   const { currentUser, userProfile, loading } = useAuth();
   if (loading)    return <SkeletonLoader type="page" />;
-  if (!currentUser) return <Navigate to="/auth" replace />;
+  if (!currentUser) return <Navigate to="/" replace />;
   if (!userProfile?.onboarding_completed) return <Navigate to="/onboarding" replace />;
   return <AppShell>{children}</AppShell>;
 }
@@ -80,14 +85,14 @@ function RequireNoAuth({ children }) {
 function RequireAuthNoShell({ children }) {
   const { currentUser, loading } = useAuth();
   if (loading)      return <SkeletonLoader type="page" />;
-  if (!currentUser) return <Navigate to="/auth" replace />;
+  if (!currentUser) return <Navigate to="/" replace />;
   return children;
 }
 
 function RequireAuthFullScreen({ children }) {
   const { currentUser, userProfile, loading } = useAuth();
   if (loading)      return <SkeletonLoader type="test" />;
-  if (!currentUser) return <Navigate to="/auth" replace />;
+  if (!currentUser) return <Navigate to="/" replace />;
   if (!userProfile?.onboarding_completed) return <Navigate to="/onboarding" replace />;
   return children;
 }
@@ -97,8 +102,9 @@ export default function App() {
     <>
       <PlatformChrome />
       <Suspense fallback={<PageFallback />}>
+      <MaintenanceGate>
       <Routes>
-        <Route path="/auth"       element={<RequireNoAuth><AuthPage /></RequireNoAuth>} />
+        <Route path="/auth"       element={<Navigate to="/" replace />} />
         <Route path="/onboarding" element={<RequireAuthNoShell><OnboardingPage /></RequireAuthNoShell>} />
 
         <Route path="/dashboard"           element={<RequireAuth><DashboardPage /></RequireAuth>} />
@@ -107,6 +113,7 @@ export default function App() {
         <Route path="/study"               element={<RequireAuth><StudyHubPage /></RequireAuth>} />
         <Route path="/exams"               element={<RequireAuth><ExamsHubPage /></RequireAuth>} />
         <Route path="/progress"            element={<RequireAuth><ProgressHubPage /></RequireAuth>} />
+        <Route path="/notifications"       element={<RequireAuth><NotificationsPage /></RequireAuth>} />
 
         {/* Direct pages still needed outside hubs */}
         <Route path="/doubt"               element={<RequireAuth><DoubtStudioPage /></RequireAuth>} />
@@ -128,7 +135,7 @@ export default function App() {
         <Route path="/notifications"       element={<Navigate to="/exams?tab=alerts"      replace />} />
         <Route path="/exam-alerts"         element={<Navigate to="/exams?tab=alerts"      replace />} />
         <Route path="/analytics"           element={<Navigate to="/progress?tab=analytics"   replace />} />
-        <Route path="/notebook"            element={<Navigate to="/progress?tab=notebook"    replace />} />
+        <Route path="/notebook"            element={<Navigate to="/study?tab=notebook"       replace />} />
         <Route path="/syllabus"            element={<Navigate to="/progress?tab=syllabus"    replace />} />
         <Route path="/leaderboard"         element={<Navigate to="/progress?tab=leaderboard" replace />} />
 
@@ -152,7 +159,6 @@ export default function App() {
           <Route index               element={<AdminOverview />}    />
           <Route path="content"      element={<AdminContentHub />}  />
           <Route path="publish"      element={<AdminPublishHub />}  />
-          <Route path="academic"     element={<AdminAcademicHub />} />
           <Route path="students"     element={<AdminStudentsHub />} />
           <Route path="platform"     element={<AdminPlatformHub />} />
           <Route path="ops"          element={<AdminOpsHub />}      />
@@ -165,8 +171,8 @@ export default function App() {
           <Route path="papers"        element={<Navigate to="/admin/publish?tab=papers"       replace />} />
           <Route path="papergen"      element={<Navigate to="/admin/publish?tab=papergen"     replace />} />
           <Route path="tests"         element={<Navigate to="/admin/publish?tab=tests"        replace />} />
-          <Route path="syllabus"      element={<Navigate to="/admin/academic?tab=syllabus"     replace />} />
-          <Route path="notes"         element={<Navigate to="/admin/academic?tab=notes"        replace />} />
+          <Route path="syllabus"      element={<Navigate to="/admin/content?tab=syllabus"      replace />} />
+          <Route path="notes"         element={<Navigate to="/admin/content?tab=notes"         replace />} />
           <Route path="subscriptions" element={<Navigate to="/admin/students?tab=subscriptions" replace />} />
           <Route path="coaching"      element={<Navigate to="/admin/students?tab=coaching"     replace />} />
           <Route path="push"          element={<Navigate to="/admin/students?tab=push"         replace />} />
@@ -174,11 +180,9 @@ export default function App() {
           <Route path="settings"      element={<Navigate to="/admin/platform?tab=settings"     replace />} />
           <Route path="pricing"       element={<Navigate to="/admin/platform?tab=pricing"      replace />} />
           <Route path="quota"         element={<Navigate to="/admin/platform?tab=quota"        replace />} />
-          <Route path="testrun"       element={<Navigate to="/admin/ops?tab=testrun"           replace />} />
           <Route path="testdata"      element={<Navigate to="/admin/ops?tab=testdata"          replace />} />
           <Route path="data"          element={<Navigate to="/admin/ops?tab=data"              replace />} />
           <Route path="examwatch"     element={<Navigate to="/admin/ops?tab=examwatch"         replace />} />
-          <Route path="crawler"       element={<Navigate to="/admin/ops?tab=crawler"            replace />} />
           <Route path="veda"          element={<Navigate to="/admin/ops?tab=veda"              replace />} />
           <Route path="admins"        element={<Navigate to="/admin/people?tab=admins"         replace />} />
           <Route path="lookup"        element={<Navigate to="/admin/people?tab=lookup"          replace />} />
@@ -206,13 +210,18 @@ export default function App() {
 
         {/* Public — no auth required */}
         <Route path="/join/:code" element={<JoinCentrePage />} />
+        <Route path="/privacy"    element={<PrivacyPolicyPage />} />
+        <Route path="/terms"      element={<TermsOfServicePage />} />
+        <Route path="/about"      element={<AboutPage />} />
+        <Route path="/contact"    element={<ContactPage />} />
         {COACHING_MODULE_ENABLED && (
           <Route path="/coaching-invite/:code" element={<CoachingStaffJoinPage />} />
         )}
 
-        <Route path="/"  element={<Navigate to="/dashboard" replace />} />
+        <Route path="/"  element={<RequireNoAuth><LandingPage /></RequireNoAuth>} />
         <Route path="*"  element={<Navigate to="/dashboard" replace />} />
       </Routes>
+      </MaintenanceGate>
       </Suspense>
     </>
   );

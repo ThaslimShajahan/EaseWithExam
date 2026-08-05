@@ -98,13 +98,17 @@ export default function VideoLearningPage() {
   const { userProfile } = useAuth();
 
   const examOptions = Object.keys(PLAYLISTS);
+  // target_exam is the raw onboarding enum (CLASS_10, CLASS_8_9, JEE_MAIN, …) — map
+  // every value the onboarding flow can actually produce to the nearest available
+  // playlist. Only NEET/JEE Main/Class 10/Class 12 have curated content today, so
+  // Class 8-9 and Class 11 fall to the nearest neighbor rather than silently
+  // defaulting to NEET Physics/Chemistry/Biology for a school student.
   const EXAM_ALIAS = {
     NEET: 'NEET', JEE_MAIN: 'JEE Main', JEE_ADVANCED: 'JEE Main', BOTH: 'NEET',
-    CBSE: 'Class 12', ICSE: 'Class 12', 'Class 10': 'Class 10', 'Class 12': 'Class 12',
+    CLASS_10: 'Class 10', CLASS_12: 'Class 12',
+    CLASS_8_9: 'Class 10', CLASS_11: 'Class 12',
   };
-  const defaultExam = EXAM_ALIAS[userProfile?.target_exam]
-    ?? examOptions.find((e) => userProfile?.target_exam?.startsWith(e.split(' ')[0]))
-    ?? examOptions[0];
+  const defaultExam = EXAM_ALIAS[userProfile?.target_exam] ?? examOptions[0];
 
   const [activeExam,    setActiveExam]    = useState(defaultExam);
   const [activeSubject, setActiveSubject] = useState(null);

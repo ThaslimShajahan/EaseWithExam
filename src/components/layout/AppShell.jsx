@@ -3,8 +3,9 @@ import Sidebar from './Sidebar';
 import TopHeader from './TopHeader';
 import BottomNav from './BottomNav';
 import NotificationToast from '../ui/NotificationToast';
+import { NotificationsProvider } from '../../context/NotificationsContext';
 
-export default function AppShell({ children }) {
+function AppShellLayout({ children }) {
   const isDesktop = useIsDesktop();
 
   if (isDesktop) {
@@ -33,5 +34,16 @@ export default function AppShell({ children }) {
       <BottomNav />
       <NotificationToast />
     </div>
+  );
+}
+
+export default function AppShell({ children }) {
+  // Desktop mounts Sidebar and TopHeader together, both of which render a
+  // NotificationBell — a single shared subscription here, provided once above
+  // both, is what keeps that from becoming two competing realtime channels.
+  return (
+    <NotificationsProvider>
+      <AppShellLayout>{children}</AppShellLayout>
+    </NotificationsProvider>
   );
 }

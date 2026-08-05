@@ -20,7 +20,12 @@ export default function PlatformChrome() {
 
   return (
     <div className="fixed bottom-0 inset-x-0 z-[1000] bg-slate-900 text-white px-4 py-3.5 flex flex-col sm:flex-row items-center gap-3 shadow-2xl">
-      <p className="text-xs sm:text-sm text-slate-200 flex-1">{cookie_banner_text}</p>
+      <p className="text-xs sm:text-sm text-slate-200 flex-1">
+        {cookie_banner_text}{' '}
+        <a href="/privacy" className="underline text-primary-300 hover:text-primary-200 font-semibold">
+          Read our Privacy &amp; Cookie Policy
+        </a>
+      </p>
       <button
         onClick={() => { localStorage.setItem(DISMISS_KEY, '1'); setDismissed(true); }}
         className="shrink-0 px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-700 text-white text-xs font-bold transition-colors"

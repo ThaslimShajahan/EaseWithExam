@@ -6,25 +6,30 @@ import {
   ArrowRight, Hash, GripVertical, Tag, Database, Sparkles, Check, Loader2,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { useAuth } from '../context/AuthContext';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { getSyllabus as getSyllabusJS } from '../lib/syllabusData';
 import { chatComplete } from '../lib/aiProxy';
 import TabRow from '../components/admin/TabRow';
+import { BOARDS, CLASS_LEVELS, CATEGORIES } from '../lib/categories';
 
-/* ── Exam configuration ──────────────────────────────────────── */
+function getCallerUid() {
+  try {
+    const key = Object.keys(sessionStorage).find(k => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch { return ''; }
+}
+
+/* ── Exam configuration ──────────────────────────────────────────
+ * Derived from the admin-editable category catalog (Admin > Platform >
+ * Categories) instead of a hardcoded list — otherwise a board or competitive
+ * exam added there never gets a tab here to add syllabus chapters for. */
 
 const EXAM_TABS = [
-  { key: 'CBSE',         label: 'CBSE',         isBoard: true  },
-  { key: 'ICSE',         label: 'ICSE',         isBoard: true  },
-  { key: 'State Board',  label: 'State Board',  isBoard: true  },
-  { key: 'Kerala State', label: 'Kerala State', isBoard: true  },
-  { key: 'NEET',         label: 'NEET',         isBoard: false },
-  { key: 'JEE Main',     label: 'JEE Main',     isBoard: false },
-  { key: 'JEE Advanced', label: 'JEE Advanced', isBoard: false },
+  ...BOARDS.map((b) => ({ key: b, label: CATEGORIES[b]?.label ?? b, isBoard: true })),
+  ...Object.entries(CATEGORIES)
+    .filter(([, v]) => v.type === 'competitive')
+    .map(([key, v]) => ({ key, label: v.label, isBoard: false })),
 ];
-
-const CLASS_LEVELS = ['6', '7', '8', '9', '10', '11', '12'];
 
 // Exam types that have hardcoded seed data in syllabusData.js
 const SEEDABLE_EXAMS = new Set(['NEET', 'JEE Main', 'JEE Advanced']);
@@ -641,8 +646,7 @@ function NewSubjectInput({ onConfirm, onCancel }) {
 /* ── Main page ───────────────────────────────────────────────── */
 
 export default function AdminSyllabus() {
-  const { currentUser } = useAuth();
-  const [callerUid, setCallerUid] = useState('');
+  const callerUid = getCallerUid();
 
   const [examTab,    setExamTab]    = useState('CBSE');
   const [classLevel, setClassLevel] = useState('10');
@@ -666,14 +670,6 @@ export default function AdminSyllabus() {
   const examMeta = EXAM_TABS.find((t) => t.key === examTab);
   const isBoard  = examMeta?.isBoard ?? false;
   const dbExamType = getDbExamType(examTab, isBoard ? classLevel : '');
-
-  /* derive caller uid */
-  useEffect(() => {
-    if (!currentUser) return;
-    const rec = sessionStorage.getItem(`edu_admin_rec_${currentUser.uid}`);
-    try { setCallerUid(rec ? JSON.parse(rec).uid : currentUser.uid); }
-    catch { setCallerUid(currentUser.uid); }
-  }, [currentUser]);
 
   /* ── Load syllabus nodes ─────────────────────────── */
   const load = useCallback(async () => {
@@ -920,7 +916,7 @@ export default function AdminSyllabus() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-violet-500 to-primary-600 flex items-center justify-center shrink-0 shadow-lg shadow-primary-900/30">
+          <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center shrink-0 shadow-lg shadow-primary-900/30">
             <BookOpenText size={20} className="text-white" />
           </div>
           <div>

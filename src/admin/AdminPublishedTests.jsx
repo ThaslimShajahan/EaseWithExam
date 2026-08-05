@@ -12,10 +12,18 @@ function fmt(iso) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+const SOURCE_META = {
+  admin:    { label: 'Admin',   color: 'bg-violet-900/30 text-violet-300 border-violet-700/30' },
+  student:  { label: 'Student', color: 'bg-blue-900/30 text-blue-300 border-blue-700/30' },
+  pyq_auto: { label: 'PYQ',     color: 'bg-teal-900/30 text-teal-300 border-teal-700/30' },
+  unknown:  { label: 'Unknown', color: 'bg-slate-700/40 text-slate-400 border-slate-600/30' },
+};
+
 function TestRow({ test, selected, onToggle, attempts, onDelete }) {
   const [expanded, setExpanded] = useState(false);
   const diffColor = diffBadge(test.difficulty, true);
   const attemptCount = attempts[test.id] ?? 0;
+  const source = SOURCE_META[test.created_by] ?? SOURCE_META.unknown;
 
   return (
     <>
@@ -42,6 +50,13 @@ function TestRow({ test, selected, onToggle, attempts, onDelete }) {
 
         {/* Subject */}
         <td className="px-4 py-3 text-sm text-slate-300">{test.subject}</td>
+
+        {/* Source */}
+        <td className="px-4 py-3">
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-lg border ${source.color}`}>
+            {source.label}
+          </span>
+        </td>
 
         {/* Difficulty */}
         <td className="px-4 py-3">
@@ -327,6 +342,7 @@ export default function AdminPublishedTests() {
                 <th className="px-4 py-3 w-8" />
                 <th className="px-4 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">Title</th>
                 <th className="px-4 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">Subject</th>
+                <th className="px-4 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">Source</th>
                 <th className="px-4 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">Difficulty</th>
                 <th className="px-4 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">Qs</th>
                 <th className="px-4 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">Duration</th>

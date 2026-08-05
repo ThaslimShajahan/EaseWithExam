@@ -62,12 +62,13 @@ export default function AdminPushNotifications() {
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
 
   useEffect(() => {
-    supabase.from('in_app_notifications')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(30)
+    // in_app_notifications has RLS enabled with zero direct policies by design
+    // (same admin-only lockdown as the `admins` table) — a direct .from(...)
+    // query always silently returned 0 rows, so this history panel was
+    // permanently empty even though sends themselves worked fine.
+    supabase.rpc('admin_get_notification_history', { p_caller: callerUid, p_limit: 30 })
       .then(({ data }) => { setHistory(data ?? []); setLoadingH(false); });
-  }, []);
+  }, [callerUid]);
 
   async function handleSend() {
     if (!form.title.trim() || !form.body.trim()) { setErr('Title and message are required'); return; }

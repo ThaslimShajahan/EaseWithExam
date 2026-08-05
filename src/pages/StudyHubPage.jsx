@@ -1,42 +1,50 @@
 import { lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { FlaskConical, Layers, PlayCircle, Target, BookOpen } from 'lucide-react';
+import { Target, BookOpen, BookMarked, Sparkles, Headphones } from 'lucide-react';
 import SkeletonLoader from '../components/ui/SkeletonLoader';
 import HubTabBar from '../components/ui/HubTabBar';
 
-const PracticePage      = lazy(() => import('./PracticePage'));
-const FlashcardsPage    = lazy(() => import('./FlashcardsPage'));
-const VideoLearningPage = lazy(() => import('./VideoLearningPage'));
 const StudyPlanPage     = lazy(() => import('./StudyPlanPage'));
 const NotesBrowser      = lazy(() => import('../components/study/NotesBrowser'));
+const ErrorNotebookPage = lazy(() => import('./ErrorNotebookPage'));
+const SummarizerPage    = lazy(() => import('./SummarizerPage'));
+const PodcastPage       = lazy(() => import('./PodcastPage'));
 
+// Practice/exam papers live under Exams Hub (/exams) — Study is content-only,
+// to avoid two competing "practice" surfaces. Flashcards and Videos are hidden
+// for now (not removed — FlashcardsPage/VideoLearningPage still exist) pending
+// content/UX rework. Error Notebook moved here from Progress Hub — it's
+// revision material (a student's own past mistakes), same category as
+// Notes/Study Plan, not a progress metric.
 const TABS = [
-  { key: 'practice',   label: 'Practice',   icon: FlaskConical },
-  { key: 'flashcards', label: 'Flashcards', icon: Layers       },
-  { key: 'notes',      label: 'Notes',      icon: BookOpen     },
-  { key: 'videos',     label: 'Videos',     icon: PlayCircle   },
-  { key: 'plan',       label: 'Study Plan', icon: Target       },
+  { key: 'notes',      label: 'Notes',          icon: BookOpen   },
+  { key: 'notebook',   label: 'Error Notebook', icon: BookMarked },
+  { key: 'plan',       label: 'Study Plan',     icon: Target     },
+  { key: 'summarizer', label: 'Summarizer',     icon: Sparkles   },
+  { key: 'podcast',    label: 'Podcast',        icon: Headphones },
 ];
 
 const PAGES = {
-  practice:   <PracticePage />,
-  flashcards: <FlashcardsPage />,
   notes:      <div className="p-4 lg:p-0"><NotesBrowser /></div>,
-  videos:     <VideoLearningPage />,
+  notebook:   <ErrorNotebookPage />,
   plan:       <StudyPlanPage />,
+  summarizer: <SummarizerPage />,
+  podcast:    <PodcastPage />,
 };
 
 export default function StudyHubPage() {
   const [params, setParams] = useSearchParams();
   const raw = params.get('tab');
-  const tab = TABS.some(t => t.key === raw) ? raw : 'practice';
+  const tab = TABS.some(t => t.key === raw) ? raw : 'notes';
 
   return (
     <>
       <HubTabBar layoutId="study-hub-underline" tabs={TABS} active={tab} onChange={(key) => setParams({ tab: key }, { replace: true })} />
-      <Suspense fallback={<SkeletonLoader type="page" />}>
-        {PAGES[tab]}
-      </Suspense>
+      <div className="pt-4 lg:pt-6">
+        <Suspense fallback={<SkeletonLoader type="page" />}>
+          {PAGES[tab]}
+        </Suspense>
+      </div>
     </>
   );
 }

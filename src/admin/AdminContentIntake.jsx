@@ -10,19 +10,25 @@ import { chatComplete } from '../lib/aiProxy';
 import { supabase, adminSaveKnowledgeChunks } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { getFeatureFlag, FLAGS } from '../lib/featureFlags';
-import { fetchPdfBuffer, extractPdfText } from '../lib/pdfAnalyzer';
-import { getSubjectsForExam, BOARDS, CLASS_LEVELS } from '../lib/categories';
+import { fetchPdfBuffer, extractPdfPages, splitIntoBatches } from '../lib/pdfAnalyzer';
+import { getSubjectsForExam, BOARDS, CLASS_LEVELS, EXAM_TYPE_GROUPS } from '../lib/categories';
 import { getChapters } from '../lib/syllabus';
 import { listDriveFolderPdfs, fetchDriveFileBytes } from '../lib/driveFolder';
-import { useAuth } from '../context/AuthContext';
+
+function getCallerUid() {
+  try {
+    const key = Object.keys(sessionStorage).find(k => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch { return ''; }
+}
 
 /* ── Config ─────────────────────────────────────────────────────── */
 
-const COMPETITIVE_EXAMS = ['NEET', 'JEE Main', 'JEE Advanced'];
-const EXAM_GROUPS = [
-  { label: 'Competitive', items: COMPETITIVE_EXAMS },
-  { label: 'Boards',      items: BOARDS },
-];
+// Live-derived from Admin > Categories — excludes the "Classes" group since
+// class is picked contextually below a board pick, not as its own top group.
+function getExamGroups() {
+  return EXAM_TYPE_GROUPS.filter((g) => g.label !== 'Classes');
+}
 
 function getDbExamType(examBase, classLevel) {
   return BOARDS.includes(examBase) && classLevel ? `${examBase} Class ${classLevel}` : examBase;
@@ -59,20 +65,35 @@ function matchSyllabusChapter(guess, chapterNames) {
 
 /* ── AI extraction ──────────────────────────────────────────────── */
 
+// A single gpt-4o call has a fixed ~16K-token OUTPUT ceiling regardless of
+// max_tokens requested — a full multi-chapter unit (e.g. a 48-page textbook
+// unit, ~84K characters of source text) needs MORE output than that to
+// return every chapter's chunks, so one giant call silently truncates mid-
+// document (this is what previously cut a real upload off after page 23,
+// even once the input-side slice was raised to 40000 — the real fix is to
+// never ask a single call to process/emit that much at once). splitIntoBatches
+// (from pdfAnalyzer.js) keeps each call's input+output comfortably inside the
+// model's limits, cutting only at page boundaries; results are merged after.
+
 async function runPYQExtraction({ rawText, examType, subject, year, onProgress }) {
   const isMixed = subject === 'Mixed';
-  onProgress('AI extracting questions…');
+  const batches = splitIntoBatches(rawText);
+  const allQuestions = [];
+  let paperTitle = null, totalMarks = null;
 
-  const resp = await chatComplete({
-    model:           'gpt-4o',
-    max_tokens:      8000,
-    temperature:     0,
-    response_format: { type: 'json_object' },
-    messages: [
-      { role: 'system', content: 'You are an expert at extracting structured question papers from raw text. Return only valid JSON.' },
-      {
-        role: 'user',
-        content: `Extract ALL questions from this ${examType}${isMixed ? '' : ` ${subject}`} question paper${year ? ` (${year})` : ''}.
+  for (let b = 0; b < batches.length; b++) {
+    onProgress(batches.length > 1 ? `AI extracting questions… (part ${b + 1}/${batches.length})` : 'AI extracting questions…');
+
+    const resp = await chatComplete({
+      model:           'gpt-4o',
+      max_tokens:      16000,
+      temperature:     0,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: 'You are an expert at extracting structured question papers from raw text. Return only valid JSON. Extract every question in the given text — this may be one part of a larger paper split across multiple calls, so only extract what appears in THIS excerpt.' },
+        {
+          role: 'user',
+          content: `Extract ALL questions from this ${examType}${isMixed ? '' : ` ${subject}`} question paper${year ? ` (${year})` : ''}${batches.length > 1 ? ` (excerpt ${b + 1} of ${batches.length})` : ''}.
 ${isMixed ? '\nThis paper covers multiple subjects. For each question, also identify the subject (Physics, Chemistry, Biology for NEET; Physics, Chemistry, Mathematics for JEE).' : ''}
 
 For CBSE/board papers, section marks: A=1, B=2, C=3, D=5, E=4-5.
@@ -103,51 +124,105 @@ Return JSON:
   ]
 }
 
-RAW TEXT (first 10000 chars):
-${rawText.slice(0, 10000)}`,
-      },
-    ],
-  });
+RAW TEXT:
+${batches[b]}`,
+        },
+      ],
+    });
 
-  const data      = JSON.parse(resp.choices[0].message.content);
-  const questions = data.questions ?? [];
-  if (!questions.length) throw new Error('No questions found. Check if this is a text-based PDF.');
-  return { questions, paperTitle: data.paper_title, totalMarks: data.total_marks };
+    const data = JSON.parse(resp.choices[0].message.content);
+    allQuestions.push(...(data.questions ?? []));
+    paperTitle = paperTitle || data.paper_title;
+    totalMarks = totalMarks || data.total_marks;
+  }
+
+  if (!allQuestions.length) throw new Error('No questions found. Check if this is a text-based PDF.');
+  return { questions: allQuestions, paperTitle, totalMarks };
 }
 
-async function runNotesExtraction({ rawText, examType, subject, onProgress }) {
-  onProgress('AI structuring study notes…');
+async function runNotesExtraction({ rawText, pages, examType, subject, onProgress }) {
+  const batches = splitIntoBatches(rawText);
+  const mergedLessons = []; // preserves first-seen order across batches
+  let unit = null;
 
-  const resp = await chatComplete({
-    model:           'gpt-4o',
-    max_tokens:      8000,
-    temperature:     0,
-    response_format: { type: 'json_object' },
-    messages: [
-      { role: 'system', content: 'You structure educational content into searchable chunks and identify its chapter/topic. Return only valid JSON.' },
-      {
-        role: 'user',
-        content: `Structure this ${examType} ${subject} content into knowledge chunks, and identify the single chapter/topic name it belongs to (from the actual content — e.g. a textbook chapter title).
-Each chunk: self-contained, 100–300 words, focused on one concept.
+  for (let b = 0; b < batches.length; b++) {
+    onProgress(batches.length > 1 ? `AI structuring study notes… (part ${b + 1}/${batches.length})` : 'AI structuring study notes…');
+
+    const resp = await chatComplete({
+      model:           'gpt-4o',
+      max_tokens:      16000,
+      temperature:     0,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: 'You structure textbook/study material PDFs into their real table-of-contents shape (unit, individual lessons/chapters, and the page range each one actually spans) and break each lesson into searchable knowledge chunks. Return only valid JSON. Use the page numbers as they actually appear printed in the PDF — do not invent them. This may be one part of a larger unit split across multiple calls — only extract lessons/chunks whose content appears in THIS excerpt; if a lesson clearly continues from where it left off, reuse the SAME title so it can be merged back together.',
+        },
+        {
+          role: 'user',
+          content: `This is ${examType} ${subject} content, possibly spanning one unit with multiple lessons/chapters (like a textbook "Contents" page), or just a single chapter — read the actual content and structure it correctly either way.${batches.length > 1 ? ` (excerpt ${b + 1} of ${batches.length} of a larger unit)` : ''}
+
+Each page in CONTENT below is prefixed with a literal [[PAGE N]] marker.
+
+For each distinct lesson/chapter you find, extract:
+- title: its real title, from the content (e.g. a story/chapter name) — not a generic label
+- page_start / page_end: the actual printed page numbers this lesson spans, as they visibly appear in the text (e.g. a running header showing "23"). Use null if you can't tell.
+- marker_start / marker_end: the [[PAGE N]] marker numbers where this lesson's content begins and ends — NOT the printed page numbers, just which markers it falls between. Always fill these in, they're always visible.
+- chunks: 100–300 word self-contained knowledge chunks covering that lesson's content, each with a heading and keywords.
+
+If the whole upload is really just one chapter/topic, return a single lesson.
 
 Return JSON:
 {
-  "topic": "chapter/topic name",
-  "chunks": [
-    { "heading": "concept name", "content": "explanation", "keywords": ["kw1","kw2"] }
+  "unit": "Unit name if this content is part of a numbered/named unit, else null",
+  "lessons": [
+    {
+      "title": "chapter/lesson title",
+      "page_start": 2, "page_end": 8,
+      "marker_start": 1, "marker_end": 7,
+      "chunks": [ { "heading": "concept name", "content": "explanation", "keywords": ["kw1","kw2"] } ]
+    }
   ]
 }
 
-CONTENT (first 8000 chars):
-${rawText.slice(0, 8000)}`,
-      },
-    ],
-  });
+CONTENT:
+${batches[b]}`,
+        },
+      ],
+    });
 
-  const data   = JSON.parse(resp.choices[0].message.content);
-  const chunks = data.chunks ?? [];
-  if (!chunks.length) throw new Error('No content could be extracted.');
-  return { chunks, topic: data.topic };
+    const data = JSON.parse(resp.choices[0].message.content);
+    unit = unit || data.unit || null;
+
+    for (const lesson of (data.lessons ?? [])) {
+      if (!lesson.chunks?.length) continue;
+
+      // Verbatim text is sliced directly from the ORIGINAL pages array using the
+      // AI-reported marker range — never taken from anything the AI wrote itself,
+      // so it can't be paraphrased. Locating a literal [[PAGE N]] marker is a much
+      // more reliable task for the model than reproducing a passage verbatim.
+      let verbatimText = null;
+      if (pages?.length && lesson.marker_start && lesson.marker_end) {
+        const start = Math.max(1, Math.min(pages.length, Math.round(lesson.marker_start)));
+        const end   = Math.max(start, Math.min(pages.length, Math.round(lesson.marker_end)));
+        verbatimText = pages.slice(start - 1, end).join('\n\n').trim() || null;
+      }
+
+      const key = (lesson.title || '').trim().toLowerCase();
+      const existing = key && mergedLessons.find((l) => (l.title || '').trim().toLowerCase() === key);
+      if (existing) {
+        existing.chunks.push(...lesson.chunks);
+        existing.page_start = existing.page_start != null ? Math.min(existing.page_start, lesson.page_start ?? existing.page_start) : lesson.page_start ?? null;
+        existing.page_end   = existing.page_end   != null ? Math.max(existing.page_end,   lesson.page_end   ?? existing.page_end)   : lesson.page_end   ?? null;
+        if (verbatimText) existing.verbatimText = existing.verbatimText ? `${existing.verbatimText}\n\n${verbatimText}` : verbatimText;
+      } else {
+        mergedLessons.push({ ...lesson, chunks: [...lesson.chunks], verbatimText });
+      }
+    }
+  }
+
+  if (!mergedLessons.length) throw new Error('No content could be extracted.');
+  return { unit, lessons: mergedLessons };
 }
 
 /* ── Save helpers ───────────────────────────────────────────────── */
@@ -186,63 +261,79 @@ async function savePYQRows({ questions, examType, subject, year, source, isMixed
   return saved ?? [];
 }
 
-// Saves to knowledge_base (AI doubt-tutor retrieval) AND upserts a study_notes row
-// (the curated notes library Content Map + the student-facing Study Notes screen
-// both read from) — one upload should serve both, not just the AI retrieval store.
-async function saveNoteChunks({ chunks, topic, examType, subject, chapter, source, callerUid, syllabusChapters }) {
+// Saves to knowledge_base (AI doubt-tutor retrieval) AND upserts one study_notes
+// row PER lesson/chapter (the curated notes library Content Map + the student-
+// facing Study Notes screen both read from) — a single unit upload with 3
+// chapters becomes 3 study_notes rows sharing the same `unit`, each with its
+// own title and real page range, instead of one flattened blob.
+async function saveNoteChunks({ unit, lessons, examType, subject, chapter, source, callerUid, syllabusChapters }) {
   const reviewQueueOn = await getFeatureFlag(FLAGS.CONTENT_REVIEW_QUEUE);
-  const chapterName   = matchSyllabusChapter(topic || chapter, syllabusChapters) || chapter || subject;
+  const examTag = examType ? examType.toLowerCase().replace(/\s+/g, '_') : null;
 
   let kbCount = 0;
-  if (reviewQueueOn) {
-    const rows = chunks.map((c) => ({
-      exam_type:     examType || null,
-      subject,
-      chapter:       chapterName,
-      question_text: c.heading ? `${c.heading}\n\n${c.content}` : c.content,
-      question_type: 'KB_NOTE',
-      status:        'in_review',
-      source,
-    }));
-    const { error } = await supabase.from('pyq_questions').insert(rows);
-    if (error) throw new Error(error.message);
-    kbCount = rows.length;
-    logChange(ENTITY.CONTENT_ITEM, 'bulk', ACTION.CREATE,
-      { count: rows.length, examType, subject, source },
-      `Content Intake: ${rows.length} KB chunks queued for review`);
-  } else {
-    const examTag  = examType ? examType.toLowerCase().replace(/\s+/g, '_') : null;
-    const kbRows = chunks.map((c) => ({
-      content: `${c.heading}\n\n${c.content}`,
-      subject,
-      tags:    [chapterName, ...(examTag ? [examTag] : []), ...(c.keywords || [])].filter(Boolean),
-    }));
-    await adminSaveKnowledgeChunks(kbRows);
-    kbCount = kbRows.length;
-    logChange(ENTITY.CONTENT_ITEM, 'bulk', ACTION.CREATE,
-      { count: kbRows.length, examType, subject, source },
-      `Content Intake: ${kbRows.length} knowledge chunks`);
+  const chapterNames = [];
+
+  for (let i = 0; i < lessons.length; i++) {
+    const lesson = lessons[i];
+    const chunks = lesson.chunks ?? [];
+    if (!chunks.length) continue;
+    const chapterName = matchSyllabusChapter(lesson.title || chapter, syllabusChapters) || lesson.title || chapter || subject;
+    chapterNames.push(chapterName);
+
+    if (reviewQueueOn) {
+      const rows = chunks.map((c) => ({
+        exam_type:     examType || null,
+        subject,
+        chapter:       chapterName,
+        question_text: c.heading ? `${c.heading}\n\n${c.content}` : c.content,
+        question_type: 'KB_NOTE',
+        status:        'in_review',
+        source,
+      }));
+      const { error } = await supabase.from('pyq_questions').insert(rows);
+      if (error) throw new Error(error.message);
+      kbCount += rows.length;
+    } else {
+      const kbRows = chunks.map((c) => ({
+        content: `${c.heading}\n\n${c.content}`,
+        subject,
+        tags:    [chapterName, unit, ...(examTag ? [examTag] : []), ...(c.keywords || [])].filter(Boolean),
+      }));
+      await adminSaveKnowledgeChunks(kbRows);
+      kbCount += kbRows.length;
+    }
+
+    // Curated study_notes row for this one lesson/chapter.
+    const fullContent = chunks.map((c) => (c.heading ? `**${c.heading}**\n${c.content}` : c.content)).join('\n\n');
+    const { error: noteErr } = await supabase.rpc('admin_upsert_study_note', {
+      p_caller:       callerUid,
+      p_id:           null,
+      p_title:        chapterName,
+      p_subject:      subject,
+      p_exam_type:    examType || null,
+      p_chapter:      chapterName,
+      // study_notes.content is a Postgres `text` column (unbounded) — a long
+      // lesson (e.g. a 19-page chapter's worth of chunks) legitimately runs
+      // well past 12000 chars, and this cap was silently cutting it short.
+      p_content:      fullContent,
+      p_pdf_url:      null,
+      p_centre_id:    null,
+      p_is_published: !reviewQueueOn,
+      p_tags:         chunks.flatMap((c) => c.keywords || []).slice(0, 10),
+      p_unit:         unit || null,
+      p_page_start:   lesson.page_start ?? null,
+      p_page_end:     lesson.page_end ?? null,
+      p_sort_order:   i,
+      p_source_text:  lesson.verbatimText || null,
+    });
+    if (noteErr) throw new Error(noteErr.message);
   }
 
-  // Curated study_notes row — same table Admin > Academic > Study Notes and
-  // Content Map both read from. One combined chunk of full content per file.
-  const fullContent = chunks.map((c) => (c.heading ? `**${c.heading}**\n${c.content}` : c.content)).join('\n\n');
-  const { error: noteErr } = await supabase.rpc('admin_upsert_study_note', {
-    p_caller:       callerUid,
-    p_id:           null,
-    p_title:        chapterName,
-    p_subject:      subject,
-    p_exam_type:    examType || null,
-    p_chapter:      chapterName,
-    p_content:      fullContent.slice(0, 12000),
-    p_pdf_url:      null,
-    p_centre_id:    null,
-    p_is_published: !reviewQueueOn,
-    p_tags:         chunks.flatMap((c) => c.keywords || []).slice(0, 10),
-  });
-  if (noteErr) throw new Error(noteErr.message);
+  logChange(ENTITY.CONTENT_ITEM, 'bulk', ACTION.CREATE,
+    { count: kbCount, examType, subject, source, unit, lessons: chapterNames },
+    `Content Intake: ${kbCount} knowledge chunks across ${chapterNames.length} lesson(s)${unit ? ` in "${unit}"` : ''}`);
 
-  return { kbCount, chapterName };
+  return { kbCount, chapterName: chapterNames.join(', '), unit, lessonCount: chapterNames.length };
 }
 
 /* ── Diagram image enrichment (PYQ only) ─────────────────────────── */
@@ -373,20 +464,7 @@ const STEP_LABELS  = { type: 'Content Type', classify: 'Class & Subject', input:
 
 export default function AdminContentIntake() {
   const navigate = useNavigate();
-  const { currentUser } = useAuth();
-  const [callerUid, setCallerUid] = useState('');
-
-  // Same resolution as AdminSyllabus.jsx: prefer the sessionStorage admin record's
-  // uid, but always fall back to the Firebase uid itself rather than an empty
-  // string — an empty p_caller silently fails admin_upsert_study_note's
-  // authorization check, which is exactly what was dropping "Study Notes"
-  // uploads before they ever reached the study_notes table.
-  useEffect(() => {
-    if (!currentUser) return;
-    const rec = sessionStorage.getItem(`edu_admin_rec_${currentUser.uid}`);
-    try { setCallerUid(rec ? JSON.parse(rec).uid : currentUser.uid); }
-    catch { setCallerUid(currentUser.uid); }
-  }, [currentUser]);
+  const callerUid = getCallerUid();
 
   const [step, setStep] = useState('type');
 
@@ -508,8 +586,9 @@ export default function AdminContentIntake() {
       try {
         const buf = await getBytes(it);
         setStepMsg({ message: 'Extracting text…' });
-        const rawText = await extractPdfText(buf);
-        if (!rawText || rawText.trim().length < 100) throw new Error('No extractable text — scanned/image-only PDF?');
+        const pages = await extractPdfPages(buf);
+        const rawText = pages.join('\n\n').trim();
+        if (!rawText || rawText.length < 100) throw new Error('No extractable text — scanned/image-only PDF?');
 
         if (contentType === 'pyq') {
           const { questions } = await runPYQExtraction({
@@ -522,16 +601,26 @@ export default function AdminContentIntake() {
           });
           setStepMsg({ status: 'done', message: `${rows.length} questions saved`, savedRows: rows });
         } else {
-          const { chunks, topic } = await runNotesExtraction({
-            rawText, examType: dbExamType, subject,
+          // Each page is prefixed with a [[PAGE N]] marker so the AI can point back
+          // at exactly where a lesson's content lives — that marker range is then
+          // used to slice the ORIGINAL `pages` array for a verbatim source_text,
+          // instead of trusting the AI to reproduce the passage itself (it paraphrases
+          // even when told not to). Needed for literature/language subjects, where
+          // extract-based comprehension questions must quote the real textbook text.
+          const markedText = pages.map((p, i) => `[[PAGE ${i + 1}]]\n${p}`).join('\n\n');
+          const { unit, lessons } = await runNotesExtraction({
+            rawText: markedText, pages, examType: dbExamType, subject,
             onProgress: (msg) => setStepMsg({ message: msg }),
           });
-          setStepMsg({ message: `Saving ${chunks.length} chunks…` });
-          const { kbCount, chapterName } = await saveNoteChunks({
-            chunks, topic, examType: dbExamType, subject, chapter: it.chapter || chapterHint,
+          setStepMsg({ message: `Saving ${lessons.length} lesson(s)…` });
+          const { kbCount, chapterName, lessonCount } = await saveNoteChunks({
+            unit, lessons, examType: dbExamType, subject, chapter: it.chapter || chapterHint,
             source: `${it.source}:${it.name}`, callerUid, syllabusChapters,
           });
-          setStepMsg({ status: 'done', message: `${kbCount} chunks saved · "${chapterName}"` });
+          setStepMsg({
+            status: 'done',
+            message: `${kbCount} chunks saved across ${lessonCount} lesson${lessonCount !== 1 ? 's' : ''}${unit ? ` (${unit})` : ''} · "${chapterName}"`,
+          });
         }
         // Deselect on success so a stray re-click of Process can't duplicate-save.
         setItems((its) => its.map((x) => (x.source === it.source && x.name === it.name && x.id === it.id) ? { ...x, selected: false } : x));
@@ -551,7 +640,7 @@ export default function AdminContentIntake() {
     <div className="max-w-3xl space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary-500 to-violet-500 flex items-center justify-center shrink-0">
+        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center shrink-0">
           <Inbox size={18} className="text-white" />
         </div>
         <div className="flex-1">
@@ -587,7 +676,7 @@ export default function AdminContentIntake() {
             <p className="text-sm font-bold text-slate-200">{contentType === 'pyq' ? 'Which exam is this question paper for?' : 'Which subject is this material for?'}</p>
 
             <div className="space-y-3">
-              {EXAM_GROUPS.map((g) => (
+              {getExamGroups().map((g) => (
                 <div key={g.label}>
                   <p className="text-[10px] text-slate-500 font-bold uppercase mb-1.5">{g.label}</p>
                   <div className="flex flex-wrap gap-1.5">
@@ -776,7 +865,7 @@ export default function AdminContentIntake() {
           {!batchRunning && batchResults.length > 0 && (
             <div className="flex flex-col sm:flex-row gap-3">
               {doneCount > 0 && (
-                <button onClick={() => navigate('/admin/academic?tab=map')}
+                <button onClick={() => navigate('/admin/content?tab=map')}
                   className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-primary-700/40 bg-primary-900/20 hover:bg-primary-900/40 text-primary-300 text-sm font-bold transition-colors">
                   <Network size={15} /> View in Content Map <ArrowRight size={13} />
                 </button>

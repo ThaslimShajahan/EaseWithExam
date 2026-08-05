@@ -180,6 +180,46 @@ export function normalizeExamType(raw) {
   return EXAM_ID_MAP[raw] ?? raw;
 }
 
+// exam_type is often class-specific (e.g. "CBSE Class 8") — a bare board/exam
+// name with no class suffix (e.g. "NEET") is competitive-exam content, not
+// board content. Shared by every screen that filters admin-published content
+// (papers, study notes, …) down to what a given student's profile should
+// actually see, so a board student never gets shown another class's content.
+export function isRelevantToStudent(examType, userProfile) {
+  if (!examType) return false;
+  const combo = examType.match(/^(.+?)\s+Class\s+(\d+)$/);
+  if (combo) {
+    const [, board, cls] = combo;
+    return board === userProfile?.syllabus && cls === String(userProfile?.class_level || '');
+  }
+  // No class suffix — only relevant to students targeting a matching competitive exam.
+  const target = (userProfile?.target_exam || '').toUpperCase();
+  const normalizedExam = examType.trim().toUpperCase().replace(/\s+/g, '_');
+  if (target === 'BOTH') return normalizedExam === 'NEET' || normalizedExam.startsWith('JEE');
+  return normalizedExam === target;
+}
+
+// Knowledge-base rows tag exam/class as a snake_case string in their `tags` array
+// (e.g. "cbse_class_8", "jee_main") — set at upload time in AdminContentIntake.
+// Shared here so every reader (admin library, student chapter browsers) agrees
+// on both directions of the conversion instead of drifting apart.
+export const EXAM_TAG_RE = /^(neet|jee_|cbse_class_|icse_class_|state_board_class_)/;
+
+export function examTypeToTag(examType) {
+  return examType ? examType.toLowerCase().replace(/\s+/g, '_') : null;
+}
+
+export function prettyExamTag(tag) {
+  return tag
+    .replace(/^neet$/, 'NEET')
+    .replace(/^jee_main$/, 'JEE Main')
+    .replace(/^jee_advanced$/, 'JEE Advanced')
+    .replace(/^cbse_class_(\d+)$/, (_, n) => `CBSE Class ${n}`)
+    .replace(/^icse_class_(\d+)$/, (_, n) => `ICSE Class ${n}`)
+    .replace(/^state_board_class_(\d+)$/, (_, n) => `State Board Class ${n}`)
+    .replace(/_/g, ' ');
+}
+
 // Build the best exam-type key from a student's profile fields.
 // Prefers board+class combos (e.g. "CBSE Class 10") over standalone keys.
 export function buildExamType(targetExam, syllabus, classLevel) {

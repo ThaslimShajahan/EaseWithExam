@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Trophy, GraduationCap, Layers, Plus, Pencil, Trash2, X, Save,
+  Trophy, GraduationCap, Plus, Pencil, Trash2, X, Save,
   Loader2, CheckCircle2, AlertTriangle,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { useAuth } from '../context/AuthContext';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { refreshCategories } from '../lib/categories';
 
@@ -37,7 +36,10 @@ function ChipInput({ value, onChange, placeholder }) {
 
   function add() {
     const name = draft.trim();
-    if (!name || tags.includes(name)) return;
+    // Case-insensitive dedup — "Hindi" vs "hindi" silently created two separate
+    // chips before, and unioning multiple subject lists (board + both class
+    // tiers) compounded that into visible duplicate pills for admins.
+    if (!name || tags.some((t) => t.toLowerCase() === name.toLowerCase())) { setDraft(''); return; }
     onChange([...tags, name]);
     setDraft('');
   }
@@ -141,14 +143,7 @@ const FIELD_LABEL = 'text-[11px] font-semibold text-slate-400 uppercase tracking
 const FIELD_INPUT = 'w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500';
 
 export default function AdminCategorySettings() {
-  const { currentUser } = useAuth();
-  const [callerUid, setCallerUid] = useState(getCallerUidFallback());
-  useEffect(() => {
-    if (!currentUser) return;
-    const rec = sessionStorage.getItem(`edu_admin_rec_${currentUser.uid}`);
-    try { setCallerUid(rec ? JSON.parse(rec).uid : currentUser.uid); }
-    catch { setCallerUid(currentUser.uid); }
-  }, [currentUser]);
+  const callerUid = getCallerUidFallback();
 
   const [rows,    setRows]    = useState([]);
   const [loading, setLoading] = useState(true);
@@ -156,7 +151,7 @@ export default function AdminCategorySettings() {
   const [saving,  setSaving]  = useState(false);
   const [error,   setError]   = useState('');
 
-  const [modal, setModal] = useState(null); // { kind: 'competitive'|'board'|'class', existing }
+  const [modal, setModal] = useState(null); // { kind: 'competitive'|'board', existing }
   const [deleteTarget, setDeleteTarget] = useState(null); // { kind, exam_key(s) }
 
   const load = async () => {
@@ -175,7 +170,6 @@ export default function AdminCategorySettings() {
 
   const competitive = rows.filter((r) => r.category_kind === 'competitive').sort((a, b) => a.sort_order - b.sort_order);
   const boards       = rows.filter((r) => r.category_kind === 'board').sort((a, b) => a.sort_order - b.sort_order);
-  const classes      = rows.filter((r) => r.category_kind === 'class').sort((a, b) => Number(a.class_key) - Number(b.class_key));
 
   async function upsert(fields) {
     const { error: err } = await supabase.rpc('admin_upsert_exam_category', {
@@ -207,24 +201,10 @@ export default function AdminCategorySettings() {
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   }
 
-  async function saveClass(form) {
-    setSaving(true); setError('');
-    try {
-      await upsert({
-        id: form.id, exam_key: `Class ${form.key}`, label: `Class ${form.key}`, category_kind: 'class',
-        class_key: form.key, group_label: form.group, subjects: form.subjects, sort_order: form.id ? undefined : Number(form.key),
-      });
-      logChange(ENTITY.SYSTEM, `Class ${form.key}`, form.id ? ACTION.UPDATE : ACTION.CREATE,
-        { after: form }, `Admin ${form.id ? 'updated' : 'added'} Class ${form.key}`);
-      await refreshCategories();
-      setModal(null); setToast('Saved.'); load();
-    } catch (e) { setError(e.message); } finally { setSaving(false); }
-  }
-
   // A board fans out into: the standalone board row (union of both subject
-  // tiers) + one board_class row per known class level, using the 6-10 or
-  // 11-12 tier as appropriate — so the admin edits two subject lists, not
-  // every board+class combination by hand.
+  // tiers) + one board_class row per class 6-12, using the 6-10 or 11-12 tier
+  // as appropriate — so the admin edits two subject lists, not every
+  // board+class combination by hand.
   async function saveBoard(form) {
     setSaving(true); setError('');
     try {
@@ -234,7 +214,7 @@ export default function AdminCategorySettings() {
         board_key: form.key, group_label: form.label, subjects: unionSubjects, sort_order: form.id ? undefined : 200,
       });
 
-      const classLevels = classes.length ? classes.map((c) => c.class_key) : ['6','7','8','9','10','11','12'];
+      const classLevels = ['6','7','8','9','10','11','12'];
       for (const cl of classLevels) {
         const tierSubjects = Number(cl) <= 10 ? form.subjects8to10 : form.subjects11to12;
         const comboKey = `${form.key} Class ${cl}`;
@@ -309,23 +289,12 @@ export default function AdminCategorySettings() {
         ))}
       </Section>
 
-      <Section icon={Layers} title="Classes" subtitle="Which class levels exist, e.g. 6 through 12" onAdd={() => setModal({ kind: 'class', existing: null })}>
-        {classes.length === 0 ? <p className="text-xs text-slate-600 italic px-1">None yet.</p> : classes.map((r) => (
-          <Row key={r.id} label={r.label} sub={r.subjects?.join(', ')}
-            onEdit={() => setModal({ kind: 'class', existing: r })}
-            onDelete={() => setDeleteTarget({ ids: [r.id], label: r.label })} />
-        ))}
-      </Section>
-
       {/* Competitive exam modal */}
       {modal?.kind === 'competitive' && (
         <CompetitiveForm existing={modal.existing} onClose={() => setModal(null)} onSave={saveCompetitive} saving={saving} error={error} />
       )}
       {modal?.kind === 'board' && (
         <BoardForm existing={modal.existing} rows={rows} onClose={() => setModal(null)} onSave={saveBoard} saving={saving} error={error} />
-      )}
-      {modal?.kind === 'class' && (
-        <ClassForm existing={modal.existing} onClose={() => setModal(null)} onSave={saveClass} saving={saving} error={error} />
       )}
 
       {/* Delete confirm */}
@@ -390,30 +359,6 @@ function CompetitiveForm({ existing, onClose, onSave, saving, error }) {
       <div>
         <label className={FIELD_LABEL}>Group</label>
         <input className={FIELD_INPUT} value={group} onChange={(e) => setGroup(e.target.value)} placeholder="e.g. Medical" />
-      </div>
-      <div>
-        <label className={FIELD_LABEL}>Subjects</label>
-        <ChipInput value={subjects} onChange={setSubjects} placeholder="Add subject and press Enter…" />
-      </div>
-    </Modal>
-  );
-}
-
-function ClassForm({ existing, onClose, onSave, saving, error }) {
-  const [key,      setKey]      = useState(existing?.class_key ?? '');
-  const [group,    setGroup]    = useState(existing?.group_label ?? '');
-  const [subjects, setSubjects] = useState(existing?.subjects ?? []);
-
-  return (
-    <Modal title={existing ? 'Edit Class' : 'Add Class'} onClose={onClose} saving={saving} error={error}
-      onSave={() => onSave({ id: existing?.id, key: key.trim(), group: group.trim(), subjects })}>
-      <div>
-        <label className={FIELD_LABEL}>Class Number *</label>
-        <input className={FIELD_INPUT} value={key} onChange={(e) => setKey(e.target.value)} placeholder="e.g. 8" disabled={!!existing} />
-      </div>
-      <div>
-        <label className={FIELD_LABEL}>Group</label>
-        <input className={FIELD_INPUT} value={group} onChange={(e) => setGroup(e.target.value)} placeholder="e.g. Middle School" />
       </div>
       <div>
         <label className={FIELD_LABEL}>Subjects</label>

@@ -22,6 +22,7 @@ const FLAG_DOCS = {
   atomic_quota_rpc_enabled:     'Quota increment uses check_and_increment_quota RPC (atomic, prevents race conditions).',
   dalle_proxy_enabled:          'DALL-E image generation routes through Supabase Edge Function (key stays server-side).',
   centre_invites_enabled:       'Coaching centres can create shareable invite links / QR codes to enrol students.',
+  maintenance_mode_enabled:     'Shows a "back in a few minutes" screen to students. Turn ON right before deploying, OFF right after. The Admin Panel always stays reachable so you can turn it back off.',
 };
 
 function FlagRow({ flagKey, enabled, onToggle, toggling }) {

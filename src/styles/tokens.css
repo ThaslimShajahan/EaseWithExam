@@ -6,18 +6,18 @@
    ============================================================ */
 
 :root {
-  /* ── Brand: Primary (indigo) ─────────────────────────────── */
+  /* ── Brand: Primary (emerald green) ───────────────────────── */
   /* ONE primary action color. Hover = --clr-primary-700.       */
-  --clr-primary-50:   #EEF2FF;
-  --clr-primary-100:  #E0E7FF;
-  --clr-primary-200:  #C7D2FE;
-  --clr-primary-300:  #A5B4FC;
-  --clr-primary-400:  #818CF8;
-  --clr-primary-500:  #6366F1;
-  --clr-primary-600:  #4F46E5;   /* ← THE action color */
-  --clr-primary-700:  #4338CA;   /* ← hover */
-  --clr-primary-800:  #3730A3;
-  --clr-primary-900:  #312E81;
+  --clr-primary-50:   #EFFFFA;
+  --clr-primary-100:  #D0F1E6;
+  --clr-primary-200:  #ADE2CF;
+  --clr-primary-300:  #84CFB5;
+  --clr-primary-400:  #55BA96;
+  --clr-primary-500:  #36AC82;
+  --clr-primary-600:  #21A375;   /* ← THE action color */
+  --clr-primary-700:  #1B8660;   /* ← hover */
+  --clr-primary-800:  #156A4C;
+  --clr-primary-900:  #104E38;
 
   /* ── Semantic status colors ──────────────────────────────── */
   --clr-success:        #10B981;   /* emerald-500 */

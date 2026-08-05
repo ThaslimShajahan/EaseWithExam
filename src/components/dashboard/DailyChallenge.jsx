@@ -218,7 +218,7 @@ export default function DailyChallenge() {
     setLoading(true); setError('');
     setCurIdx(0); setAnswers({}); setRevealed({}); setSubmitted(false);
     try {
-      let c = await getTodayChallenge(uid);
+      let c = await getTodayChallenge(uid, examType);
       if (!c) c = await generateDailyChallenge({ examType, userId: uid });
       setChallenge(c);
 

@@ -16,12 +16,12 @@ import { awardXP } from '../lib/gamification';
 import { createNotification } from '../lib/notifications';
 import MathText from '../components/ui/MathText';
 import PaywallModal from '../components/ui/PaywallModal';
-import { getSubjectsForExam, normalizeExamType, buildExamType, EXAM_TYPE_GROUPS, BOARDS, CLASS_LEVELS } from '../lib/categories';
+import { getSubjectsForExam, normalizeExamType, buildExamType, EXAM_TYPE_GROUPS, BOARDS, CLASS_LEVELS, EXAM_TAG_RE, examTypeToTag } from '../lib/categories';
 import { useSyllabusSubjects } from '../hooks/useSyllabusSubjects';
 import { getFeatureFlag, FLAGS } from '../lib/featureFlags';
+import { saveWrongAnswers, saveCorrectAnswers } from '../lib/errorNotebook';
 
 /* ── Config ──────────────────────────────────────────────── */
-const EXAM_TYPES  = ['NEET', 'JEE Main', 'JEE Advanced', 'CBSE', 'Class 10', 'Class 11', 'Class 12', 'UPSC', 'CUET', 'Olympiad'];
 const DIFFS       = ['Easy', 'Medium', 'Hard', 'Mixed'];
 const COUNTS      = [5, 10, 20, 30, 45, 90];
 
@@ -70,8 +70,14 @@ function Chip({ label, selected, onClick, icon }) {
   );
 }
 
-/* ── Chapter suggestion list ─────────────────────────────── */
-function ChapterSuggestions({ examType, classLevel, subject, onSelect }) {
+/* ── Chapter browser ─────────────────────────────────────────
+ * Merges the official syllabus (Admin > Syllabus) with chapters/topics seen in
+ * actually-uploaded PYQs and knowledge-base notes into ONE list, scoped tightly
+ * to the current examType (which already encodes the student's own class/board
+ * when locked) + subject — was previously two separate "browse chapters"
+ * affordances, and the uploaded-content one had no class filter on its
+ * knowledge_base query at all, leaking other classes' topics into the list. */
+function ChapterBrowser({ examType, classLevel, subject, onSelect }) {
   const [open,     setOpen]     = useState(false);
   const [chapters, setChapters] = useState([]);
   const [loading,  setLoading]  = useState(false);
@@ -80,9 +86,32 @@ function ChapterSuggestions({ examType, classLevel, subject, onSelect }) {
     if (!open) return;
     setLoading(true);
     setChapters([]);
-    getChapters(toSyllabusExamType(examType), subject, classLevel)
-      .then((data) => { setChapters(data); setLoading(false); })
-      .catch(()    => setLoading(false));
+    const examTag = examTypeToTag(examType);
+    Promise.all([
+      getChapters(toSyllabusExamType(examType), subject, classLevel).catch(() => []),
+      supabase.from('pyq_questions')
+        .select('chapter')
+        .eq('exam_type', examType)
+        .eq('subject', subject)
+        .not('chapter', 'is', null)
+        .limit(200),
+      supabase.from('knowledge_base')
+        .select('tags')
+        .eq('subject', subject)
+        .contains('tags', examTag ? [examTag] : [])
+        .limit(200),
+    ]).then(([syllabus, pyq, kb]) => {
+      const fromSyllabus = (syllabus ?? []).map((c) => c.name);
+      const fromPYQ       = (pyq.data ?? []).map((r) => r.chapter).filter(Boolean);
+      // tags mix real topic tags with exam/class classification tags (e.g.
+      // "cbse_class_8") and the bare subject name — exclude both, keep topics only.
+      const fromKB = (kb.data ?? []).flatMap((r) => r.tags ?? []).filter(
+        (t) => t && t !== subject && !EXAM_TAG_RE.test(t)
+      );
+      const all = [...new Set([...fromSyllabus, ...fromPYQ, ...fromKB])].sort();
+      setChapters(all);
+      setLoading(false);
+    });
   }, [open, examType, classLevel, subject]);
 
   return (
@@ -96,98 +125,23 @@ function ChapterSuggestions({ examType, classLevel, subject, onSelect }) {
         {open && (
           <motion.div className="flex flex-wrap gap-1.5 mt-2"
             initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
-            {loading && <span className="text-xs text-slate-400 py-1">Loading…</span>}
+            {loading && (
+              <span className="flex items-center gap-1.5 text-xs text-slate-400 py-1">
+                <Loader2 size={11} className="animate-spin" /> Loading chapters…
+              </span>
+            )}
             {!loading && chapters.length === 0 && (
-              <span className="text-xs text-slate-400">No chapters found for this selection.</span>
+              <span className="text-xs text-slate-400">No chapters found for {examType} {subject} yet.</span>
             )}
             {!loading && chapters.map((ch) => (
-              <button key={ch.key} onClick={() => { onSelect(ch.name); setOpen(false); }}
+              <button key={ch} onClick={() => { onSelect(ch); setOpen(false); }}
                 className="px-2 py-1 bg-slate-100 hover:bg-primary-50 hover:text-primary-700 text-slate-600 text-xs rounded-lg transition-colors">
-                {ch.name}
+                {ch}
               </button>
             ))}
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
-  );
-}
-
-/* ── Uploaded chapters from admin content ─────────────────── */
-function UploadedChaptersBrowser({ examType, subject, onSelect }) {
-  const [chapters, setChapters] = useState([]);
-  const [open,     setOpen]     = useState(false);
-  const [loading,  setLoading]  = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    setLoading(true);
-    setChapters([]);
-    Promise.all([
-      // Chapters from uploaded PYQ question papers
-      supabase.from('pyq_questions')
-        .select('chapter')
-        .eq('exam_type', examType)
-        .eq('subject', subject)
-        .not('chapter', 'is', null)
-        .limit(200),
-      // Topics from uploaded study notes — stored as tags array
-      supabase.from('knowledge_base')
-        .select('tags')
-        .eq('subject', subject)
-        .limit(200),
-    ]).then(([pyq, kb]) => {
-      const fromPYQ = (pyq.data ?? []).map((r) => r.chapter).filter(Boolean);
-      // tags is an array; flatten all tags, skip bare subject-name tags
-      const fromKB  = (kb.data ?? []).flatMap((r) => r.tags ?? []).filter(
-        (t) => t && t !== subject
-      );
-      const all     = [...new Set([...fromPYQ, ...fromKB])].sort();
-      setChapters(all);
-      setLoading(false);
-    });
-  }, [open, examType, subject]);
-
-  if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="flex items-center gap-1.5 text-xs text-violet-600 font-semibold hover:text-violet-700 mt-1"
-      >
-        <BookMarked size={12} /> Browse chapters from uploaded content
-      </button>
-    );
-  }
-
-  return (
-    <div className="mt-2 bg-violet-50 border border-violet-100 rounded-xl p-3 space-y-2">
-      <div className="flex items-center justify-between">
-        <p className="text-[10px] font-bold text-violet-600 uppercase tracking-wider">
-          From uploaded papers &amp; notes · {examType} {subject}
-        </p>
-        <button onClick={() => setOpen(false)} className="text-violet-400 hover:text-violet-600 text-xs">✕</button>
-      </div>
-      {loading && (
-        <div className="flex items-center gap-1.5 text-xs text-violet-400 py-1">
-          <Loader2 size={11} className="animate-spin" /> Loading chapters…
-        </div>
-      )}
-      {!loading && chapters.length === 0 && (
-        <p className="text-xs text-violet-400">No uploaded content yet for {examType} {subject}. Ask your teacher to upload papers or notes.</p>
-      )}
-      {!loading && chapters.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto">
-          {chapters.map((ch) => (
-            <button
-              key={ch}
-              onClick={() => { onSelect(ch); setOpen(false); }}
-              className="px-2.5 py-1 bg-white border border-violet-200 hover:bg-violet-600 hover:text-white hover:border-violet-600 text-violet-700 text-xs rounded-lg transition-colors"
-            >
-              {ch}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -252,7 +206,7 @@ function ConfigForm({ subject, setSubject, examType, setExamType, topic, setTopi
             <div>
               <p className="text-[10px] text-slate-400 font-bold uppercase mb-1">🏆 Competitive</p>
               <div className="flex flex-wrap gap-1.5">
-                {['NEET', 'JEE Main', 'JEE Advanced'].map((e) => (
+                {(EXAM_TYPE_GROUPS.find((g) => g.label === 'Competitive')?.items ?? []).map((e) => (
                   <Chip key={e} label={e} selected={competitive === e} onClick={() => pickCompetitive(e)} />
                 ))}
               </div>
@@ -301,8 +255,7 @@ function ConfigForm({ subject, setSubject, examType, setExamType, topic, setTopi
           className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary-300 placeholder:text-slate-300"
         />
         <div className="mt-2">
-          <ChapterSuggestions examType={examType} classLevel={selClass ?? init.cls} subject={subject} onSelect={setTopic} />
-          <UploadedChaptersBrowser examType={examType} subject={subject} onSelect={setTopic} />
+          <ChapterBrowser examType={examType} classLevel={selClass ?? init.cls} subject={subject} onSelect={setTopic} />
         </div>
       </div>
       {children}
@@ -487,7 +440,7 @@ function QuestionCard({ question, qNum, total, onNext, isLast }) {
       {/* Next button */}
       {revealed && (
         <motion.button initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-          onClick={() => onNext(wasCorrect, selected, question)}
+          onClick={() => onNext(wasCorrect, isNumerical ? numInput : selected, question)}
           className={[
             'w-full py-3.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-colors',
             isLast ? 'bg-amber-500 text-white hover:bg-amber-600' : 'bg-primary-600 text-white hover:bg-primary-700',
@@ -898,6 +851,7 @@ export default function PracticeGeneratorPage({ embedded = false }) {
       wrong:          questions.length - correct,
       skipped:        0,
       question_count: questions.length,
+      exam_type:      userProfile?.target_exam || null,
     }).catch(console.error);
     createNotification(
       currentUser.uid,
@@ -923,7 +877,7 @@ export default function PracticeGeneratorPage({ embedded = false }) {
   const generate = async () => {
     setGenErr(''); setPhase('loading');
     try {
-      const quota = await checkQuota(currentUser?.uid, 'ai_questions_used', isPremium);
+      const quota = await checkQuota(currentUser?.uid, 'ai_questions_used', isPremium, undefined, count);
       if (!quota.allowed) {
         setPhase('form');
         setShowPaywall(true);
@@ -947,7 +901,21 @@ export default function PracticeGeneratorPage({ embedded = false }) {
       const qMarks = typeof q?.marks === 'number' ? q.marks : (q?.marks?.correct ?? 4);
       setPracticeScore((s) => s + qMarks);
       awardXP(currentUser?.uid, 'practice_question').catch(() => {});
+      // Weak-topics accuracy is wrong_count/total_attempts — without also
+      // logging correct answers here, every topic practiced in this mode would
+      // show as 0% accuracy (only the wrong side of the ratio would ever count).
+      if (q && currentUser?.uid && selectedOption !== null) {
+        saveCorrectAnswers(currentUser.uid, [q], { [q.id]: selectedOption }, 'practice').catch(() => {});
+      }
     } else if (!wasCorrect && selectedOption !== null && q && currentUser?.uid) {
+      // Log to Error Notebook — previously only Mock Test / Paper Mode did this,
+      // so AI Chapter Practice (the most-used casual practice mode) never fed
+      // the spaced-repetition notebook at all, no matter how much a student used it.
+      saveWrongAnswers(
+        currentUser.uid, [q], { [q.id]: selectedOption }, 'practice',
+        `${subject}${topic ? ' · ' + topic : ''}`,
+      ).catch(() => {});
+
       // Phase 5: log wrong answer as misconception (fire-and-forget)
       getFeatureFlag(FLAGS.MISCONCEPTION_ENGINE).then((on) => {
         if (!on) return;
@@ -1004,7 +972,7 @@ export default function PracticeGeneratorPage({ embedded = false }) {
           </button>
           <div>
             <h2 className="text-xl font-bold text-slate-900">AI Practice</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Chapter-wise questions & deep study notes</p>
+            <p className="text-xs text-slate-500 mt-0.5">Chapter-wise questions & AI concept notes</p>
           </div>
         </div>
       )}
@@ -1021,7 +989,7 @@ export default function PracticeGeneratorPage({ embedded = false }) {
           <button onClick={() => switchMode('notes')}
             className={['flex-1 py-2.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors',
               mode === 'notes' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'].join(' ')}>
-            <BookOpen size={13} /> Study Notes
+            <BookOpen size={13} /> Concept Notes (AI)
           </button>
         </div>
       )}
@@ -1128,7 +1096,7 @@ export default function PracticeGeneratorPage({ embedded = false }) {
                   className="w-full py-4 rounded-2xl bg-indigo-600 text-white font-bold text-base flex items-center justify-center gap-2 hover:bg-indigo-700 disabled:opacity-60 transition-colors shadow-sm">
                   {notesPhase === 'loading'
                     ? <><Loader2 size={18} className="animate-spin" /> Generating in-depth notes…</>
-                    : <><BookOpen size={18} /> Generate Study Notes</>}
+                    : <><BookOpen size={18} /> Generate Concept Notes</>}
                 </button>
                 <div className="bg-indigo-50 rounded-xl p-3 border border-indigo-100 text-[11px] text-indigo-700 leading-relaxed space-y-1">
                   <p className="font-semibold text-indigo-900">What you get:</p>

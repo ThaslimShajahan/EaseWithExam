@@ -153,6 +153,38 @@ export async function generateImage(prompt, { size = '1024x1024', quality = 'sta
 }
 
 /**
+ * Generate speech audio via OpenAI TTS (Podcast Generator).
+ * Returns a Blob (audio/mpeg) the caller can turn into an object URL, or
+ * throws on failure (unlike the other helpers here, silence would leave a
+ * student staring at a broken player with no idea why).
+ *
+ * @param {string} text
+ * @param {{ voice?: string }} opts
+ * @returns {Promise<Blob>}
+ */
+export async function generateSpeech(text, { voice = 'alloy' } = {}) {
+  const body = { model: 'tts-1', voice, input: text };
+
+  if (USE_EDGE) {
+    const res = await fetch(`${PROXY_URL}?route=tts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ANON_KEY}` },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `TTS proxy error ${res.status}`);
+    }
+    return res.blob();
+  }
+
+  // Dev fallback — direct browser call
+  const openai = await getOpenAI();
+  const res = await openai.audio.speech.create(body);
+  return res.blob ? res.blob() : new Blob([await res.arrayBuffer()], { type: 'audio/mpeg' });
+}
+
+/**
  * Generate a 1536-dim embedding via text-embedding-3-small.
  * Returns a float array or null on failure.
  */

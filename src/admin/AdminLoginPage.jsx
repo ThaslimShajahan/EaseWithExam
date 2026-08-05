@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Shield, Loader2, AlertTriangle } from 'lucide-react';
 import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
-import { auth } from '../firebase/config';
+import { adminAuth } from '../firebase/config';
 import { supabase } from '../lib/supabase';
 
 function GoogleIcon() {
@@ -25,12 +25,12 @@ export default function AdminLoginPage() {
   const handleGoogle = async () => {
     setLoading(true); setError('');
     try {
-      const result = await signInWithPopup(auth, new GoogleAuthProvider());
+      const result = await signInWithPopup(adminAuth, new GoogleAuthProvider());
       const uid    = result.user.uid;
 
       const { data } = await supabase.rpc('get_admin_record', { p_uid: uid });
       if (!data) {
-        await signOut(auth);
+        await signOut(adminAuth);
         setError('This Google account is not registered as an admin. Ask your super admin to add you.');
         return;
       }
@@ -49,7 +49,7 @@ export default function AdminLoginPage() {
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 select-none">
       {/* Brand mark */}
       <motion.div
-        className="h-[72px] w-[72px] rounded-[26px] bg-gradient-to-br from-primary-500 to-violet-600 flex items-center justify-center shadow-2xl shadow-primary-900/40 mb-8"
+        className="h-[72px] w-[72px] rounded-[26px] bg-gradient-to-br from-primary-400 to-primary-700 flex items-center justify-center shadow-2xl shadow-primary-900/40 mb-8"
         initial={{ scale: 0.6, opacity: 0 }}
         animate={{ scale: 1,   opacity: 1 }}
         transition={{ type: 'spring', stiffness: 280, damping: 22 }}

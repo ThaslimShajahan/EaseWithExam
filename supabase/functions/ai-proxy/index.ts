@@ -25,13 +25,16 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Route: ?route=images for DALL-E, ?route=embeddings for text-embedding; default is chat/completions
+    // Route: ?route=images for DALL-E, ?route=embeddings for text-embedding,
+    // ?route=tts for text-to-speech (Podcast Generator); default is chat/completions
     const url  = new URL(req.url);
     const route = url.searchParams.get('route');
     const openaiEndpoint = route === 'images'
       ? 'https://api.openai.com/v1/images/generations'
       : route === 'embeddings'
       ? 'https://api.openai.com/v1/embeddings'
+      : route === 'tts'
+      ? 'https://api.openai.com/v1/audio/speech'
       : 'https://api.openai.com/v1/chat/completions';
 
     // Forward the exact OpenAI request body from the client
@@ -45,6 +48,14 @@ Deno.serve(async (req: Request) => {
       },
       body: JSON.stringify(body),
     });
+
+    // TTS returns raw audio bytes, not JSON — pass the binary body straight through.
+    if (route === 'tts') {
+      return new Response(openaiRes.body, {
+        status: openaiRes.status,
+        headers: { ...CORS, 'Content-Type': openaiRes.headers.get('Content-Type') ?? 'audio/mpeg' },
+      });
+    }
 
     // Streaming chat completions: pass the SSE body straight through unbuffered.
     if (body?.stream && openaiRes.body) {

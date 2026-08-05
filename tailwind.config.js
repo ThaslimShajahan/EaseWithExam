@@ -4,18 +4,18 @@ export default {
   theme: {
     extend: {
       colors: {
-        /* ── Primary brand (indigo) ── ONE action color family. */
+        /* ── Primary brand (emerald green) ── ONE action color family. */
         primary: {
-          50:  '#EEF2FF',
-          100: '#E0E7FF',
-          200: '#C7D2FE',
-          300: '#A5B4FC',
-          400: '#818CF8',
-          500: '#6366F1',
-          600: '#4F46E5',   /* THE action color */
-          700: '#4338CA',   /* hover */
-          800: '#3730A3',
-          900: '#312E81',
+          50:  '#EFFFFA',
+          100: '#D0F1E6',
+          200: '#ADE2CF',
+          300: '#84CFB5',
+          400: '#55BA96',
+          500: '#36AC82',
+          600: '#21A375',   /* THE action color */
+          700: '#1B8660',   /* hover */
+          800: '#156A4C',
+          900: '#104E38',
         },
 
         /* ── Semantic status aliases ─────────────────────────── */

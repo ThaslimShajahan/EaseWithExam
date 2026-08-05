@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Gauge, Zap, MessageSquare, ClipboardList, FileCheck,
+  Gauge, Zap, MessageSquare, ClipboardList, FileCheck, Headphones,
   Edit3, Save, X, Trash2, RotateCcw, Search, AlertTriangle, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { IST_WEEK_START } from '../lib/quota';
 import StudentPicker from '../components/admin/StudentPicker';
 
 function getCallerUid() {
@@ -19,8 +20,9 @@ const IST_DATE = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/
 const FIELDS = [
   { key: 'ai_questions',      label: 'AI Questions',      icon: Zap,           color: 'text-violet-400' },
   { key: 'veda_messages',     label: 'EWE Messages',      icon: MessageSquare, color: 'text-emerald-400' },
-  { key: 'mock_tests',        label: 'Mock Tests',        icon: ClipboardList, color: 'text-blue-400'   },
+  { key: 'mock_tests',        label: 'Mock Tests / wk',   icon: ClipboardList, color: 'text-blue-400'   },
   { key: 'paper_evaluations', label: 'Paper Evaluations', icon: FileCheck,     color: 'text-amber-400'  },
+  { key: 'podcasts',          label: 'Podcasts',          icon: Headphones,   color: 'text-pink-400'   },
 ];
 
 // Map quota_config key → daily_usage_quota column
@@ -29,6 +31,7 @@ const USAGE_KEY = {
   veda_messages:     'veda_messages_used',
   mock_tests:        'mock_tests_used',
   paper_evaluations: 'paper_evaluations_used',
+  podcasts:          'podcasts_used',
 };
 
 function pctColor(pct) {
@@ -53,26 +56,29 @@ function PlanLimitsSection() {
 
   function startEdit(row) {
     setEditing(row.plan_id);
-    setForm({ ai_questions: row.ai_questions, veda_messages: row.veda_messages, mock_tests: row.mock_tests });
+    // Was hardcoded to only 3 of the 4 fields actually rendered in the edit
+    // form below (paper_evaluations was displayed as an editable input that
+    // silently did nothing — its value was never captured here or sent to
+    // the RPC). Now driven off the same FIELDS list the inputs render from,
+    // so a field can't be added to one without the other again.
+    setForm(Object.fromEntries(FIELDS.map(f => [f.key, row[f.key]])));
     setErr('');
   }
 
   async function save(planId) {
     setSaving(true); setErr('');
+    const values = Object.fromEntries(FIELDS.map(f => [f.key, Number(form[f.key])]));
     const { error } = await supabase.rpc('admin_set_quota_config', {
-      p_caller:       callerUid,
-      p_plan_id:      planId,
-      p_ai:           Number(form.ai_questions),
-      p_veda:         Number(form.veda_messages),
-      p_mock:         Number(form.mock_tests),
+      p_caller:            callerUid,
+      p_plan_id:           planId,
+      p_ai:                values.ai_questions,
+      p_veda:              values.veda_messages,
+      p_mock:              values.mock_tests,
+      p_paper_evaluations: values.paper_evaluations,
+      p_podcasts:          values.podcasts,
     });
     if (error) { setErr(error.message); setSaving(false); return; }
-    setConfig(c => c.map(r => r.plan_id === planId ? {
-      ...r,
-      ai_questions:  Number(form.ai_questions),
-      veda_messages: Number(form.veda_messages),
-      mock_tests:    Number(form.mock_tests),
-    } : r));
+    setConfig(c => c.map(r => r.plan_id === planId ? { ...r, ...values } : r));
     setEditing(null);
     setSaving(false);
   }
@@ -149,14 +155,29 @@ function TodayUsageSection({ planLimits }) {
   const [sortAsc,    setSortAsc]    = useState(false);
   const [resetting,  setResetting]  = useState(null);
 
-  const today = IST_DATE();
+  const today     = IST_DATE();
+  const weekStart = IST_WEEK_START();
 
   useEffect(() => {
     setLoading(true);
-    supabase.from('daily_usage_quota').select('*').eq('usage_date', today)
-      .order('ai_questions_used', { ascending: false })
-      .then(({ data }) => { setRows(data ?? []); setLoading(false); });
-  }, [today]);
+    // mock_tests is a weekly cap (see WEEKLY_FIELDS in lib/quota.js) — a single
+    // day's row would show e.g. "0/1" for a student who already used their
+    // week's test on an earlier day, which looks like they have allowance left
+    // when they don't. Fetch the whole week and sum mock_tests_used per user;
+    // every other field still reflects just today, same as before.
+    Promise.all([
+      supabase.from('daily_usage_quota').select('*').eq('usage_date', today),
+      supabase.from('daily_usage_quota').select('user_id, mock_tests_used').gte('usage_date', weekStart).lte('usage_date', today),
+    ]).then(([todayRes, weekRes]) => {
+      const weekTotals = {};
+      for (const r of (weekRes.data ?? [])) {
+        weekTotals[r.user_id] = (weekTotals[r.user_id] ?? 0) + (r.mock_tests_used ?? 0);
+      }
+      const merged = (todayRes.data ?? []).map((r) => ({ ...r, mock_tests_used: weekTotals[r.user_id] ?? 0 }));
+      setRows(merged);
+      setLoading(false);
+    });
+  }, [today, weekStart]);
 
   function toggleSort(field) {
     if (sortField === field) setSortAsc(a => !a);
@@ -166,7 +187,18 @@ function TodayUsageSection({ planLimits }) {
   async function resetUser(userId) {
     setResetting(userId);
     const callerUid = getCallerUid();
-    await supabase.rpc('admin_reset_user_quota', { p_caller: callerUid, p_user_id: userId, p_date: today });
+    await Promise.all([
+      supabase.rpc('admin_reset_user_quota', { p_caller: callerUid, p_user_id: userId, p_date: today }),
+      // admin_reset_user_quota only deletes TODAY's row — for the weekly
+      // mock_tests cap that's not enough if the student's usage was from an
+      // earlier day this week (their slot would stay "used" despite the
+      // reset). This zeroes just that field across the whole week without
+      // touching other days' ai_questions/veda_messages/etc.
+      supabase.rpc('admin_reset_weekly_field', {
+        p_caller: callerUid, p_user_id: userId, p_field: 'mock_tests_used',
+        p_week_start: weekStart, p_week_end: today,
+      }),
+    ]);
     setRows(r => r.filter(x => x.user_id !== userId));
     setResetting(null);
   }
@@ -192,7 +224,7 @@ function TodayUsageSection({ planLimits }) {
       <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between gap-4">
         <div>
           <h2 className="font-bold text-white text-sm">Today's Usage <span className="text-slate-500 font-normal">({today})</span></h2>
-          <p className="text-slate-400 text-xs mt-0.5">{rows.length} active users today</p>
+          <p className="text-slate-400 text-xs mt-0.5">{rows.length} active users today · Mock Tests is this week's total, everything else is today only</p>
         </div>
         <div className="relative">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -218,9 +250,9 @@ function TodayUsageSection({ planLimits }) {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={5} className="px-5 py-8 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={FIELDS.length + 2} className="px-5 py-8 text-center text-slate-500">Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={5} className="px-5 py-8 text-center text-slate-500">No usage today yet.</td></tr>
+              <tr><td colSpan={FIELDS.length + 2} className="px-5 py-8 text-center text-slate-500">No usage today yet.</td></tr>
             ) : filtered.map(row => (
               <tr key={row.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
                 <td className="px-5 py-3 font-mono text-xs text-slate-300 max-w-[180px] truncate">{row.user_id}</td>
@@ -246,7 +278,7 @@ function TodayUsageSection({ planLimits }) {
                   <button
                     onClick={() => resetUser(row.user_id)}
                     disabled={resetting === row.user_id}
-                    title="Reset today's quota"
+                    title="Reset today's quota (and this week's mock tests)"
                     className="h-7 w-7 rounded-lg flex items-center justify-center text-slate-500 hover:text-amber-400 hover:bg-amber-500/10 transition-colors ml-auto"
                   >
                     <RotateCcw size={12} className={resetting === row.user_id ? 'animate-spin' : ''} />
@@ -267,7 +299,10 @@ function OverridesSection() {
   const [overrides, setOverrides] = useState([]);
   const [loading,   setLoading]   = useState(true);
   const [showForm,  setShowForm]  = useState(false);
-  const [form,      setForm]      = useState({ user_id: '', ai_questions: '', veda_messages: '', mock_tests: '', reason: '', expires_at: '' });
+  const [form,      setForm]      = useState({
+    user_id: '', reason: '', expires_at: '',
+    ...Object.fromEntries(FIELDS.map(f => [f.key, ''])),
+  });
   const [saving,    setSaving]    = useState(false);
   const [err,       setErr]       = useState('');
   const [selectedStudent, setSelectedStudent] = useState(null);
@@ -282,28 +317,32 @@ function OverridesSection() {
   async function handleAdd() {
     if (!form.user_id.trim()) { setErr('User ID is required'); return; }
     setSaving(true); setErr('');
+    // Was hardcoded to only 3 of the 4 fields the form actually rendered
+    // inputs for (paper_evaluations was editable but silently discarded) —
+    // now driven off FIELDS so every field the form shows actually saves.
+    const values = Object.fromEntries(FIELDS.map(f => [f.key, form[f.key] !== '' ? Number(form[f.key]) : null]));
     const { error } = await supabase.rpc('admin_set_quota_override', {
-      p_caller:       callerUid,
-      p_user_id:      form.user_id.trim(),
-      p_ai:           form.ai_questions  !== '' ? Number(form.ai_questions)  : null,
-      p_veda:         form.veda_messages !== '' ? Number(form.veda_messages) : null,
-      p_mock:         form.mock_tests    !== '' ? Number(form.mock_tests)    : null,
-      p_reason:       form.reason || null,
-      p_expires_at:   form.expires_at || null,
+      p_caller:            callerUid,
+      p_user_id:           form.user_id.trim(),
+      p_ai:                values.ai_questions,
+      p_veda:              values.veda_messages,
+      p_mock:              values.mock_tests,
+      p_reason:            form.reason || null,
+      p_expires_at:        form.expires_at || null,
+      p_paper_evaluations: values.paper_evaluations,
+      p_podcasts:          values.podcasts,
     });
     if (error) { setErr(error.message); setSaving(false); return; }
     const newRow = {
-      id:           crypto.randomUUID(),
-      user_id:      form.user_id.trim(),
-      ai_questions: form.ai_questions  !== '' ? Number(form.ai_questions)  : null,
-      veda_messages:form.veda_messages !== '' ? Number(form.veda_messages) : null,
-      mock_tests:   form.mock_tests    !== '' ? Number(form.mock_tests)    : null,
-      reason:       form.reason || null,
-      expires_at:   form.expires_at || null,
-      created_at:   new Date().toISOString(),
+      id:         crypto.randomUUID(),
+      user_id:    form.user_id.trim(),
+      ...values,
+      reason:     form.reason || null,
+      expires_at: form.expires_at || null,
+      created_at: new Date().toISOString(),
     };
     setOverrides(o => [newRow, ...o.filter(x => x.user_id !== newRow.user_id)]);
-    setForm({ user_id: '', ai_questions: '', veda_messages: '', mock_tests: '', reason: '', expires_at: '' });
+    setForm({ user_id: '', reason: '', expires_at: '', ...Object.fromEntries(FIELDS.map(f => [f.key, ''])) });
     setSelectedStudent(null);
     setShowForm(false);
     setSaving(false);
@@ -438,7 +477,7 @@ export default function AdminQuota() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {FIELDS.map(({ key, label, icon: Icon, color }) => (
           <div key={key} className="bg-slate-800/50 border border-white/5 rounded-2xl p-5">
             <div className="flex items-center gap-3 mb-1">

@@ -54,8 +54,9 @@ function LogRow({ entry }) {
           <p className="text-xs text-slate-400 mt-1 leading-snug">{entry.note}</p>
         )}
         <div className="flex items-center gap-3 mt-1">
-          <span className="flex items-center gap-1 text-[10px] text-slate-600">
-            <User size={9} /> {entry.actor_uid ? entry.actor_uid.slice(0, 12) + '…' : 'system'}
+          <span className="flex items-center gap-1 text-[10px] text-slate-500 font-medium" title={entry.actor_uid || ''}>
+            <User size={9} />
+            {entry.actor_name || entry.actor_email || (entry.actor_uid ? entry.actor_uid.slice(0, 12) + '…' : 'System')}
           </span>
           <span className="text-[10px] text-slate-600">{formatRelative(entry.created_at)}</span>
         </div>
@@ -93,7 +94,9 @@ export default function AdminActivityLog() {
         e.entity_type?.toLowerCase().includes(search.toLowerCase()) ||
         e.action?.toLowerCase().includes(search.toLowerCase()) ||
         e.note?.toLowerCase().includes(search.toLowerCase()) ||
-        e.actor_uid?.toLowerCase().includes(search.toLowerCase())
+        e.actor_uid?.toLowerCase().includes(search.toLowerCase()) ||
+        e.actor_name?.toLowerCase().includes(search.toLowerCase()) ||
+        e.actor_email?.toLowerCase().includes(search.toLowerCase())
       )
     : entries;
 

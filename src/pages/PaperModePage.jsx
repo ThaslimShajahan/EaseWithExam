@@ -15,6 +15,7 @@ import { chatComplete } from '../lib/aiProxy';
 import { saveWrongAnswers } from '../lib/errorNotebook';
 import { awardXP } from '../lib/gamification';
 import { checkQuota, incrementQuota } from '../lib/quota';
+import PaywallModal from '../components/ui/PaywallModal';
 
 /* ── Helpers ─────────────────────────────────────────────── */
 const OPT_LETTERS = ['A', 'B', 'C', 'D', 'E'];
@@ -246,7 +247,7 @@ function UploadPanel({ onEvaluate, loading }) {
         <button
           onClick={() => onEvaluate(images.map((i) => i.url))}
           disabled={loading}
-          className="w-full py-4 rounded-2xl bg-gradient-to-r from-primary-600 to-violet-600 hover:from-primary-700 hover:to-violet-700 disabled:opacity-50 text-white font-bold text-sm flex items-center justify-center gap-2 transition-all"
+          className="w-full py-4 rounded-2xl bg-gradient-to-r from-primary-500 to-primary-700 hover:from-primary-600 hover:to-primary-800 disabled:opacity-50 text-white font-bold text-sm flex items-center justify-center gap-2 transition-all"
         >
           {loading
             ? <><Loader2 size={16} className="animate-spin" /> AI is reading your answer sheet…</>
@@ -580,7 +581,7 @@ function SelfEvalPanel({ onEvaluate, loading }) {
         <button
           onClick={() => onEvaluate(qImages.map((i) => i.url), aImages.map((i) => i.url))}
           disabled={loading}
-          className="w-full py-4 rounded-2xl bg-gradient-to-r from-violet-600 to-primary-600 hover:from-violet-700 hover:to-primary-700 disabled:opacity-50 text-white font-bold text-sm flex items-center justify-center gap-2 transition-all"
+          className="w-full py-4 rounded-2xl bg-gradient-to-r from-primary-700 to-primary-500 hover:from-primary-800 hover:to-primary-600 disabled:opacity-50 text-white font-bold text-sm flex items-center justify-center gap-2 transition-all"
         >
           {loading
             ? <><Loader2 size={16} className="animate-spin" /> AI is reading your paper…</>
@@ -890,7 +891,7 @@ export default function PaperModePage() {
   const [searchParams] = useSearchParams();
   const location       = useLocation();
   const navigate       = useNavigate();
-  const { currentUser, isPremium } = useAuth();
+  const { currentUser, userProfile, isPremium } = useAuth();
 
   const testId = searchParams.get('id');
 
@@ -906,6 +907,7 @@ export default function PaperModePage() {
   const [selfResult,   setSelfResult]  = useState(null);
   const [selfError,    setSelfError]   = useState('');
   const [selfAImages,  setSelfAImages] = useState([]);
+  const [showPaywall,  setShowPaywall] = useState(false);
   const printAreaRef = useRef(null);
 
   // Inject print CSS once
@@ -949,7 +951,7 @@ export default function PaperModePage() {
     if (currentUser) {
       const quota = await checkQuota(currentUser.uid, 'paper_evaluations_used', isPremium);
       if (!quota.allowed) {
-        setEvalError(quota.reason);
+        setShowPaywall(true);
         return;
       }
     }
@@ -976,6 +978,7 @@ export default function PaperModePage() {
           skipped:        result.answers?.filter((a) => a.verdict === 'unattempted').length ?? 0,
           question_count: questions.length,
           source:         'paper_mode',
+          exam_type:      userProfile?.target_exam || null,
         }).catch(() => {});
 
         // In-app notification
@@ -993,8 +996,17 @@ export default function PaperModePage() {
         // Sync wrong/partial answers to Error Notebook + weak topics
         const adaptedQs      = [];
         const adaptedAnswers = {};
+        const seenQNums      = new Set();
         result.answers?.forEach((ans) => {
-          const q = questions[ans.question_number - 1];
+          // The AI returns question_number as a bare index with no other identifying
+          // field to cross-check against — validate it's a genuine in-range integer
+          // and not a duplicate/hallucinated value before trusting it to index into
+          // our own questions array (a wrong-but-in-range number would otherwise
+          // silently misattribute the answer to a different real question).
+          const qNum = Number(ans.question_number);
+          if (!Number.isInteger(qNum) || qNum < 1 || qNum > questions.length || seenQNums.has(qNum)) return;
+          seenQNums.add(qNum);
+          const q = questions[qNum - 1];
           if (!q?.id || ans.verdict === 'illegible' || ans.verdict === 'unattempted') return;
           adaptedQs.push(q);
           if (ans.marks_awarded < ans.max_marks) {
@@ -1016,6 +1028,16 @@ export default function PaperModePage() {
   };
 
   const handleSelfEval = async (questionImageUrls, answerImageUrls) => {
+    // Quota gate — same AI-vision evaluation cost as handleEvaluate, so it
+    // shares the paper_evaluations_used bucket rather than going unmetered.
+    if (currentUser) {
+      const quota = await checkQuota(currentUser.uid, 'paper_evaluations_used', isPremium);
+      if (!quota.allowed) {
+        setShowPaywall(true);
+        return;
+      }
+    }
+
     setSelfAImages(answerImageUrls);
     setPhase('selfevaluating');
     setSelfError('');
@@ -1024,6 +1046,8 @@ export default function PaperModePage() {
       setSelfResult(result);
       setPhase('selfresults');
       if (currentUser) {
+        incrementQuota(currentUser.uid, 'paper_evaluations_used').catch(() => {});
+
         saveTestSession(currentUser.uid, {
           test_name:      `Self-Graded Paper: ${result.paper_title ?? 'Uploaded Paper'}`,
           score:          result.total_awarded ?? 0,
@@ -1033,6 +1057,7 @@ export default function PaperModePage() {
           skipped:        result.answers?.filter((a) => a.verdict === 'unattempted').length ?? 0,
           question_count: result.answers?.length ?? 0,
           source:         'paper_mode',
+          exam_type:      userProfile?.target_exam || null,
         }).catch(() => {});
       }
     } catch (e) {
@@ -1127,7 +1152,7 @@ export default function PaperModePage() {
 
           <button
             onClick={() => setPhase('upload')}
-            className="w-full py-4 rounded-2xl bg-gradient-to-r from-primary-600 to-violet-600 hover:from-primary-700 hover:to-violet-700 text-white font-bold text-sm flex items-center justify-center gap-2 transition-all no-print"
+            className="w-full py-4 rounded-2xl bg-gradient-to-r from-primary-500 to-primary-700 hover:from-primary-600 hover:to-primary-800 text-white font-bold text-sm flex items-center justify-center gap-2 transition-all no-print"
           >
             <Camera size={16} /> I've Written My Answers — Upload Answer Sheet
           </button>
@@ -1188,6 +1213,16 @@ export default function PaperModePage() {
             <ScanSearch size={14} /> Grade Another Paper
           </button>
         </motion.div>
+      )}
+
+      {showPaywall && (
+        <PaywallModal
+          onClose={() => setShowPaywall(false)}
+          feature="AI answer-sheet evaluation"
+          firebaseUid={currentUser?.uid}
+          email={currentUser?.email}
+          name={userProfile?.display_name}
+        />
       )}
     </div>
   );

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import {
   getMonitoredSources, addMonitoredSource, deleteMonitoredSource,
-  getExamNotifications, clearExamNotifications,
+  getExamNotifications, clearExamNotifications, deactivateExamNotification,
 } from '../lib/supabase';
 import { fetchExamAlerts } from '../lib/examAlerts';
 import Button from '../components/ui/Button';
@@ -143,9 +143,13 @@ export default function AdminExamWatch() {
   };
 
   const handleDelete = async (id) => {
-    await deleteMonitoredSource(id);
-    setSources((s) => s.filter((x) => x.id !== id));
-    showToast('Source removed');
+    try {
+      await deleteMonitoredSource(id);
+      setSources((s) => s.filter((x) => x.id !== id));
+      showToast('Source removed');
+    } catch (err) {
+      showToast(`Remove failed: ${err.message}`, 'error');
+    }
   };
 
   const scrapeSingle = async (source) => {
@@ -177,6 +181,16 @@ export default function AdminExamWatch() {
     await clearExamNotifications();
     setNotifications([]);
     showToast('Cleared all notifications');
+  };
+
+  const handleRemoveNotification = async (id) => {
+    try {
+      await deactivateExamNotification(id);
+      setNotifications((n) => n.filter((x) => x.id !== id));
+      showToast('Notification removed');
+    } catch (err) {
+      showToast(`Remove failed: ${err.message}`, 'error');
+    }
   };
 
   const fmtAgo = (iso) => {
@@ -449,10 +463,15 @@ export default function AdminExamWatch() {
                   <motion.div key={n.id}
                     initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}
                     className="bg-white/5 border border-white/10 rounded-2xl p-4 hover:border-white/20 transition-colors">
-                    <div className="flex items-start gap-2 mb-1.5 flex-wrap">
-                      <span className={`badge text-[10px] ${typeCfg.bg}`}>{typeCfg.label}</span>
-                      <span className="badge bg-white/10 text-slate-300 text-[10px]">{n.exam_body}</span>
-                      {n.category && <span className="badge bg-white/10 text-slate-400 text-[10px]">{n.category}</span>}
+                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                      <div className="flex items-start gap-2 flex-wrap">
+                        <span className={`badge text-[10px] ${typeCfg.bg}`}>{typeCfg.label}</span>
+                        <span className="badge bg-white/10 text-slate-300 text-[10px]">{n.exam_body}</span>
+                        {n.category && <span className="badge bg-white/10 text-slate-400 text-[10px]">{n.category}</span>}
+                      </div>
+                      <button onClick={() => handleRemoveNotification(n.id)} className="text-slate-500 hover:text-red-400 transition-colors p-1 shrink-0">
+                        <Trash2 size={12} />
+                      </button>
                     </div>
                     <p className="text-white text-sm font-medium leading-snug">{n.title}</p>
                     {n.exam_name && n.exam_name !== n.title && (

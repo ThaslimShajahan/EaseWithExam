@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Upload, X, Plus, Images } from 'lucide-react';
 import { useIsDesktop } from '../../hooks/useMediaQuery';
@@ -6,12 +6,15 @@ import { useAuth } from '../../context/AuthContext';
 import ImageViewer from './ImageViewer';
 import ChatInterface from './ChatInterface';
 import { VedaAvatarLg, VedaChip } from '../ui/VedaAvatar';
+import { buildExamType } from '../../lib/categories';
 
 function getSubjectChips(userProfile) {
-  const exam = userProfile?.target_exam || 'NEET';
-  const isBoard = /^(CBSE|ICSE|Class \d+|State Board)/.test(exam);
-  const isJEE   = exam === 'JEE_MAIN' || exam === 'JEE_ADVANCED';
-  const isBoth  = exam === 'BOTH';
+  // target_exam alone is the raw onboarding enum ('CLASS_10', 'JEE_MAIN', …) —
+  // resolve through buildExamType() so board students actually match isBoard.
+  const exam    = buildExamType(userProfile?.target_exam, userProfile?.syllabus, userProfile?.class_level);
+  const isBoard = /^(CBSE|ICSE|Class \d+|State Board|Kerala State)/.test(exam);
+  const isJEE   = exam === 'JEE Main' || exam === 'JEE Advanced';
+  const isBoth  = userProfile?.target_exam === 'BOTH';
 
   if (isBoard) {
     return [
@@ -157,16 +160,46 @@ function VedaIntro({ userProfile }) {
   );
 }
 
+// Uncapped uploads risked huge base64 payloads to the GPT-4o vision API
+// (unhelpful generic failures on oversized/too-many requests) — cap both
+// how many pages and how large each one can be before it's even previewed.
+const MAX_IMAGES        = 6;
+const MAX_FILE_SIZE_MB  = 10;
+
 export default function DoubtStudio() {
   const isDesktop = useIsDesktop();
   const { userProfile } = useAuth();
-  const [imageFiles, setImageFiles] = useState([]);
-  const [imageUrls,  setImageUrls]  = useState([]);
-  const [previewIdx, setPreviewIdx] = useState(null);
+  const [imageFiles,    setImageFiles]    = useState([]);
+  const [imageUrls,     setImageUrls]     = useState([]);
+  const [previewIdx,    setPreviewIdx]    = useState(null);
+  const [uploadWarning, setUploadWarning] = useState('');
+
+  // imageUrls captured by ref so the unmount cleanup below always sees the
+  // latest object URLs rather than the stale empty array from first render.
+  const imageUrlsRef = useRef(imageUrls);
+  useEffect(() => { imageUrlsRef.current = imageUrls; }, [imageUrls]);
+  useEffect(() => () => { imageUrlsRef.current.forEach((u) => URL.revokeObjectURL(u)); }, []);
 
   const addFiles = (files) => {
-    const newUrls = files.map((f) => URL.createObjectURL(f));
-    setImageFiles((prev) => [...prev, ...files]);
+    const remaining = MAX_IMAGES - imageFiles.length;
+    if (remaining <= 0) {
+      setUploadWarning(`You've reached the ${MAX_IMAGES}-page limit per doubt — remove a page to add another.`);
+      return;
+    }
+    const oversized = files.filter((f) => f.size > MAX_FILE_SIZE_MB * 1024 * 1024);
+    const accepted   = files.filter((f) => f.size <= MAX_FILE_SIZE_MB * 1024 * 1024).slice(0, remaining);
+
+    if (oversized.length) {
+      setUploadWarning(`${oversized.length} image${oversized.length > 1 ? 's were' : ' was'} skipped — over the ${MAX_FILE_SIZE_MB}MB limit per page.`);
+    } else if (files.length > remaining) {
+      setUploadWarning(`Only ${remaining} more page${remaining === 1 ? '' : 's'} could be added (max ${MAX_IMAGES} per doubt).`);
+    } else {
+      setUploadWarning('');
+    }
+
+    if (!accepted.length) return;
+    const newUrls = accepted.map((f) => URL.createObjectURL(f));
+    setImageFiles((prev) => [...prev, ...accepted]);
     setImageUrls((prev)  => [...prev, ...newUrls]);
   };
 
@@ -175,6 +208,7 @@ export default function DoubtStudio() {
     setImageFiles((prev) => prev.filter((_, i) => i !== idx));
     setImageUrls((prev)  => prev.filter((_, i) => i !== idx));
     if (previewIdx === idx) setPreviewIdx(null);
+    setUploadWarning('');
   };
 
   const clearAll = () => {
@@ -182,6 +216,7 @@ export default function DoubtStudio() {
     setImageFiles([]);
     setImageUrls([]);
     setPreviewIdx(null);
+    setUploadWarning('');
   };
 
   const hasImages = imageFiles.length > 0;
@@ -209,6 +244,11 @@ export default function DoubtStudio() {
             )}
           </div>
           <div className="flex-1 overflow-y-auto p-5 space-y-4">
+            {uploadWarning && (
+              <div className="text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-xl px-3 py-2">
+                {uploadWarning}
+              </div>
+            )}
             <AnimatePresence mode="wait">
               {hasImages ? (
                 <motion.div key="viewer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
@@ -257,6 +297,11 @@ export default function DoubtStudio() {
             style={{ overflow: 'hidden' }}
           >
             <div className="p-3 space-y-2">
+              {uploadWarning && (
+                <div className="text-xs bg-amber-50 border border-amber-200 text-amber-700 rounded-xl px-3 py-2">
+                  {uploadWarning}
+                </div>
+              )}
               {/* Thumbnail strip */}
               <div className="flex gap-2 overflow-x-auto pb-1">
                 {imageUrls.map((url, i) => (

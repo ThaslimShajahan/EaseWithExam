@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './context/AuthContext';
 import { loadCategories } from './lib/categories';
+import { loadPaperTemplateOverrides } from './lib/examPattern';
 import App from './App';
 import './styles/index.css';
 
@@ -37,4 +38,7 @@ function renderApp() {
 // cap it so a slow/failed fetch never blocks the app beyond ~1.5s (falls back
 // to the hardcoded defaults already baked into categories.js).
 const timeout = new Promise((resolve) => setTimeout(resolve, 1500));
-Promise.race([loadCategories().catch(() => {}), timeout]).then(renderApp);
+Promise.race([
+  Promise.all([loadCategories(), loadPaperTemplateOverrides()]).catch(() => {}),
+  timeout,
+]).then(renderApp);

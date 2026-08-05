@@ -178,9 +178,12 @@ export default function ParentDashboardPage() {
       }
 
       try {
-        const [p, s, g, sb] = await Promise.all([
-          getUser(targetUid),
-          getTestSessions(targetUid, 20),
+        // Fetch the profile first — getTestSessions needs its target_exam to
+        // scope sessions to the student's current exam, so it can't run in
+        // the same Promise.all as the profile fetch it depends on.
+        const p = await getUser(targetUid);
+        const [s, g, sb] = await Promise.all([
+          getTestSessions(targetUid, 20, p?.target_exam),
           getUserGamification(targetUid),
           isOwnView ? Promise.resolve(ownSubscription) : getUserSubscription(targetUid),
         ]);
@@ -318,7 +321,7 @@ export default function ParentDashboardPage() {
           </div>
           <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
             <motion.div
-              className="h-full bg-gradient-to-r from-violet-500 to-primary-500 rounded-full"
+              className="h-full bg-gradient-to-r from-primary-600 to-primary-400 rounded-full"
               initial={{ width: 0 }} animate={{ width: `${levelInfo.pct}%` }}
               transition={{ duration: 0.8 }}
             />

@@ -21,7 +21,7 @@ export default function Modal({ open, onClose, title, children, size = 'md', cla
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4"
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -32,22 +32,20 @@ export default function Modal({ open, onClose, title, children, size = 'md', cla
             onClick={onClose}
           />
 
-          {/* Panel */}
+          {/* Panel — always centered (was a bottom sheet on mobile, which felt
+              wrong for something as focal as signing in). max-h + overflow
+              guards against clipping on short mobile viewports now that it's
+              no longer anchored to (and free to extend past) the bottom edge. */}
           <motion.div
-            className={`relative bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl w-full ${sizes[size]} ${className}`}
-            initial={{ y: 60, opacity: 0 }}
-            animate={{ y: 0,  opacity: 1 }}
-            exit={{ y: 60, opacity: 0 }}
+            className={`relative bg-white rounded-2xl shadow-2xl w-full max-h-[90vh] overflow-y-auto ${sizes[size]} ${className}`}
+            initial={{ y: 20, opacity: 0, scale: 0.97 }}
+            animate={{ y: 0,  opacity: 1, scale: 1 }}
+            exit={{ y: 20, opacity: 0, scale: 0.97 }}
             transition={{ type: 'spring', damping: 26, stiffness: 300 }}
           >
-            {/* Handle (mobile) */}
-            <div className="sm:hidden flex justify-center pt-3 pb-1">
-              <div className="h-1 w-10 rounded-full bg-slate-300" />
-            </div>
-
             {/* Header */}
             {title && (
-              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 sticky top-0 bg-white rounded-t-2xl">
                 <h2 className="font-semibold text-slate-900">{title}</h2>
                 <button
                   onClick={onClose}

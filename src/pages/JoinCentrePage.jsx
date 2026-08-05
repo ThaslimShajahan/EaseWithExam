@@ -59,7 +59,7 @@ function CentreCard({ preview }) {
 
         <p className="text-sm text-slate-600">
           You've been invited to join <strong>{preview.centre_name}</strong> on EaseWithExam.
-          {preview.batch ? ` You'll be placed in the <strong>${preview.batch}</strong> batch.` : ''}
+          {preview.batch && <> You'll be placed in the <strong>{preview.batch}</strong> batch.</>}
         </p>
       </div>
     </div>

@@ -13,6 +13,12 @@ import { generateFlashcards, getFlashcards, getFlashcardSummary, markFlashcard }
 import { checkQuota, incrementQuota } from '../lib/quota';
 import { createNotification } from '../lib/notifications';
 import RingChart from '../components/ui/RingChart';
+import PaywallModal from '../components/ui/PaywallModal';
+
+// generateFlashcards() always produces a fixed-size batch (see FLASHCARDS_PER_CHAPTER
+// in lib/flashcards.js) — checkQuota needs to know this upfront to block BEFORE a
+// generation would push usage over the limit, not just after.
+const FLASHCARDS_PER_BATCH = 12;
 
 const SUBJECT_COLORS = {
   Biology:     { chip: 'bg-violet-100 text-violet-700 border-violet-200',   ring: '#7c3aed' },
@@ -339,14 +345,14 @@ export default function FlashcardsPage() {
     enabled:  !!uid && !!activeChapter,
   });
 
-  const [quotaError, setQuotaError] = useState('');
+  const [showPaywall, setShowPaywall] = useState(false);
 
   const genMutation = useMutation({
     mutationFn: () => generateFlashcards(uid, activeChapter, examType, 12),
     onSuccess: (newCards) => {
       qc.setQueryData(['flashcards', uid, activeChapter.key], newCards);
       qc.invalidateQueries({ queryKey: ['flashcard-summary'] });
-      incrementQuota(uid, 'ai_questions_used', 12).catch(() => {});
+      incrementQuota(uid, 'ai_questions_used', FLASHCARDS_PER_BATCH).catch(() => {});
       if (uid) localStorage.setItem(`edu_flashcard_used_${uid}`, '1');
       setMode('study');
     },
@@ -356,13 +362,11 @@ export default function FlashcardsPage() {
     setSelectedChapter(ch);
     setMode('chapter');
     setDoneStats(null);
-    setQuotaError('');
   };
 
   const handleGenerate = async () => {
-    setQuotaError('');
-    const quota = await checkQuota(uid, 'ai_questions_used', isPremium);
-    if (!quota.allowed) { setQuotaError(quota.reason); return; }
+    const quota = await checkQuota(uid, 'ai_questions_used', isPremium, undefined, FLASHCARDS_PER_BATCH);
+    if (!quota.allowed) { setShowPaywall(true); return; }
     genMutation.mutate();
   };
 
@@ -468,10 +472,20 @@ export default function FlashcardsPage() {
                 <RefreshCw size={11} /> Regenerate cards
               </button>
             )}
-            {(genMutation.isError || quotaError) && (
-              <p className="text-xs text-red-500">{quotaError || 'Generation failed. Check your AI quota or try again.'}</p>
+            {genMutation.isError && (
+              <p className="text-xs text-red-500">Generation failed. Try again.</p>
             )}
           </div>
+
+          {showPaywall && (
+            <PaywallModal
+              onClose={() => setShowPaywall(false)}
+              feature="AI flashcard generation"
+              firebaseUid={currentUser?.uid}
+              email={currentUser?.email}
+              name={userProfile?.display_name}
+            />
+          )}
         </div>
       )}
 

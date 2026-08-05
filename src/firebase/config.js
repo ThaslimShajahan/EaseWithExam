@@ -15,3 +15,14 @@ const firebaseConfig = {
 
 export const app  = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
+
+// Admin Portal uses a SEPARATE named Firebase app instance (same project/config,
+// different Auth session) so signing in as an admin never touches the student
+// session on `auth` above. Without this, admin + student shared one Auth
+// instance/currentUser — logging into /admin/login also signed the same
+// browser in as that Firebase user everywhere else (student routes included),
+// even redirecting into onboarding for admin-only accounts with no student
+// profile. Firebase scopes Auth persistence per named app, so this is enough
+// to fully isolate the two sessions with no backend changes.
+export const adminApp  = initializeApp(firebaseConfig, 'admin');
+export const adminAuth = getAuth(adminApp);

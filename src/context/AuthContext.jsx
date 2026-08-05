@@ -15,13 +15,21 @@ import { getUser, upsertUser, updateUser, getSubscription, getUserByPhone } from
 
 const AuthContext = createContext(null);
 
+// Captured once at module load (before React/React Router render anything) —
+// reading window.location.search lazily inside AuthProvider's effect instead
+// races several routes that are bare `<Navigate replace>` aliases (e.g.
+// /practice → /exams?tab=practice): that redirect's own effect can rewrite
+// the URL and drop this query param before AuthProvider's effect gets to
+// read it, since both are child effects competing to run first.
+const QA_BYPASS_UID = import.meta.env.DEV
+  ? new URLSearchParams(window.location.search).get('qa_uid')
+  : null;
+
 export function AuthProvider({ children }) {
   const [currentUser,  setCurrentUser]  = useState(null);
   const [userProfile,  setUserProfile]  = useState(null);
   const [subscription, setSubscription] = useState(null);
   const [loading,      setLoading]      = useState(true);
-
-  const isMobile = () => typeof window !== 'undefined' && window.innerWidth < 768;
 
   /* ── Supabase helpers ──────────────────────────────────── */
 
@@ -47,6 +55,31 @@ export function AuthProvider({ children }) {
   /* ── Auth state listener ───────────────────────────────── */
 
   useEffect(() => {
+    // ── QA-only auth bypass ──────────────────────────────────────────
+    // Google OAuth can't be driven headlessly, so there was no way to do a
+    // real click-through test of authenticated screens. Gated on
+    // import.meta.env.DEV, which Vite resolves to a static `false` in
+    // production builds — this whole branch is dead-code-eliminated and
+    // never ships. Visit /auth?qa_uid=some-id in `npm run dev` to sign in
+    // as that fake uid (auto-creates a `users` row on first use).
+    if (QA_BYPASS_UID) {
+      const qaUid = QA_BYPASS_UID;
+      const fakeUser = { uid: qaUid, email: `${qaUid}@qa.local`, displayName: 'QA Tester', photoURL: null };
+      setCurrentUser(fakeUser);
+      (async () => {
+        let profile = await getUser(qaUid).catch(() => null);
+        if (!profile) {
+          // 'google' — users.auth_method has a check constraint allowing only
+          // 'google'/'phone'; this fake profile just needs to satisfy it.
+          profile = await upsertUser(qaUid, { auth_method: 'google', display_name: 'QA Tester', email: fakeUser.email });
+        }
+        setUserProfile(profile);
+        await loadSubscription(qaUid);
+        setLoading(false);
+      })();
+      return;
+    }
+
     // Consume redirect result on mobile after Google sign-in
     getRedirectResult(auth)
       .then(async (result) => {
@@ -81,15 +114,33 @@ export function AuthProvider({ children }) {
     provider.addScope('profile');
     provider.addScope('email');
 
-    if (isMobile()) {
-      // popup is blocked by iOS Safari and many Android WebViews — use redirect
-      await signInWithRedirect(auth, provider);
-      return null; // getRedirectResult() in useEffect will handle the result
+    try {
+      const result = await signInWithPopup(auth, provider);
+      await createOrFetchProfile(result.user);
+      return result.user;
+    } catch (err) {
+      // auth/popup-closed-by-user is a very common FALSE POSITIVE on mobile —
+      // many mobile browsers/WebViews report the popup as "closed" immediately
+      // (OS tab-switch behavior, viewport constraints) even though the user
+      // never dismissed anything and never got a chance to sign in. Treat it
+      // the same as popup-blocked: fall back to redirect rather than stranding
+      // the user with a dead "Continue with Google" button. Deliberately NOT
+      // catching auth/cancelled-popup-request here — that fires when a second
+      // popup request overlaps an in-flight one, not an actual failure.
+      if (
+        err.code === 'auth/popup-blocked' ||
+        err.code === 'auth/popup-closed-by-user' ||
+        err.code === 'auth/operation-not-supported-in-this-environment'
+      ) {
+        // Redirect is used only as a fallback, not the default, because mobile
+        // browsers frequently partition/clear the storage Firebase needs to
+        // read back getRedirectResult() after the round-trip, which silently
+        // strands the user back on the login page with no error at all.
+        await signInWithRedirect(auth, provider);
+        return null; // getRedirectResult() in useEffect will handle the result
+      }
+      throw err;
     }
-
-    const result = await signInWithPopup(auth, provider);
-    await createOrFetchProfile(result.user);
-    return result.user;
   };
 
   /* ── Phone OTP sign-in / linking ───────────────────────────

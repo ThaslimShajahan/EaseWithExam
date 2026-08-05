@@ -1,21 +1,23 @@
 import { lazy } from 'react';
-import { FileText, Wand2, ClipboardList } from 'lucide-react';
+import { FileText, Wand2, ClipboardList, Ruler } from 'lucide-react';
 import AdminHub from './AdminHub';
 
-const AdminPapers        = lazy(() => import('./AdminPapers'));
-const AdminPaperGen      = lazy(() => import('./AdminPaperGen'));
-const AdminPublishedTests= lazy(() => import('./AdminPublishedTests'));
+const AdminPapers          = lazy(() => import('./AdminPapers'));
+const AdminPaperGen        = lazy(() => import('./AdminPaperGen'));
+const AdminPublishedTests  = lazy(() => import('./AdminPublishedTests'));
+const AdminPaperTemplates  = lazy(() => import('./AdminPaperTemplates'));
 
 export default function AdminPublishHub() {
   return (
     <AdminHub
       title="Publish"
       subtitle="Generate question papers and manage what's published to students"
-      defaultTab="papers"
+      defaultTab="papergen"
       tabs={[
-        { id: 'papers',   icon: FileText,      label: 'Papers',          element: <AdminPapers /> },
-        { id: 'papergen', icon: Wand2,         label: 'Paper Gen',       element: <AdminPaperGen /> },
-        { id: 'tests',    icon: ClipboardList, label: 'Published Tests', element: <AdminPublishedTests /> },
+        { id: 'papergen',  icon: Wand2,         label: 'Paper Gen',       element: <AdminPaperGen /> },
+        { id: 'papers',    icon: FileText,      label: 'Uploaded Papers', element: <AdminPapers /> },
+        { id: 'tests',     icon: ClipboardList, label: 'Published Tests', element: <AdminPublishedTests /> },
+        { id: 'templates', icon: Ruler,         label: 'Paper Templates', element: <AdminPaperTemplates /> },
       ]}
     />
   );

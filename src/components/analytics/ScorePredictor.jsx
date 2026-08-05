@@ -153,7 +153,7 @@ export default function ScorePredictor() {
 
   useEffect(() => {
     if (!currentUser || !premium) { setLoading(false); return; }
-    getTestSessions(currentUser.uid, 10)
+    getTestSessions(currentUser.uid, 10, userProfile?.target_exam)
       .then((s) => {
         setSessions(s);
         const p = predict(s, examConf);
@@ -161,7 +161,7 @@ export default function ScorePredictor() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [currentUser, premium]);
+  }, [currentUser, premium, userProfile?.target_exam]);
 
   return (
     <motion.div
@@ -216,7 +216,7 @@ export default function ScorePredictor() {
       {/* Premium + prediction ready */}
       {premium && !loading && prediction && (
         <>
-          <div className="bg-gradient-to-r from-primary-50 to-violet-50 rounded-2xl p-4 mb-4">
+          <div className="bg-gradient-to-r from-primary-50 to-primary-100 rounded-2xl p-4 mb-4">
             <div className="flex items-end gap-3">
               <div>
                 <p className="text-xs text-slate-500 mb-1">Projected {examConf.label} score</p>

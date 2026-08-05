@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, Calendar, Clock, BookOpen, Target, Brain, Zap,
+  Calendar, Clock, BookOpen, Target, Brain, Zap,
   CheckCircle2, TrendingUp, ChevronRight, Loader2, RotateCcw,
 } from 'lucide-react';
 import { generateStudyPlan } from '../lib/questionGen';
@@ -12,8 +12,9 @@ import { checkQuota, incrementQuota } from '../lib/quota';
 import { awardXP } from '../lib/gamification';
 import { createNotification } from '../lib/notifications';
 import { addManualTask } from '../lib/dailyTasks';
-import { CATEGORIES, EXAM_TYPE_GROUPS, buildExamType } from '../lib/categories';
+import { CATEGORIES, buildExamType } from '../lib/categories';
 import { useSyllabusSubjects } from '../hooks/useSyllabusSubjects';
+import HubPageHeader from '../components/ui/HubPageHeader';
 
 const SUBJECT_PALETTE = {
   Physics:            'bg-blue-100    text-blue-800    border-blue-200',
@@ -59,20 +60,17 @@ function Chip({ label, selected, onClick, small }) {
 }
 
 /* ── GoalForm ────────────────────────────────────────────── */
+// Exam type is locked to the student's own onboarding profile — matches the
+// same "locked to your profile" pattern used in Practice/Exam generation, so a
+// student can no longer generate a plan for a different class/exam than their own.
 function GoalForm({ onGenerate, defaultExamType = 'NEET' }) {
-  const [examType,      setExamType]      = useState(defaultExamType);
+  const examType = defaultExamType;
   const [examDate,      setExamDate]      = useState('');
   const [dailyHours,    setDailyHours]    = useState(6);
   const [weakSubjects,  setWeakSubjects]  = useState([]);
   const [focusChapters, setFocusChapters] = useState('');
 
   const subjects = useSyllabusSubjects(examType);
-
-  /* reset weak subjects when exam type changes */
-  const handleExamChange = (e) => {
-    setExamType(e);
-    setWeakSubjects([]);
-  };
 
   const toggleSubject = (s) =>
     setWeakSubjects((prev) =>
@@ -87,30 +85,12 @@ function GoalForm({ onGenerate, defaultExamType = 'NEET' }) {
       className="bg-white rounded-2xl border border-slate-100 shadow-sm p-6 space-y-6"
       initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
     >
-      {/* Target exam — grouped */}
-      <div>
-        <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-3 block">
-          Target Exam
-        </label>
-        <div className="space-y-3">
-          {EXAM_TYPE_GROUPS.map((group) => (
-            <div key={group.label}>
-              <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mb-1.5">
-                {group.icon} {group.label}
-              </p>
-              <div className="flex flex-wrap gap-1.5">
-                {group.items.map((e) => (
-                  <Chip
-                    key={e}
-                    label={CATEGORIES[e]?.label ?? e}
-                    selected={examType === e}
-                    onClick={() => handleExamChange(e)}
-                    small
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
+      {/* Target exam — locked to profile */}
+      <div className="flex items-center gap-2 bg-primary-50 border border-primary-100 rounded-xl px-3 py-2.5">
+        <Target size={12} className="text-primary-500 shrink-0" />
+        <div className="text-xs text-primary-700">
+          <span className="font-semibold">Locked to your profile: </span>
+          <span className="font-bold">{CATEGORIES[examType]?.label ?? examType}</span>
         </div>
       </div>
 
@@ -460,8 +440,11 @@ export default function StudyPlanPage() {
 
   useEffect(() => {
     if (!currentUser) return;
+    const profileExam = buildExamType(userProfile?.target_exam, userProfile?.syllabus, userProfile?.class_level);
     getStudyGoal(currentUser.uid).then((saved) => {
-      if (saved?.study_plan) {
+      // A saved plan from a since-changed profile (different class/board/exam)
+      // is stale — discard it and show a fresh form instead of old data.
+      if (saved?.study_plan && saved.exam_type === profileExam) {
         setPlan(saved.study_plan);
         setGoal({
           examType:      saved.exam_type,
@@ -473,7 +456,7 @@ export default function StudyPlanPage() {
         setPhase('plan');
       }
     }).catch(() => {});
-  }, [currentUser]);
+  }, [currentUser, userProfile?.target_exam, userProfile?.syllabus, userProfile?.class_level]);
 
   const handleGenerate = async (inputs) => {
     const quota = await checkQuota(currentUser?.uid, 'ai_questions_used', isPremium);
@@ -538,18 +521,7 @@ export default function StudyPlanPage() {
 
   return (
     <div className="space-y-5 p-4 lg:p-0 max-w-2xl mx-auto lg:mx-0">
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => navigate('/dashboard')}
-          className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition-colors"
-        >
-          <ArrowLeft size={18} />
-        </button>
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">Study Plan</h2>
-          <p className="text-xs text-slate-500 mt-0.5">AI-personalised schedule for your exam</p>
-        </div>
-      </div>
+      <HubPageHeader icon={Brain} title="Study Plan" subtitle="AI-personalised schedule for your exam" />
 
       <AnimatePresence>
         {error && (

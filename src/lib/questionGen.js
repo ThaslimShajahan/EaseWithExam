@@ -3,9 +3,23 @@ import { getTopicFrequency } from './supabase';
 import { chatComplete, embedText } from './aiProxy';
 import { getFeatureFlag, FLAGS } from './featureFlags';
 import { getChapters } from './syllabus';
+// getExamPattern() checks admin-uploaded paper_templates overrides before
+// falling back to PAPER_PATTERNS below (see examPattern.js) — this IS a
+// circular import (examPattern.js imports PAPER_PATTERNS back from this
+// file), but it's safe: both sides only touch the cross-imported binding
+// inside function bodies that run after the whole module graph has finished
+// loading, never at module-evaluation time.
+import { getExamPattern } from './examPattern';
 
 /* ── Convert GPT output → MockTestEngine question format ─── */
 const LETTER_IDX = { A: 0, B: 1, C: 2, D: 3 };
+
+// Literature/language subjects need the REAL, unparaphrased textbook passage to
+// write authentic extract-based comprehension questions ("Read the following
+// extract from 'X' and answer…") — a STEM concept question doesn't need the
+// original NCERT wording, but quoting a made-up passage instead of the actual
+// prescribed chapter isn't a real practice paper. See fetchVerbatimPassages().
+const LANGUAGE_SUBJECTS = new Set(['English', 'Hindi', 'Sanskrit']);
 
 /* Exams that use per-question integer marks with no negative marking */
 const CBSE_STYLE_EXAMS = new Set([
@@ -24,8 +38,19 @@ function resolvePatternKey(examType) {
   return m ? m[1] : examType;
 }
 
-/* Derive marks for AI-generated CBSE questions when the AI returned a section */
-function cbseMarksForSection(section, type) {
+/* Derive marks for AI-generated CBSE questions when the AI didn't return an
+ * explicit marks value — a last-resort fallback (the prompt now always asks
+ * for marks explicitly per buildSectionMarksInstructions(), so this rarely
+ * fires). Looks up the real per-section marks from the actual pattern for
+ * this exam type/class instead of a flat guess — Section D and E carry
+ * DIFFERENT marks (5 vs 4) for the current CBSE Class 9-12 pattern, so
+ * lumping them together as "5" was itself a bug. */
+function cbseMarksForSection(section, type, examType) {
+  const pattern = getExamPattern(examType);
+  if (pattern?.sections && section) {
+    const match = Object.entries(pattern.sections).find(([name]) => name.match(/Section\s+([A-Z])/i)?.[1]?.toUpperCase() === section.toUpperCase());
+    if (match && typeof match[1].marks === 'number') return match[1].marks;
+  }
   if (section === 'A' || type === 'MCQ' || type === 'Assertion-Reason') return 1;
   if (section === 'B') return 2;
   if (section === 'C' || type === 'Short Answer') return 3;
@@ -65,7 +90,7 @@ export function toEngineFormat(questionsInput, subject, examType = 'NEET') {
       if (typeof q.marks === 'number') {
         marks = q.marks;  // explicit integer from PDF extract or AI
       } else if (isCBSE) {
-        marks = cbseMarksForSection(section, type);  // CBSE: 1/2/3/5, no negative
+        marks = cbseMarksForSection(section, type, examType);  // CBSE: looked up from the real pattern, no negative
       } else {
         marks = { correct: 4, incorrect: isNumerical ? 0 : -1 };  // NTA: +4/-1
       }
@@ -167,7 +192,12 @@ Key notes:
   },
   'CBSE': {
     label: 'CBSE Board (Class 12)',
-    totalQ: 33, duration: 180, totalMarks: 70,
+    // totalMarks corrected 70→72 to match the section breakdown below
+    // (16+10+21+10+15) — the sections themselves are unverified against an
+    // external source (this bare "CBSE"-with-no-class key is a rarely-hit
+    // fallback; real board content is tagged "CBSE Class 12" and uses that
+    // entry below, which IS verified against the current 2025-26 pattern).
+    totalQ: 33, duration: 180, totalMarks: 72,
     marking: { 'Section A': 1, 'Section B': 2, 'Section C': 3, 'Section D': 5, 'Section E': 5 },
     sections: {
       'Section A (MCQ)':        { count: 16, marks: 1 },
@@ -216,7 +246,10 @@ STRICT RULES:
   },
   'Class 8': {
     label: 'CBSE Class 8',
-    totalQ: 39, duration: 180, totalMarks: 80,
+    // totalQ corrected 39→34 — the sections below (10+12+7+5) already summed
+    // correctly to the stated 80 marks; totalQ was simply a stale/mistyped
+    // duplicate of that same information.
+    totalQ: 34, duration: 180, totalMarks: 80,
     marking: { 'Section A': 1, 'Section B': 2, 'Section C': 3, 'Section D': 5 },
     sections: {
       'Section A (MCQ)': { count: 10, marks: 1 },
@@ -283,35 +316,43 @@ Section E (Q.36-38): 3 Case-Based Questions, 4 marks each (2+1+1 or 1+1+2 sub-pa
   },
   'Class 11': {
     label: 'CBSE Class 11',
-    totalQ: 35, duration: 180, totalMarks: 80,
+    // Corrected to match the verified current (2025-26) CBSE Class 10/12
+    // Mathematics board pattern (Class 11 has no board exam of its own, so
+    // internal school exams are modeled on the real board format — same
+    // shape Class 9's entry already used correctly). Was: C count 7→6,
+    // D count 2→4, totalQ 35→38 (stale duplicate that never matched sections).
+    totalQ: 38, duration: 180, totalMarks: 80,
     marking: { 'Section A': 1, 'Section B': 2, 'Section C': 3, 'Section D': 5, 'Section E': 4 },
     sections: {
       'Section A (MCQ + AR)': { count: 20, marks: 1 },
       'Section B (VSA)':       { count: 5,  marks: 2 },
-      'Section C (SA)':        { count: 7,  marks: 3 },
-      'Section D (LA)':        { count: 2,  marks: 5 },
+      'Section C (SA)':        { count: 6,  marks: 3 },
+      'Section D (LA)':        { count: 4,  marks: 5 },
       'Section E (Case-Based)':{ count: 3,  marks: 4 },
     },
     questionStyle: `
 CBSE CLASS 11 PAPER PATTERN (2025-26, 80 marks, 3 hours):
 Section A (Q.1-20): 18 MCQs + 2 Assertion-Reason, 1 mark each, no negative marking
 Section B (Q.21-25): 5 Short Answer-I, 2 marks each
-Section C (Q.26-32): 7 Short Answer-II, 3 marks each
-Section D (Q.33-34): 2 Long Answers, 5 marks each, with internal choice (OR)
-Section E (Q.35-38): 3 Case-Based Questions, 4 marks each
+Section C (Q.26-31): 6 Short Answer-II, 3 marks each
+Section D (Q.32-35): 4 Long Answers, 5 marks each, with internal choice (OR)
+Section E (Q.36-38): 3 Case-Based Questions, 4 marks each
 - NCERT Class 11 syllabus only
 - No negative marking
 - Numericals: formula → substitution → answer with units`,
   },
   'Class 12': {
     label: 'CBSE Class 12',
-    totalQ: 33, duration: 180, totalMarks: 80,
+    // Corrected to match the verified current (2025-26) CBSE Class 12
+    // Mathematics board pattern. Was: D count 2→4, totalQ 33→38 (stale
+    // duplicate that never matched sections).
+    totalQ: 38, duration: 180, totalMarks: 80,
     marking: { 'Section A': 1, 'Section B': 2, 'Section C': 3, 'Section D': 5, 'Section E': 4 },
     sections: {
       'Section A (MCQ + AR)': { count: 20, marks: 1 },
       'Section B (VSA)':       { count: 5,  marks: 2 },
       'Section C (SA)':        { count: 6,  marks: 3 },
-      'Section D (LA)':        { count: 2,  marks: 5 },
+      'Section D (LA)':        { count: 4,  marks: 5 },
       'Section E (Case-Based)':{ count: 3,  marks: 4 },
     },
     questionStyle: `
@@ -319,30 +360,34 @@ CBSE CLASS 12 PAPER PATTERN (2025-26, 80 marks, 3 hours):
 Section A (Q.1-20): 18 MCQs + 2 Assertion-Reason, 1 mark each, no negative marking
 Section B (Q.21-25): 5 Short Answer-I, 2 marks each
 Section C (Q.26-31): 6 Short Answer-II, 3 marks each
-Section D (Q.32-33): 2 Long Answers, 5 marks each, with internal choice (OR)
-Section E (Q.34-38): 3 Case-Based Questions, 4 marks each
+Section D (Q.32-35): 4 Long Answers, 5 marks each, with internal choice (OR)
+Section E (Q.36-38): 3 Case-Based Questions, 4 marks each
 - NCERT Class 11 + 12 syllabus only
 - No negative marking
 - Numericals: formula → substitution → answer with units`,
   },
   'Class 10': {
     label: 'CBSE Class 10',
-    totalQ: 36, duration: 180, totalMarks: 80,
+    // Corrected to match the verified current (2025-26) CBSE Class 10
+    // Mathematics board pattern (confirmed via web search): Section A is
+    // 18 MCQ + 2 Assertion-Reason (not 16+4), B/C/D counts adjusted to
+    // match, totalQ 36→38 (stale duplicate that never matched sections).
+    totalQ: 38, duration: 180, totalMarks: 80,
     marking: { 'Section A': 1, 'Section B': 2, 'Section C': 3, 'Section D': 5, 'Section E': 4 },
     sections: {
       'Section A (MCQ + AR)': { count: 20, marks: 1 },
-      'Section B (VSA)':       { count: 6,  marks: 2 },
-      'Section C (SA)':        { count: 7,  marks: 3 },
-      'Section D (LA)':        { count: 3,  marks: 5 },
+      'Section B (VSA)':       { count: 5,  marks: 2 },
+      'Section C (SA)':        { count: 6,  marks: 3 },
+      'Section D (LA)':        { count: 4,  marks: 5 },
       'Section E (Case-Based)':{ count: 3,  marks: 4 },
     },
     questionStyle: `
-CBSE CLASS 10 BOARD PATTERN (Science/Maths 2025-26):
-Section A (Q.1-20): 16 MCQs + 4 Assertion-Reason, 1 mark each, no negative marking
-Section B (Q.21-26): 6 Very Short Answers, 2 marks each (2-3 lines)
-Section C (Q.27-33): 7 Short Answers, 3 marks each (4-5 lines or 3-step numerical)
-Section D (Q.34-36): 3 Long Answers, 5 marks each with internal choice (OR)
-Section E (Q.37-39): 3 Case-Based Questions, 4 marks each with subparts (a,b,c)
+CBSE CLASS 10 BOARD PATTERN (Maths 2025-26, verified against current sample paper):
+Section A (Q.1-20): 18 MCQs + 2 Assertion-Reason, 1 mark each, no negative marking
+Section B (Q.21-25): 5 Very Short Answers, 2 marks each (2-3 lines)
+Section C (Q.26-31): 6 Short Answers, 3 marks each (4-5 lines or 3-step numerical)
+Section D (Q.32-35): 4 Long Answers, 5 marks each with internal choice (OR)
+Section E (Q.36-38): 3 Case-Based Questions, 4 marks each with subparts (a,b,c)
 - All from NCERT Class 9 + 10 syllabus only
 - No negative marking
 - Diagrams: describe in text
@@ -443,6 +488,40 @@ export const FULL_SYLLABUS = {
   },
 };
 
+// Builds the CBSE-style "SECTION → MARKS" instructions directly from
+// pattern.sections instead of a separate hardcoded prose block — pattern here
+// is whatever getExamPattern() resolved (an admin-uploaded paper_templates
+// override when one exists, or the hardcoded PAPER_PATTERNS fallback
+// otherwise; see examPattern.js). Previously this mapping was a fixed string
+// baked into the prompt regardless of which pattern was actually active, so
+// an admin's uploaded template could set totally different section
+// counts/marks and the AI would still be told the OLD generic numbers —
+// admin templates never actually reached the AI. Deriving it here means
+// whatever the admin configures for a class+subject is what generation uses.
+function buildSectionMarksInstructions(pattern) {
+  if (!pattern?.sections) return { block: '', marksOptions: '1 | 2 | 3 | 5', sectionOptions: '"A" | "B" | "C" | "D" | "E"' };
+
+  const entries = Object.entries(pattern.sections).filter(([, s]) => typeof s.count === 'number' && typeof s.marks === 'number');
+  if (!entries.length) return { block: '', marksOptions: '1 | 2 | 3 | 5', sectionOptions: '"A" | "B" | "C" | "D" | "E"' };
+
+  const letterFor = (name) => name.match(/Section\s+([A-Z])/i)?.[1]?.toUpperCase() ?? name;
+  const isMCQLike = (name) => /mcq|assertion/i.test(name);
+
+  const lines = entries.map(([name, s]) => {
+    const letter = letterFor(name);
+    return `- Section ${letter} (${name.replace(/^Section\s+[A-Z]\s*/i, '').replace(/[()]/g, '')}): ${s.count} question${s.count !== 1 ? 's' : ''}, ${s.marks} mark${s.marks !== 1 ? 's' : ''} each${isMCQLike(name) ? ', options array required' : ', options: null'}`;
+  });
+
+  const marksOptions   = [...new Set(entries.map(([, s]) => s.marks))].sort((a, b) => a - b).join(' | ');
+  const sectionOptions = [...new Set(entries.map(([name]) => letterFor(name)))].map((l) => `"${l}"`).join(' | ');
+
+  return {
+    block: `SECTION → MARKS mapping (MANDATORY — every question MUST include section and marks, matching this EXACT structure — ${pattern.totalQ} questions total, ${pattern.totalMarks} marks total):\n${lines.join('\n')}`,
+    marksOptions,
+    sectionOptions,
+  };
+}
+
 /* ── Fetch KB chunks — pgvector primary, keyword fallback ─── */
 async function fetchKBChunks(subject, topicHints) {
   const query = [subject !== 'Mixed' ? subject : '', topicHints || ''].filter(Boolean).join(' ');
@@ -480,6 +559,36 @@ async function fetchKBChunks(subject, topicHints) {
   }));
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, 15).map((c) => c.text);
+}
+
+/* ── Fetch real, verbatim lesson text for literature/language papers ── */
+// study_notes.content is an AI-paraphrased summary — fine as a style hint for
+// STEM, useless for quoting an actual prescribed passage. source_text (added
+// alongside it — see sql/0046_study_notes_verbatim_source.sql) holds the real,
+// unparaphrased text sliced directly from the source PDF. Only chapters that
+// have it (older uploads predate this column and won't) are usable here.
+async function fetchVerbatimPassages(subject, examType, limit = 2) {
+  if (!LANGUAGE_SUBJECTS.has(subject)) return [];
+  try {
+    let q = supabase
+      .from('study_notes')
+      .select('title, chapter, source_text')
+      .eq('subject', subject)
+      .eq('is_published', true)
+      .not('source_text', 'is', null)
+      .limit(limit * 3);
+    if (examType) q = q.eq('exam_type', examType);
+    const { data } = await q;
+    if (!data?.length) return [];
+    const pool = [...data];
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    return pool.slice(0, limit);
+  } catch {
+    return [];
+  }
 }
 
 /* ── Fetch real PYQ examples from DB (randomised each call) ── */
@@ -603,7 +712,14 @@ const TYPE_GUIDE = {
 
 export async function generateQuestionPaper({ subject, topics, examType, difficulty, count, qTypes }) {
   // No caching — always generate fresh so students never get repeated papers
-  let pattern = PAPER_PATTERNS[resolvePatternKey(examType)];
+  // `count` is supplied by the caller (derived from getExamPattern()/
+  // getSubjectQuestionCount() upstream, which already checks admin-edited
+  // paper_templates overrides — see src/lib/examPattern.js).
+  // `pattern` itself now also goes through getExamPattern() (not a raw
+  // PAPER_PATTERNS lookup) so an admin-uploaded template's exact section
+  // counts/marks actually reach the generation prompt below, not just the
+  // question count passed in by the caller.
+  let pattern = getExamPattern(examType);
 
   // Blueprint V2: compute per-subject chapter allocation from live PYQ data.
   // Only applies when no specific topic was requested and the flag is on.
@@ -648,6 +764,10 @@ export async function generateQuestionPaper({ subject, topics, examType, difficu
 
   // Fetch PYQs as the PRIMARY style reference (these are the real uploaded exam questions)
   const pyqExamples = await fetchPYQExamples(subject, topics, examType, 20);
+
+  // Literature/language subjects additionally need the real prescribed passage
+  // text — see fetchVerbatimPassages(). Empty array for every other subject.
+  const verbatimPassages = await fetchVerbatimPassages(subject, examType);
 
   // Fetch study notes from knowledge_base for this subject+exam (board/class mapped by examTag)
   const examTag = examType?.toLowerCase().replace(/\s+/g, '_');
@@ -716,11 +836,22 @@ Tag each question's "chapter" field with the exact chapter name.`
     ? `\n\nEXAM PATTERN — STRICTLY FOLLOW:\n${pattern.questionStyle}\n\n⚠️ SUBJECT OVERRIDE: This paper is for ${subject}. Generate ONLY ${subject} questions. Follow the section structure and mark scheme above exactly, but use ${subject} content — not Mathematics or any other subject mentioned above.`
     : '';
 
+  const { block: sectionMarksBlock, marksOptions, sectionOptions } = buildSectionMarksInstructions(pattern);
+
   const studyNotesBlock = studyNotes.length >= 2
     ? `\n\nSTUDY MATERIAL FROM KNOWLEDGE BASE (use these concepts and terminology in your questions):
 These are uploaded notes for ${examType} ${subject}. Base question content, terminology, and conceptual depth on this material where possible.
 ${studyNotes.map((r, i) => `[Note ${i + 1}]\n${r.content.slice(0, 400)}`).join('\n\n').slice(0, 4000)}`
     : '';
+
+  const passageBlock = verbatimPassages.length
+    ? `\n\nREAL PRESCRIBED TEXTBOOK PASSAGES — VERBATIM, DO NOT PARAPHRASE:
+These are the EXACT, unedited text of chapters from the actual prescribed textbook. For any extract-based / reading-comprehension / literature-appreciation question, you MUST quote the passage below WORD FOR WORD inside the "question" field (as the printed extract students read), then ask original sub-questions about it. Never invent a substitute passage when one is given here — that would not be a real practice paper for this chapter.
+
+${verbatimPassages.map((p, i) => `[Passage ${i + 1} — "${p.title || p.chapter}"]\n${p.source_text.slice(0, 6000)}`).join('\n\n---\n\n')}`
+    : (LANGUAGE_SUBJECTS.has(subject)
+      ? '\n\nNOTE: No verbatim chapter text uploaded yet for this book/exam — do not fabricate a fake "extract from [chapter]"; either write a clearly original unseen-passage comprehension question, or a direct grammar/vocabulary/writing question that does not depend on quoting the prescribed textbook.'
+      : '');
 
   const prompt = `You are a senior ${examType} question paper setter with 20+ years of experience setting official exam papers.
 Generation ID: ${seed} — THIS IS A FRESH GENERATION. You MUST produce a completely different set of questions from any previous generation. Vary the chapters, question angles, numbers used, and sub-topics. If you think of a question you have seen before, discard it and write a new one.
@@ -734,6 +865,7 @@ ${typeInstr}
 ${chapterNote}
 ${patternNote}
 ${studyNotesBlock}
+${passageBlock}
 ${pyqBlock}
 
 DIAGRAM QUESTIONS (10-15% must be diagram-based for NEET/JEE):
@@ -753,14 +885,15 @@ RULES:
 4. Each question MUST have answer + explanation (1-3 sentences with LaTeX)
 5. ${examType === 'NEET' ? 'NEET Biology: direct NCERT recall or direct application — never ambiguous' : ''}
 6. ${examType === 'JEE Advanced' ? 'Every question requires multi-step reasoning — no trivial recall' : ''}
+7. ${verbatimPassages.length ? 'EXCEPTION to rule 1 for extract-based questions ONLY: the "REAL PRESCRIBED TEXTBOOK PASSAGES" above must be quoted VERBATIM, not paraphrased — rule 1 covers PYQ questions, not the prescribed passage text.' : ''}
 
 Return ONLY a valid JSON object in this exact shape — no markdown, no code fences:
 ${CBSE_STYLE_EXAMS.has(examType) ? `{
   "questions": [
     {
       "type": "MCQ" | "Short Answer" | "Long Answer" | "Assertion-Reason",
-      "section": "A" | "B" | "C" | "D" | "E",
-      "marks": 1 | 2 | 3 | 5,
+      "section": ${sectionOptions},
+      "marks": ${marksOptions},
       "chapter": "exact chapter name",
       "difficulty": "Easy" | "Medium" | "Hard",
       "question": "question text with LaTeX",
@@ -771,12 +904,7 @@ ${CBSE_STYLE_EXAMS.has(examType) ? `{
     }
   ]
 }
-SECTION → TYPE → MARKS mapping (MANDATORY — every question MUST include section and marks):
-- Section A: MCQ or Assertion-Reason → marks: 1, options array required
-- Section B: Short Answer (2-3 lines) → marks: 2, options: null
-- Section C: Short Answer (4-5 lines/3-step numerical) → marks: 3, options: null
-- Section D: Long Answer (detailed, multi-step) → marks: 5, options: null
-- Section E: Case-Based (passage + sub-questions) → marks: 5, options: null` : `{
+${sectionMarksBlock}` : `{
   "questions": [
     {
       "type": "MCQ" | "Assertion-Reason" | "Match the Following" | "Numerical",
@@ -784,14 +912,19 @@ SECTION → TYPE → MARKS mapping (MANDATORY — every question MUST include se
       "difficulty": "Easy" | "Medium" | "Hard",
       "question": "question text with LaTeX",
       "diagram_description": "description of figure (omit if no diagram)",
-      "options": ["A. ...", "B. ...", "C. ...", "D. ..."] or null,
+      "options": ["A. ...", "B. ...", "C. ...", "D. ..."] or null (REQUIRED, non-null, for "Match the Following" — see below),
       "columnI":  ["P. ...", "Q. ...", "R. ...", "S. ..."] or null,
       "columnII": ["1. ...", "2. ...", "3. ...", "4. ..."] or null,
-      "answer": "A" or "P-2,Q-3,R-1,S-4" or 42,
+      "answer": "A" or 42,
       "explanation": "concise explanation with LaTeX"
     }
   ]
-}`}`;
+}
+MATCH THE FOLLOWING — mandatory shape, options must NEVER be null for this type:
+- columnI/columnII carry the two lists to match (for display only)
+- options MUST be 4 full combination strings, e.g. ["A. P-2,Q-3,R-1,S-4", "B. P-1,Q-4,R-2,S-3", "C. P-3,Q-1,R-4,S-2", "D. P-4,Q-2,R-3,S-1"]
+- answer is the letter (A/B/C/D) of the correct combination, exactly like MCQ
+- A Match question with options left null is INVALID and will be silently discarded — always populate it`}`;
 
   /* School exams with SA/LA need more tokens; split large batches to avoid truncation */
   const isCBSEGen    = CBSE_STYLE_EXAMS.has(examType);
@@ -836,6 +969,22 @@ SECTION → TYPE → MARKS mapping (MANDATORY — every question MUST include se
     allQuestions.push(...qs);
   }
 
+  // De-dup exact/near-identical questions across batches. Each batch is an
+  // independent API call sharing the same subject/chapter/PYQ context, so a
+  // canonical question (e.g. "State Newton's second law") can come back from
+  // two separate batches despite the prompt's anti-repeat instruction —
+  // that's a soft ask the model doesn't reliably honour, not a guarantee.
+  const seenQuestionKeys = new Set();
+  const dedupedQuestions = allQuestions.filter((q) => {
+    const key = (q.question || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!key) return true;
+    if (seenQuestionKeys.has(key)) return false;
+    seenQuestionKeys.add(key);
+    return true;
+  });
+  allQuestions.length = 0;
+  allQuestions.push(...dedupedQuestions);
+
   // Compute blueprint match % when blueprint_v2 allocation was used
   let blueprintMatchPct = undefined;
   let allocationTable   = undefined;
@@ -872,8 +1021,9 @@ SECTION → TYPE → MARKS mapping (MANDATORY — every question MUST include se
     blueprint_match_pct: blueprintMatchPct,
     allocation_table:    allocationTable,
     meta: {
-      pyqCount:        pyqExamples.length,
-      studyNotesCount: studyNotes.length,
+      pyqCount:            pyqExamples.length,
+      studyNotesCount:     studyNotes.length,
+      verbatimPassageCount: verbatimPassages.length,
     },
   };
 }
@@ -1019,7 +1169,7 @@ ${batchText}`,
 
 /* ── Chapter study notes generator (deep) ───────────────── */
 export async function generateChapterNotes({ subject, chapter, examType }) {
-  const pattern = PAPER_PATTERNS[resolvePatternKey(examType)];
+  const pattern = getExamPattern(examType);
 
   let q = supabase.from('knowledge_base').select('content, subject').limit(30);
   if (subject && subject !== 'Mixed') q = q.eq('subject', subject);

@@ -15,3 +15,8 @@ IMG_4429.MOV
 EWE logo only.zip
 data.txt
 supabase/.temp/
+
+# Local source PDFs staged for one-time ingestion into knowledge_base — not
+# app source, ~1.6GB, never meant to be committed.
+easy with exam/
+scripts/.ncert-ingest-checkpoint.json

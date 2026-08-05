@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Navigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { onAuthStateChanged } from 'firebase/auth';
 import { Shield, Delete, Loader2, KeyRound } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
+import { adminAuth } from '../firebase/config';
 import { supabase } from '../lib/supabase';
 
 const SESSION_KEY = 'edu_admin_v1';
@@ -136,7 +137,7 @@ function PinPad({ icon, title, subtitle, digits, shake, wrong, wrongMsg, onPress
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center gap-8 p-6 select-none">
       <motion.div
-        className="h-16 w-16 rounded-[22px] bg-gradient-to-br from-primary-500 to-violet-600 flex items-center justify-center shadow-xl"
+        className="h-16 w-16 rounded-[22px] bg-gradient-to-br from-primary-400 to-primary-700 flex items-center justify-center shadow-xl"
         initial={{ scale: 0.7, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ type: 'spring', stiffness: 300, damping: 20 }}
@@ -181,7 +182,11 @@ function PinPad({ icon, title, subtitle, digits, shake, wrong, wrongMsg, onPress
 
       <div className="grid grid-cols-3 gap-3">
         {PAD.flat().map((k, idx) => {
-          if (k === null) return <div key={idx} />;
+          // React coerces keys to strings, so a bare numeric idx here (9, for
+          // the gap before "0") collided with the digit button whose key is
+          // the string '9' — two siblings sharing key "9" is what
+          // triggered React's duplicate-key warning.
+          if (k === null) return <div key={`gap-${idx}`} />;
           return (
             <motion.button key={k} whileTap={{ scale: 0.88 }} onClick={() => onPress(k)}
               className={[
@@ -201,10 +206,22 @@ function PinPad({ icon, title, subtitle, digits, shake, wrong, wrongMsg, onPress
 
 /* ── Main guard ─────────────────────────────────────────────── */
 export default function AdminGuard({ children }) {
-  const { currentUser, loading } = useAuth();
+  // Uses `adminAuth` (a separate named Firebase app instance, see firebase/config.js)
+  // instead of the shared useAuth()/student `auth` — keeps the admin session fully
+  // isolated so signing in here never also authenticates the student session.
+  const [currentUser, setCurrentUser] = useState(() => adminAuth.currentUser);
+  const [loading,     setLoading]     = useState(true);
   const [adminRecord, setAdminRecord] = useState(null);
   const [checking,    setChecking]    = useState(true);
   const [authed,      setAuthed]      = useState(() => sessionStorage.getItem(SESSION_KEY) === '1');
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(adminAuth, (user) => {
+      setCurrentUser(user);
+      setLoading(false);
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     if (loading) return;

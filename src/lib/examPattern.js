@@ -7,6 +7,7 @@
  */
 
 import { PAPER_PATTERNS } from './questionGen';
+import { supabase } from './supabase';
 
 // mirrors resolvePatternKey in questionGen (kept local — no circular dep risk)
 function resolveKey(examType) {
@@ -15,15 +16,65 @@ function resolveKey(examType) {
   return m ? m[1] : examType;
 }
 
+// Admin-editable overrides (paper_templates table) for the CBSE-style board
+// patterns — question count, duration, total marks, and section breakdown.
+// NEET/JEE Main/JEE Advanced are NOT overridable here: their per-subject NTA
+// structure doesn't fit this simple name/count/marks section shape, so they
+// always use the hardcoded PAPER_PATTERNS values.
+// Same live-binding pattern as categories.js: loaded once at boot, admin
+// edits call refreshPaperTemplateOverrides() to update every importer.
+let _overrides = {};
+let _loaded    = false;
+
+function toPatternShape(row, base) {
+  const sections = Object.fromEntries((row.sections ?? []).map((s) => [s.name, { count: s.count, marks: s.marks }]));
+  const marking  = Object.fromEntries((row.sections ?? []).map((s) => [s.name, s.marks]));
+  return {
+    label:        base?.label ?? row.exam_type,
+    totalQ:       row.total_questions,
+    duration:     row.duration_minutes,
+    totalMarks:   row.total_marks,
+    marking,
+    sections,
+    // Curated AI-prompt prose isn't admin-editable yet — keep whatever the
+    // hardcoded pattern already has for this exam type.
+    questionStyle: base?.questionStyle,
+  };
+}
+
+async function _fetchOverrides() {
+  try {
+    const { data, error } = await supabase.from('paper_templates').select('*');
+    if (error || !data?.length) return;
+    const next = {};
+    for (const row of data) next[row.exam_type] = toPatternShape(row, PAPER_PATTERNS[row.exam_type]);
+    _overrides = next;
+  } catch { /* keep hardcoded fallback */ }
+}
+
+/** Fetch paper_templates overrides once at app boot. */
+export async function loadPaperTemplateOverrides() {
+  if (_loaded) return;
+  _loaded = true;
+  return _fetchOverrides();
+}
+
+/** Re-fetch after an admin saves a template so every consumer sees it immediately. */
+export async function refreshPaperTemplateOverrides() {
+  return _fetchOverrides();
+}
+
 /**
  * Returns the pattern object for an exam type, or null if not found.
  * Never falls back to NEET/NTA — callers must handle null.
  */
 export function getExamPattern(examType) {
   if (!examType) return null;
+  if (_overrides[examType]) return _overrides[examType];
   const direct = PAPER_PATTERNS[examType];
   if (direct) return direct;
   const key = resolveKey(examType);
+  if (_overrides[key]) return _overrides[key];
   const resolved = PAPER_PATTERNS[key];
   if (resolved) return resolved;
   // Generic fallback for board/class combos not yet in PAPER_PATTERNS

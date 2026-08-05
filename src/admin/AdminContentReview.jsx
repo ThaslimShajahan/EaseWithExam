@@ -7,6 +7,7 @@ import {
 import { supabase, adminSaveKnowledgeChunks } from '../lib/supabase';
 import { chatComplete } from '../lib/aiProxy';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
+import { examTypeToTag } from '../lib/categories';
 
 const STATUS_COLORS = {
   in_review: 'bg-amber-900/20 text-amber-400 border-amber-700/30',
@@ -40,7 +41,11 @@ async function moveKBNotesToKB(kbNoteItems) {
   const rows = kbNoteItems.map((item) => ({
     content:     item.question_text,
     subject:     item.subject,
-    tags:        [item.chapter, item.subject, item.exam_type].filter(Boolean),
+    // exam_type must go through examTypeToTag() ("CBSE Class 8" -> "cbse_class_8")
+    // to match the snake_case tag format every reader (EXAM_TAG_RE) expects —
+    // saving the raw display string here made approved notes invisible to any
+    // class-scoped filter/search from that point on.
+    tags:        [item.chapter, item.subject, examTypeToTag(item.exam_type)].filter(Boolean),
   }));
   // adminSaveKnowledgeChunks adds embeddings before inserting
   await adminSaveKnowledgeChunks(rows);
@@ -60,6 +65,9 @@ export default function AdminContentReview() {
   const [aiSummary,   setAiSummary]   = useState(null);
   const [aiScores,    setAiScores]    = useState({});  // id → { score, reason }
 
+  const [subjectOptions, setSubjectOptions] = useState([]);
+  const [typeOptions,    setTypeOptions]    = useState([]);
+
   const load = async () => {
     setLoading(true); setError('');
     try {
@@ -71,6 +79,16 @@ export default function AdminContentReview() {
   };
 
   useEffect(() => { load(); }, [subjectF, typeF]);
+
+  // Filter pill options must come from the FULL in-review queue, not the
+  // currently-filtered `items` — otherwise picking one subject/type hides every
+  // other pill, making it impossible to switch filters without a reload.
+  useEffect(() => {
+    loadReviewQueue().then((data) => {
+      setSubjectOptions([...new Set(data.map((i) => i.subject).filter(Boolean))]);
+      setTypeOptions([...new Set(data.map((i) => i.question_type).filter(Boolean))]);
+    }).catch(() => {});
+  }, []);
 
   const toggle    = (id) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const toggleAll = () => setSelected(selected.size === items.length ? new Set() : new Set(items.map((i) => i.id)));
@@ -170,8 +188,8 @@ Return: { "score": 8, "verdict": "approve" | "review", "reason": "one line" }`,
     finally { setAiRunning(false); setAiProgress(''); }
   };
 
-  const subjects = [...new Set(items.map((i) => i.subject).filter(Boolean))];
-  const types    = [...new Set(items.map((i) => i.question_type).filter(Boolean))];
+  const subjects = subjectOptions;
+  const types    = typeOptions;
   const selArr   = [...selected];
 
   return (
