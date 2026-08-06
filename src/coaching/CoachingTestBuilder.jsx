@@ -145,11 +145,7 @@ export default function CoachingTestBuilder() {
   }, [centreId]);
 
   const loadTests = async () => {
-    const { data, error } = await supabase
-      .from('centre_published_tests')
-      .select('id, title, subject, exam_type, difficulty, duration_minutes, total_marks, is_active, created_at')
-      .eq('centre_id', centreId)
-      .order('created_at', { ascending: false });
+    const { data, error } = await supabase.rpc('coaching_list_own_tests', { p_caller: record?.uid });
     if (!error) setTests(data ?? []);
   };
 
@@ -160,19 +156,13 @@ export default function CoachingTestBuilder() {
     try {
       const cleanQs = questions.map(({ _id, ...rest }) => rest);
       const totalMarks = cleanQs.reduce((s, q) => s + (q.marks || 0), 0);
-      const { data, error: err } = await supabase
-        .from('centre_published_tests')
-        .insert({
-          centre_id: centreId,
-          title: title.trim(),
-          subject, exam_type: examType, difficulty,
-          duration_minutes: duration,
-          total_marks: totalMarks,
-          questions: cleanQs,
-          created_by: record?.uid ?? null,
-        })
-        .select('id')
-        .single();
+      const { data, error: err } = await supabase.rpc('coaching_upsert_test', {
+        p_caller: record?.uid, p_id: null,
+        p_fields: {
+          title: title.trim(), subject, exam_type: examType, difficulty,
+          duration_minutes: duration, total_marks: totalMarks, questions: cleanQs,
+        },
+      });
       if (err) throw err;
       logChange(ENTITY.PUBLISHED_TEST, data.id, ACTION.PUBLISH,
         { title, subject, examType, difficulty, questionCount: cleanQs.length, totalMarks },
@@ -186,12 +176,14 @@ export default function CoachingTestBuilder() {
   };
 
   const toggleActive = async (test) => {
-    await supabase.from('centre_published_tests').update({ is_active: !test.is_active }).eq('id', test.id);
+    await supabase.rpc('coaching_upsert_test', {
+      p_caller: record?.uid, p_id: test.id, p_fields: { is_active: !test.is_active },
+    });
     await loadTests();
   };
 
   const deleteTest = async (id) => {
-    await supabase.from('centre_published_tests').delete().eq('id', id);
+    await supabase.rpc('coaching_delete_test', { p_caller: record?.uid, p_id: id });
     await loadTests();
   };
 

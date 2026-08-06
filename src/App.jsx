@@ -64,19 +64,50 @@ function PageFallback() {
   return <SkeletonLoader type="page" />;
 }
 
+// Shown when a Firebase-authenticated user's Supabase profile fails to load
+// (RLS/RPC error, network drop, etc.) — the guards below used to have no
+// escape from this state at all (RequireNoAuth just returned a skeleton
+// forever, since `userProfile` can structurally never arrive once the fetch
+// has failed), which is exactly what produced a permanently-stuck loading
+// screen. `retryProfile` re-runs the same fetch that failed on mount.
+function AuthErrorScreen() {
+  const { retryProfile, signOut } = useAuth();
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen p-8 text-center gap-4">
+      <div className="text-4xl">⚠️</div>
+      <h2 className="text-xl font-bold text-slate-900">Couldn't load your account</h2>
+      <p className="text-slate-600 max-w-sm text-sm">
+        Something went wrong loading your profile. This is usually temporary — try again, or sign out and back in.
+      </p>
+      <div className="flex gap-3">
+        <button onClick={() => retryProfile()}
+          className="px-5 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 transition-colors">
+          Try Again
+        </button>
+        <button onClick={() => signOut()}
+          className="px-5 py-2.5 border border-slate-300 text-slate-600 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-colors">
+          Sign Out
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ── Route guards ───────────────────────────────────────────── */
 function RequireAuth({ children }) {
-  const { currentUser, userProfile, loading } = useAuth();
+  const { currentUser, userProfile, loading, profileError } = useAuth();
   if (loading)    return <SkeletonLoader type="page" />;
   if (!currentUser) return <Navigate to="/" replace />;
+  if (profileError && !userProfile) return <AuthErrorScreen />;
   if (!userProfile?.onboarding_completed) return <Navigate to="/onboarding" replace />;
   return <AppShell>{children}</AppShell>;
 }
 
 function RequireNoAuth({ children }) {
-  const { currentUser, userProfile, loading } = useAuth();
+  const { currentUser, userProfile, loading, profileError } = useAuth();
   if (loading) return <SkeletonLoader type="page" />;
   if (!currentUser) return children;
+  if (profileError && !userProfile) return <AuthErrorScreen />;
   if (!userProfile) return <SkeletonLoader type="page" />;
   if (userProfile.onboarding_completed) return <Navigate to="/dashboard" replace />;
   return <Navigate to="/onboarding" replace />;
@@ -90,9 +121,10 @@ function RequireAuthNoShell({ children }) {
 }
 
 function RequireAuthFullScreen({ children }) {
-  const { currentUser, userProfile, loading } = useAuth();
+  const { currentUser, userProfile, loading, profileError } = useAuth();
   if (loading)      return <SkeletonLoader type="test" />;
   if (!currentUser) return <Navigate to="/" replace />;
+  if (profileError && !userProfile) return <AuthErrorScreen />;
   if (!userProfile?.onboarding_completed) return <Navigate to="/onboarding" replace />;
   return children;
 }

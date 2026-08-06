@@ -143,18 +143,15 @@ export async function createNotification(firebaseUid, type, title, body, link = 
 }
 
 /* ── Broadcast to all users (admin use only) ────────────── */
-export async function broadcastNotification(type, title, body, link = null) {
+export async function broadcastNotification(callerUid, type, title, body, link = null) {
   try {
     // Fetch all firebase_uids from the users table (limit 2000 — enough for most deployments)
-    const { data: users } = await supabase
-      .from('users')
-      .select('firebase_uid')
-      .limit(2000);
-    if (!users?.length) return;
+    const { data: uids } = await supabase.rpc('admin_list_all_firebase_uids', { p_caller: callerUid });
+    if (!uids?.length) return;
 
     const now  = new Date().toISOString();
-    const rows = users.map((u) => ({
-      user_id:    u.firebase_uid,
+    const rows = uids.map((firebase_uid) => ({
+      user_id:    firebase_uid,
       type,
       title,
       body,

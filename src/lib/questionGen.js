@@ -710,7 +710,7 @@ const TYPE_GUIDE = {
   'Case-Based':         'Passage-based question with 3–4 sub-questions. Include the passage in "question" field, sub-questions as lettered parts. "options" is null.',
 };
 
-export async function generateQuestionPaper({ subject, topics, examType, difficulty, count, qTypes }) {
+export async function generateQuestionPaper({ subject, topics, examType, difficulty, count, qTypes, signal }) {
   // No caching — always generate fresh so students never get repeated papers
   // `count` is supplied by the caller (derived from getExamPattern()/
   // getSubjectQuestionCount() upstream, which already checks admin-edited
@@ -942,6 +942,19 @@ MATCH THE FOLLOWING — mandatory shape, options must NEVER be null for this typ
   const allQuestions = [];
 
   for (const batchCount of batches) {
+    // The AI does not reliably cap its own output at "exactly N" — asking
+    // for a small truncation buffer (N+2) has been observed returning
+    // 2-3x that in a single batch response (root cause of papers showing
+    // 100+ questions against a 34-question promise: nothing downstream
+    // ever enforced the count, so every batch's full over-generated output
+    // flowed straight through to the published paper). Once we already
+    // have enough raw material to hit the target after dedup, skip firing
+    // any further batches entirely — otherwise a batch that already
+    // over-delivered still let every subsequent batch fire anyway, burning
+    // a full extra AI call for content the count cap below would just
+    // discard.
+    if (allQuestions.length >= count) break;
+
     const askFor      = batchCount + 2;  // buffer: AI often returns N-1, ask N+2 and trim later
     const batchPrompt = prompt.replace(
       `exactly ${count}`,
@@ -957,7 +970,7 @@ MATCH THE FOLLOWING — mandatory shape, options must NEVER be null for this typ
         { role: 'system', content: 'You are an expert exam question generator who creates questions indistinguishable from official exam papers. Return only valid JSON.' },
         { role: 'user',   content: batchPrompt },
       ],
-    });
+    }, { signal });
 
     const choice = resp.choices?.[0];
     if (!choice) { console.warn('[questionGen] empty choices in batch — skipping'); continue; }
@@ -984,6 +997,17 @@ MATCH THE FOLLOWING — mandatory shape, options must NEVER be null for this typ
   });
   allQuestions.length = 0;
   allQuestions.push(...dedupedQuestions);
+
+  // Hard cap to the requested count — this is the actual enforcement point
+  // that was missing entirely (the "ask N+2 and trim later" comment above
+  // described this step, but it was never implemented). Every question
+  // past this point in the array is discarded rather than published.
+  if (allQuestions.length > count) {
+    if (import.meta.env.DEV) {
+      console.warn(`[questionGen] AI over-generated: got ${allQuestions.length}, trimming to requested ${count}`);
+    }
+    allQuestions.length = count;
+  }
 
   // Compute blueprint match % when blueprint_v2 allocation was used
   let blueprintMatchPct = undefined;
@@ -1293,6 +1317,139 @@ Return this EXACT JSON structure — populate every field richly:
   });
 
   return JSON.parse(resp.choices[0].message.content);
+}
+
+/* ── Important Questions & Answers (cached, per-chapter) ─── */
+
+// Content is identical for every student in the same exam_type+subject+chapter,
+// so it's generated once and cached in important_qa (see migration 0052) —
+// unlike Practice Generator, which deliberately gives each student different
+// questions each time. Callers should check getCachedImportantQA() first and
+// only fall through to generateImportantQA() (which burns an AI call/quota)
+// on a genuine cache miss.
+export async function getCachedImportantQA({ subject, chapter, examType }) {
+  try {
+    const { data } = await supabase
+      .from('important_qa')
+      .select('questions, generated_at')
+      .eq('exam_type', examType)
+      .eq('subject', subject)
+      .eq('chapter', chapter)
+      .maybeSingle();
+    return data || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function generateImportantQA({ subject, chapter, examType }) {
+  const altKey     = resolvePatternKey(examType); // "CBSE Class 10" → "Class 10"
+  const examTypes  = altKey !== examType ? [examType, altKey] : [examType];
+  const chapterTerm = chapter.split(',')[0].trim();
+
+  const { data: pyqRows } = await supabase
+    .from('pyq_questions')
+    .select('question_text, correct_answer, explanation, year, question_type')
+    .eq('status', 'published')
+    .neq('question_type', 'KB_NOTE')
+    .in('exam_type', examTypes)
+    .eq('subject', subject)
+    .ilike('chapter', `%${chapterTerm}%`)
+    .limit(150);
+
+  // study_notes is queried on an EXACT chapter match (admin tags notes with the
+  // same chapter name used everywhere else) — more reliable than the fuzzy KB
+  // lookup below, so it goes first and gets more of the context budget.
+  const { data: noteRows } = await supabase
+    .from('study_notes')
+    .select('content, source_text')
+    .eq('exam_type', examType)
+    .eq('subject', subject)
+    .eq('chapter', chapter)
+    .eq('is_published', true)
+    .is('centre_id', null);
+
+  let kbQuery = supabase.from('knowledge_base').select('content').limit(20);
+  if (subject && subject !== 'Mixed') kbQuery = kbQuery.eq('subject', subject);
+  const safeTerm = chapterTerm.replace(/[{}]/g, '');
+  kbQuery = kbQuery.or(`content.ilike.%${safeTerm}%,tags.cs.{${safeTerm}}`);
+  const { data: kbRows } = await kbQuery;
+
+  const pyqs = pyqRows ?? [];
+  const notesContext = (noteRows ?? [])
+    .flatMap((n) => [n.content, n.source_text].filter(Boolean))
+    .join('\n---\n')
+    .slice(0, 6000);
+  const kbContext = (kbRows ?? []).map((c) => c.content).join('\n---\n').slice(0, 4000);
+  const referenceContext = [notesContext, kbContext].filter(Boolean).join('\n---\n');
+
+  const isCBSEPrompt = CBSE_STYLE_EXAMS.has(examType);
+  const marksGuide = isCBSEPrompt
+    ? '\nEach question should carry a realistic "marks" value (1 for factual recall, 3 for short-answer/explain, 5 for long-answer/derivation/essay), matching how it would actually appear in a real exam.'
+    : '\nSet "marks" to null for every question — this exam type does not use per-question mark values here.';
+
+  const pyqBlock = pyqs.length
+    ? `\n\nREAL PAST-YEAR QUESTIONS FOR THIS CHAPTER (from uploaded ${examType} papers):
+${pyqs.map((p, i) =>
+  `[${i + 1}${p.year ? ` — ${p.year}` : ''}] ${p.question_text}${p.correct_answer ? `\nAnswer: ${p.correct_answer}` : ''}${p.explanation ? `\nExplanation: ${p.explanation}` : ''}`
+).join('\n\n')}`
+    : '\n\nNo real past-year questions are on file for this chapter yet — build the list from the reference material and standard exam expectations for this chapter instead.';
+
+  const resp = await chatComplete({
+    model:       'gpt-4o',
+    max_tokens:  4000,
+    temperature: 0.3,
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content: `You are a senior ${examType} exam-prep tutor curating a "must-do" Important Questions & Answers list for one chapter. You are scrupulously honest about which questions are REAL recurring exam questions vs ones you've added to cover an important concept — never invent a year a question wasn't actually asked in. Return only valid JSON.`,
+      },
+      {
+        role: 'user',
+        content: `Build an Important Questions & Answers list for "${chapter}" — ${subject}, ${examType}.
+${pyqBlock}
+
+${referenceContext ? `REFERENCE MATERIAL (study notes/textbook content for this chapter):\n${referenceContext}` : ''}
+${marksGuide}
+
+INSTRUCTIONS:
+1. Identify questions from the real past-year list above that recur (same question asked in multiple years, or near-identical rephrasing) — these are the highest priority. Merge near-duplicates into ONE entry and list every year it appeared.
+2. Also include real past-year questions that only appeared once but cover a clearly central concept of this chapter.
+3. Fill any remaining gaps with a small number of AI-synthesized questions covering important concepts from the reference material that aren't well represented in the past-year list — these are clearly NOT past exam questions.
+4. Write a complete, exam-ready model answer for every question (not just a hint) — 2-5 lines for factual/short questions, longer step-by-step for derivation/essay-type questions.
+5. Produce 10-15 questions total, ordered roughly by importance (most-recurring / highest-yield first).
+
+Return this EXACT JSON structure:
+{
+  "questions": [
+    {
+      "question": "Full question text",
+      "answer": "Complete model answer",
+      "marks": 3,
+      "asked_years": [2024, 2021, 2019],
+      "tag": "Frequently Asked"
+    }
+  ]
+}
+For AI-synthesized questions not drawn from a real past-year question, set "asked_years": [] and "tag": "High-Yield Concept". Never set "asked_years" to a year unless that exact question genuinely appears in the past-year list above.`,
+      },
+    ],
+  });
+
+  const parsed    = JSON.parse(resp.choices[0].message.content);
+  const questions = (parsed.questions || []).slice(0, 15);
+  const generated_at = new Date().toISOString();
+
+  await supabase.from('important_qa').upsert({
+    exam_type: examType,
+    subject,
+    chapter,
+    questions,
+    generated_at,
+  }, { onConflict: 'exam_type,subject,chapter' });
+
+  return { questions, generated_at };
 }
 
 /* ── Study plan generator ────────────────────────────────── */

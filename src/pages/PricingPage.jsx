@@ -12,9 +12,10 @@ import Button from '../components/ui/Button';
  * fallback shown before that fetch resolves, matching quota.js's FREE_LIMITS.
  * Mock tests is a weekly cap (not daily) — see WEEKLY_FIELDS in lib/quota.js. */
 const BASE_COMPARE = [
-  { label: 'AI practice questions',   free: '10/day',   premium: 'Unlimited' },
-  { label: 'Mock tests',              free: '1/week',   premium: 'Unlimited' },
-  { label: 'EWE AI chat',             free: '5/day',    premium: 'Unlimited' },
+  { label: 'AI practice questions',   free: '20/day',   premium: 'Unlimited' },
+  { label: 'Full question papers',    free: '2/day',    premium: 'Unlimited' },
+  { label: 'Mock tests',              free: '2/week',   premium: 'Unlimited' },
+  { label: 'EWE AI chat',             free: '15/day',   premium: 'Unlimited' },
   { label: 'AI paper evaluations',    free: '3/day',    premium: 'Unlimited' },
   { label: 'AI podcasts',             free: '3/day',    premium: 'Unlimited' },
   { label: 'Daily challenge',         free: true,       premium: true        },
@@ -27,14 +28,15 @@ const BASE_COMPARE = [
 
 function buildCompare(freeQuota) {
   if (!freeQuota) return BASE_COMPARE;
-  const [ai, mock, veda, paperEval, podcasts] = BASE_COMPARE;
+  const [ai, paperGen, mock, veda, paperEval, podcasts] = BASE_COMPARE;
   return [
     { ...ai,        free: `${freeQuota.ai_questions}/day` },
+    { ...paperGen,  free: `${freeQuota.paper_generations}/day` },
     { ...mock,      free: `${freeQuota.mock_tests}/week` },
     { ...veda,      free: `${freeQuota.veda_messages}/day` },
     { ...paperEval, free: `${freeQuota.paper_evaluations}/day` },
     { ...podcasts,  free: `${freeQuota.podcasts}/day` },
-    ...BASE_COMPARE.slice(5),
+    ...BASE_COMPARE.slice(6),
   ];
 }
 

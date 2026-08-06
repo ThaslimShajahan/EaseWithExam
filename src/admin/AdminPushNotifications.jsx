@@ -91,7 +91,7 @@ export default function AdminPushNotifications() {
       if (form.target === 'user') {
         await createNotification(form.user_id.trim(), form.type, form.title.trim(), form.body.trim(), form.url.trim() || null);
       } else {
-        await broadcastNotification(form.type, form.title.trim(), form.body.trim(), form.url.trim() || null);
+        await broadcastNotification(callerUid, form.type, form.title.trim(), form.body.trim(), form.url.trim() || null);
       }
 
       const newNotif = {

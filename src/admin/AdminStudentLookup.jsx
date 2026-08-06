@@ -7,15 +7,19 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
+function getCallerUid() {
+  try {
+    const key = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch { return ''; }
+}
+
 const IST_DATE = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
 async function fetchStudentProfile(query) {
-  const isUid = /^[A-Za-z0-9_-]{20,}$/.test(query.trim());
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .or(isUid ? `firebase_uid.eq.${query.trim()}` : `email.ilike.%${query.trim()}%,display_name.ilike.%${query.trim()}%`)
-    .limit(5);
+  const { data, error } = await supabase.rpc('admin_search_users', {
+    p_caller: getCallerUid(), p_query: query.trim(), p_limit: 5,
+  });
   if (error) throw error;
   return data ?? [];
 }
@@ -27,14 +31,23 @@ async function fetchStudentDetail(uid) {
     { data: quota },
     { data: gamification },
     { data: sessions },
-    { data: coaching },
+    { data: coachingRow },
   ] = await Promise.all([
-    supabase.from('users').select('*').eq('firebase_uid', uid).maybeSingle(),
+    supabase.rpc('admin_get_user', { p_caller: getCallerUid(), p_uid: uid }),
     supabase.from('daily_usage_quota').select('*').eq('user_id', uid).eq('usage_date', today).maybeSingle(),
     supabase.from('user_gamification').select('*').eq('user_id', uid).maybeSingle(),
     supabase.from('test_sessions').select('id, score, total_marks, created_at').eq('firebase_uid', uid).order('created_at', { ascending: false }).limit(10),
-    supabase.from('coaching_students').select('centre_id, batch, coaching_centres(centre_name, centre_brand_color)').eq('student_uid', uid).maybeSingle(),
+    // was .from('coaching_students').eq('student_uid', uid) selecting
+    // coaching_centres(centre_name, centre_brand_color) — neither the
+    // filter column nor the selected columns exist on the live schema
+    // (real columns: firebase_uid, name, brand_color), so this 400'd
+    // silently every time and the coaching badge never rendered.
+    supabase.rpc('student_get_own_centre', { p_uid: uid }),
   ]);
+
+  const coaching = coachingRow?.[0]
+    ? { coaching_centres: { centre_name: coachingRow[0].centre_name, centre_brand_color: coachingRow[0].brand_color } }
+    : null;
 
   return { profile, quota, gamification, sessions: sessions ?? [], coaching };
 }

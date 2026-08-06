@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -833,6 +833,13 @@ export default function PracticeGeneratorPage({ embedded = false }) {
   const [notes,      setNotes]      = useState(null);
   const [notesError, setNotesError] = useState('');
 
+  // Aborts an in-flight generation if the page unmounts mid-request
+  // (student navigates away) — otherwise the fetch keeps running in the
+  // background and still burns the quota unit for a set of questions the
+  // student never sees.
+  const genAbortRef = useRef(null);
+  useEffect(() => () => genAbortRef.current?.abort(), []);
+
   /* ── Reset question types when exam category switches ── */
   useEffect(() => {
     setQTypes(isSchoolExam(examType) ? ['MCQ', 'Short Answer', 'Long Answer'] : ['MCQ']);
@@ -876,6 +883,8 @@ export default function PracticeGeneratorPage({ embedded = false }) {
 
   const generate = async () => {
     setGenErr(''); setPhase('loading');
+    const controller = new AbortController();
+    genAbortRef.current = controller;
     try {
       const quota = await checkQuota(currentUser?.uid, 'ai_questions_used', isPremium, undefined, count);
       if (!quota.allowed) {
@@ -884,13 +893,14 @@ export default function PracticeGeneratorPage({ embedded = false }) {
         return;
       }
 
-      const raw       = await generateQuestionPaper({ subject, topics: topic, examType, difficulty, count, qTypes, rotationSlot: Math.floor(Math.random() * 5) });
+      const raw       = await generateQuestionPaper({ subject, topics: topic, examType, difficulty, count, qTypes, rotationSlot: Math.floor(Math.random() * 5), signal: controller.signal });
       const formatted = toEngineFormat(raw, subject, examType);
       if (!formatted.length) throw new Error('No questions returned — try different settings.');
       setQs(formatted); setQIdx(0); setCorrect(0); setPhase('quiz');
 
       await incrementQuota(currentUser?.uid, 'ai_questions_used', formatted.length);
     } catch (e) {
+      if (e.name === 'AbortError') return; // cancelled — page navigated away, nothing to show
       setGenErr(e.message || 'Generation failed.'); setPhase('form');
     }
   };

@@ -39,7 +39,7 @@ function StatsBar({ stats }) {
 }
 
 /* ── Review card (SRS flash card mode) ────────────────────── */
-function ReviewSession({ questions, onDone }) {
+function ReviewSession({ questions, onDone, uid }) {
   const [idx,      setIdx]      = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [done,     setDone]     = useState(0);
@@ -47,7 +47,7 @@ function ReviewSession({ questions, onDone }) {
   const q = questions[idx];
 
   const rate = async (grade) => {
-    await recordReview(q.id, grade).catch(() => {});
+    await recordReview(uid, q.id, grade).catch(() => {});
     const next = idx + 1;
     if (next >= questions.length) { onDone(next); return; }
     setIdx(next);
@@ -291,7 +291,7 @@ export default function ErrorNotebookPage() {
           <Brain size={18} className="text-primary-500" />
           <h2 className="text-lg font-bold text-slate-900">Spaced Revision</h2>
         </div>
-        <ReviewSession questions={reviewQ} onDone={(n) => {
+        <ReviewSession questions={reviewQ} uid={uid} onDone={(n) => {
           setReviewDone(n);
           setMode('done');
           if (uid) {

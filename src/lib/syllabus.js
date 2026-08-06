@@ -122,6 +122,71 @@ export async function getLiveSubjects(examType, classLevel = null) {
   return [];
 }
 
+/**
+ * Chapter list for content-driven features (e.g. Important Q&A) that need to
+ * work even when Admin > Syllabus hasn't been populated for a board/class yet.
+ * School-board content is usually uploaded to study_notes/pyq_questions well
+ * before anyone fills in syllabus_nodes for that class — so this merges all
+ * three sources (syllabus_nodes via getChapters(), published study_notes'
+ * chapter+unit tags, and pyq_questions' chapter tags) instead of depending on
+ * syllabus_nodes alone.
+ *
+ * Returns unit-grouped chapters: [{ unit: string|null, chapters: string[] }].
+ * Chapters with no known unit (typical for NEET/JEE, which don't tag units)
+ * collect under unit: null.
+ */
+export async function getStudyChapters(examType, subject, classLevel = null) {
+  const [syllabusChapters, notesRes, pyqRes] = await Promise.all([
+    getChapters(examType, subject, classLevel),
+    supabase.from('study_notes')
+      .select('chapter, unit, sort_order')
+      .eq('exam_type', examType).eq('subject', subject)
+      .eq('is_published', true).is('centre_id', null),
+    supabase.from('pyq_questions')
+      .select('chapter')
+      .eq('exam_type', examType).eq('subject', subject)
+      .neq('question_type', 'KB_NOTE'),
+  ]);
+
+  const unitOf = new Map(); // chapter name (lowercased) -> unit label
+  const sortOf = new Map(); // chapter name (lowercased) -> sort_order
+  const order  = [];        // first-seen chapter names, original casing
+  const seen   = new Set();
+
+  const add = (name, unit, sortOrder) => {
+    if (!name?.trim()) return;
+    const key = name.trim().toLowerCase();
+    if (!seen.has(key)) { seen.add(key); order.push(name.trim()); }
+    if (unit && !unitOf.has(key)) unitOf.set(key, unit);
+    if (sortOrder != null && !sortOf.has(key)) sortOf.set(key, sortOrder);
+  };
+
+  syllabusChapters.forEach((c, i) => add(c.name, null, i));
+  (notesRes.data ?? []).forEach((n) => add(n.chapter, n.unit, n.sort_order));
+  (pyqRes.data ?? []).forEach((p) => add(p.chapter, null, null));
+
+  order.sort((a, b) => {
+    const sa = sortOf.get(a.toLowerCase()) ?? 999;
+    const sb = sortOf.get(b.toLowerCase()) ?? 999;
+    return sa - sb || a.localeCompare(b, undefined, { numeric: true });
+  });
+
+  const groups = new Map(); // unit label (or null) -> chapter names[]
+  for (const name of order) {
+    const unit = unitOf.get(name.toLowerCase()) ?? null;
+    if (!groups.has(unit)) groups.set(unit, []);
+    groups.get(unit).push(name);
+  }
+
+  return [...groups.entries()]
+    .sort(([a], [b]) => {
+      if (a === null) return 1;
+      if (b === null) return -1;
+      return a.localeCompare(b, undefined, { numeric: true });
+    })
+    .map(([unit, chapters]) => ({ unit, chapters }));
+}
+
 function _fromJS(examType, subject, classLevel = null) {
   if (!JS_KNOWN_EXAMS.has(examType)) return [];
   const syllabus = getSyllabusJS(examType);

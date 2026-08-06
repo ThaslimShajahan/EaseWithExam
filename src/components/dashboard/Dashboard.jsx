@@ -20,6 +20,7 @@ import ScorePredictor from '../analytics/ScorePredictor';
 import ProgressCertificate from '../ui/ProgressCertificate';
 import TodayFocus from './TodayFocus';
 import WeakTopicsWidget from './WeakTopicsWidget';
+import MisconceptionsWidget from './MisconceptionsWidget';
 import QuotaWidget from './QuotaWidget';
 import OnboardingChecklist from './OnboardingChecklist';
 
@@ -283,6 +284,12 @@ export default function Dashboard() {
       <div className="grid lg:grid-cols-2 gap-4">
         <StreakWidget />
         <WeakTopicsWidget />
+      </div>
+
+      {/* Weak Topics is accuracy-by-topic; Common Mistakes is the same
+          wrong answer repeated — different enough signal to earn its own row */}
+      <div className="grid lg:grid-cols-2 gap-4">
+        <MisconceptionsWidget />
       </div>
 
       {/* Score predictor + Certificates — side by side on desktop */}

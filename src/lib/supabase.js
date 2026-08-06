@@ -10,23 +10,13 @@ export const supabase = createClient(supabaseUrl, supabaseAnon);
 /* ── Users ──────────────────────────────────────────────── */
 
 export async function getUser(firebaseUid) {
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('firebase_uid', firebaseUid)
-    .maybeSingle();
-
+  const { data, error } = await supabase.rpc('get_own_user', { p_uid: firebaseUid });
   if (error) throw error;
   return data;
 }
 
 export async function upsertUser(firebaseUid, fields) {
-  const { data, error } = await supabase
-    .from('users')
-    .upsert({ firebase_uid: firebaseUid, ...fields }, { onConflict: 'firebase_uid' })
-    .select()
-    .single();
-
+  const { data, error } = await supabase.rpc('upsert_own_user', { p_uid: firebaseUid, p_fields: fields });
   if (error) throw error;
   return data;
 }
@@ -38,13 +28,17 @@ export async function adminDeleteStudent(callerUid, firebaseUid) {
 }
 
 export async function updateUser(firebaseUid, fields) {
-  const { data, error } = await supabase
-    .from('users')
-    .update(fields)
-    .eq('firebase_uid', firebaseUid)
-    .select()
-    .single();
+  const { data, error } = await supabase.rpc('update_own_user', { p_uid: firebaseUid, p_fields: fields });
+  if (error) throw error;
+  return data;
+}
 
+// Admin editing ANOTHER student's profile (AdminStudents.jsx) — distinct from
+// updateUser(), which is scoped to the caller's own row.
+export async function adminUpdateUser(callerUid, targetUid, fields) {
+  const { data, error } = await supabase.rpc('admin_update_user', {
+    p_caller: callerUid, p_target_uid: targetUid, p_fields: fields,
+  });
   if (error) throw error;
   return data;
 }
@@ -52,15 +46,12 @@ export async function updateUser(firebaseUid, fields) {
 // Used to detect an existing account by phone number before creating a new one —
 // Firebase treats phone and Google sign-in as separate identities (different uids)
 // unless explicitly linked, so this is the app-level de-duplication check.
+// Returns just the firebase_uid (or null) — the caller isn't authenticated as
+// that other identity yet, so the full profile isn't returned.
 export async function getUserByPhone(phoneNumber) {
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('phone_number', phoneNumber)
-    .maybeSingle();
-
+  const { data, error } = await supabase.rpc('check_phone_registered', { p_phone: phoneNumber });
   if (error) throw error;
-  return data;
+  return data ? { firebase_uid: data } : null;
 }
 
 /* ── Test sessions ──────────────────────────────────────── */
@@ -108,6 +99,33 @@ export async function getTestAttempt(firebaseUid, testId) {
   return data ?? null;
 }
 
+/* Item 7: mode lock — once a student starts a test attempt in either mode,
+   they're locked to it until they explicitly start fresh (see
+   MockTestEngine's "Start Fresh" path). Idempotent — safe to call on every
+   page mount; returns whichever mode actually holds the lock. */
+export async function lockExamAttemptMode(firebaseUid, testId, mode) {
+  if (!firebaseUid || !testId) return null;
+  const { data, error } = await supabase.rpc('lock_exam_attempt_mode', {
+    p_uid: firebaseUid, p_test_id: testId, p_mode: mode,
+  });
+  if (error) return null;
+  return data ?? null;
+}
+
+export async function getExamAttemptMode(firebaseUid, testId) {
+  if (!firebaseUid || !testId) return null;
+  const { data, error } = await supabase.rpc('get_exam_attempt_mode', {
+    p_uid: firebaseUid, p_test_id: testId,
+  });
+  if (error) return null;
+  return data ?? null;
+}
+
+export async function clearExamAttemptMode(firebaseUid, testId) {
+  if (!firebaseUid || !testId) return;
+  await supabase.rpc('clear_exam_attempt_mode', { p_uid: firebaseUid, p_test_id: testId }).catch(() => {});
+}
+
 /* Returns a map of { testId → attempt } for the student — used by ExamCenter */
 export async function getCompletedTestIds(firebaseUid) {
   if (!firebaseUid) return {};
@@ -126,37 +144,33 @@ export async function getCompletedTestIds(firebaseUid) {
 /* ── Doubt chats ────────────────────────────────────────── */
 
 export async function createDoubtChat(firebaseUid, subject = null) {
-  const { data, error } = await supabase
-    .from('doubt_chats')
-    .insert({ firebase_uid: firebaseUid, subject })
-    .select()
-    .single();
-
+  const { data, error } = await supabase.rpc('create_doubt_chat', {
+    p_uid:     firebaseUid,
+    p_subject: subject,
+  });
   if (error) throw error;
   return data;
 }
 
+// role must be 'user' or 'ai' — matches doubt_messages_role_check and the
+// UI's own message-role vocabulary (not the OpenAI-style 'assistant' used
+// only in the in-memory LLM context array).
 export async function saveDoubtMessage(chatId, role, content) {
-  const { data, error } = await supabase
-    .from('doubt_messages')
-    .insert({ chat_id: chatId, role, content })
-    .select()
-    .single();
-
+  const { data, error } = await supabase.rpc('save_doubt_message', {
+    p_chat_id: chatId,
+    p_role:    role,
+    p_content: content,
+  });
   if (error) throw error;
   return data;
 }
 
-export async function getDoubtHistory(firebaseUid, limit = 20) {
-  const { data, error } = await supabase
-    .from('doubt_chats')
-    .select('*, doubt_messages(*)')
-    .eq('firebase_uid', firebaseUid)
-    .order('created_at', { ascending: false })
-    .limit(limit);
-
+// Most recent doubt_chats row for this student, with its messages — used to
+// resume a session on load instead of always starting fresh.
+export async function getRecentDoubtChat(firebaseUid) {
+  const { data, error } = await supabase.rpc('get_recent_doubt_chat', { p_uid: firebaseUid });
   if (error) throw error;
-  return data ?? [];
+  return data ?? null;
 }
 
 /* ── Knowledge base (RAG) ───────────────────────────────── */
@@ -219,8 +233,8 @@ export async function adminGetAllSubscriptions() {
 
 /* ── Admin helpers ──────────────────────────────────────── */
 
-export async function adminGetAllUsers() {
-  const { data } = await supabase.from('users').select('*').order('created_at', { ascending: false });
+export async function adminGetAllUsers(callerUid) {
+  const { data } = await supabase.rpc('admin_list_users', { p_caller: callerUid });
   return data ?? [];
 }
 
@@ -249,18 +263,14 @@ export async function adminGetAllTestSessions() {
   return data ?? [];
 }
 
-export async function adminGetDoubtChats() {
-  const { data } = await supabase.from('doubt_chats').select('*').order('created_at', { ascending: false });
+export async function adminGetDoubtChats(callerUid) {
+  const { data } = await supabase.rpc('admin_list_doubt_chats', { p_caller: callerUid, p_limit: 100 });
   return data ?? [];
 }
 
-export async function adminGetDoubtMessages(chatIds) {
+export async function adminGetDoubtMessages(callerUid, chatIds) {
   if (!chatIds?.length) return {};
-  const { data } = await supabase
-    .from('doubt_messages')
-    .select('*')
-    .in('chat_id', chatIds)
-    .order('created_at', { ascending: true });
+  const { data } = await supabase.rpc('admin_list_doubt_messages', { p_caller: callerUid, p_chat_ids: chatIds });
 
   const map = {};
   (data ?? []).forEach((m) => {

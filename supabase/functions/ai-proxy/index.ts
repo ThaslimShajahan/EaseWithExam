@@ -40,6 +40,10 @@ Deno.serve(async (req: Request) => {
     // Forward the exact OpenAI request body from the client
     const body = await req.json();
 
+    // req.signal aborts if the client disconnects (e.g. a component
+    // unmounted mid-request and cancelled its fetch) — propagating it here
+    // means OpenAI actually stops billing for the call, not just that the
+    // client stops waiting for a response it'll never use.
     const openaiRes = await fetch(openaiEndpoint, {
       method: 'POST',
       headers: {
@@ -47,6 +51,7 @@ Deno.serve(async (req: Request) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
+      signal: req.signal,
     });
 
     // TTS returns raw audio bytes, not JSON — pass the binary body straight through.

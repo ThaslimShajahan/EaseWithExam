@@ -31,7 +31,7 @@ function StatusChip({ status }) {
 }
 
 /* ── Modal: Add / Edit Centre ──────────────────────────────── */
-function CentreModal({ centre, onClose, onSave }) {
+function CentreModal({ centre, callerUid, onClose, onSave }) {
   const isEdit = !!centre?.id;
   const [form, setForm] = useState({
     name: centre?.name ?? '',
@@ -50,18 +50,15 @@ function CentreModal({ centre, onClose, onSave }) {
     if (!form.name.trim()) { setErr('Centre name is required'); return; }
     setSaving(true); setErr('');
     try {
-      let res;
-      if (isEdit) {
-        res = await supabase.from('coaching_centres').update({ ...form, updated_at: new Date().toISOString() }).eq('id', centre.id).select().single();
-      } else {
-        res = await supabase.from('coaching_centres').insert({ ...form }).select().single();
-      }
-      if (res.error) throw res.error;
-      logChange(ENTITY.COACHING_CENTRE, res.data?.id ?? centre?.id ?? 'unknown',
+      const { data, error } = await supabase.rpc('admin_upsert_coaching_centre', {
+        p_caller: callerUid, p_id: isEdit ? centre.id : null, p_fields: form,
+      });
+      if (error) throw error;
+      logChange(ENTITY.COACHING_CENTRE, data?.id ?? centre?.id ?? 'unknown',
         isEdit ? ACTION.UPDATE : ACTION.CREATE,
         { name: form.name, city: form.city, plan: form.plan, status: form.status },
         isEdit ? 'Admin updated coaching centre' : 'Admin created coaching centre');
-      onSave(res.data);
+      onSave(data);
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -146,7 +143,7 @@ function CentreModal({ centre, onClose, onSave }) {
 }
 
 /* ── Modal: Add Student ─────────────────────────────────────── */
-function StudentModal({ centreId, onClose, onSave }) {
+function StudentModal({ centreId, callerUid, onClose, onSave }) {
   const [form, setForm] = useState({ student_uid: '', student_name: '', student_email: '', target_exam: 'NEET', batch: '' });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -160,10 +157,18 @@ function StudentModal({ centreId, onClose, onSave }) {
     }
     setSaving(true); setErr('');
     try {
-      const { data, error } = await supabase.from('coaching_students').insert({
-        centre_id: centreId,
-        ...form,
-      }).select().single();
+      // student_uid (form field) -> firebase_uid (real column, was previously
+      // sent verbatim as a nonexistent column name, so this insert 400'd
+      // every time — "Add Student" has likely never actually worked).
+      const { data, error } = await supabase.rpc('admin_add_coaching_student', {
+        p_caller: callerUid, p_centre_id: centreId,
+        p_fields: {
+          firebase_uid: form.student_uid.trim(),
+          name: form.student_name.trim(), student_name: form.student_name.trim(),
+          email: form.student_email.trim() || null, student_email: form.student_email.trim() || null,
+          target_exam: form.target_exam, batch: form.batch,
+        },
+      });
       if (error) throw error;
       logChange(ENTITY.COACHING_CENTRE, centreId, ACTION.UPDATE,
         { action: 'add_student', student_name: form.student_name, target_exam: form.target_exam },
@@ -233,7 +238,7 @@ function StudentModal({ centreId, onClose, onSave }) {
 }
 
 /* ── Modal: Create Assignment ───────────────────────────────── */
-function AssignmentModal({ centreId, onClose, onSave }) {
+function AssignmentModal({ centreId, callerUid, onClose, onSave }) {
   const [form, setForm] = useState({ title: '', description: '', due_date: '', subject: '', exam_type: 'NEET' });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -244,11 +249,10 @@ function AssignmentModal({ centreId, onClose, onSave }) {
     if (!form.title.trim()) { setErr('Title is required'); return; }
     setSaving(true); setErr('');
     try {
-      const { data, error } = await supabase.from('coaching_assignments').insert({
-        centre_id: centreId,
-        ...form,
-        due_date: form.due_date || null,
-      }).select().single();
+      const { data, error } = await supabase.rpc('admin_upsert_coaching_assignment', {
+        p_caller: callerUid, p_centre_id: centreId, p_id: null,
+        p_fields: { ...form, due_date: form.due_date || null },
+      });
       if (error) throw error;
       logChange(ENTITY.COACHING_CENTRE, centreId, ACTION.UPDATE,
         { action: 'add_assignment', title: form.title, subject: form.subject },
@@ -330,7 +334,7 @@ function AssignmentModal({ centreId, onClose, onSave }) {
 }
 
 /* ── Centre detail pane ─────────────────────────────────────── */
-function CentreDetail({ centre, onBack, onUpdate }) {
+function CentreDetail({ centre, callerUid, onBack, onUpdate }) {
   const [students, setStudents]       = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [invites, setInvites]         = useState([]);
@@ -345,13 +349,13 @@ function CentreDetail({ centre, onBack, onUpdate }) {
 
   useEffect(() => {
     setLS(true);
-    supabase.from('coaching_students').select('*').eq('centre_id', centre.id).order('created_at', { ascending: false })
+    supabase.rpc('admin_list_centre_students', { p_caller: callerUid, p_centre_id: centre.id })
       .then(({ data }) => { setStudents(data ?? []); setLS(false); });
   }, [centre.id]);
 
   useEffect(() => {
     setLA(true);
-    supabase.from('coaching_assignments').select('*').eq('centre_id', centre.id).order('created_at', { ascending: false })
+    supabase.rpc('admin_list_centre_assignments', { p_caller: callerUid, p_centre_id: centre.id })
       .then(({ data }) => { setAssignments(data ?? []); setLA(false); });
   }, [centre.id]);
 
@@ -365,7 +369,7 @@ function CentreDetail({ centre, onBack, onUpdate }) {
   }, [tab, centre.id, invites.length]);
 
   async function deleteStudent(s) {
-    await supabase.from('coaching_students').delete().eq('id', s.id);
+    await supabase.rpc('admin_delete_coaching_student', { p_caller: callerUid, p_id: s.id });
     logChange(ENTITY.COACHING_CENTRE, centre.id, ACTION.UPDATE,
       { action: 'remove_student', student_id: s.id }, 'Admin removed student from coaching centre');
     setStudents(prev => prev.filter(x => x.id !== s.id));
@@ -373,7 +377,7 @@ function CentreDetail({ centre, onBack, onUpdate }) {
   }
 
   async function deleteAssignment(a) {
-    await supabase.from('coaching_assignments').delete().eq('id', a.id);
+    await supabase.rpc('admin_delete_coaching_assignment', { p_caller: callerUid, p_id: a.id });
     logChange(ENTITY.COACHING_CENTRE, centre.id, ACTION.DELETE_REQUEST,
       { action: 'delete_assignment', assignment_id: a.id }, 'Admin deleted coaching assignment');
     setAssignments(prev => prev.filter(x => x.id !== a.id));
@@ -545,6 +549,7 @@ function CentreDetail({ centre, onBack, onUpdate }) {
         {showAddStudent && (
           <StudentModal
             centreId={centre.id}
+            callerUid={callerUid}
             onClose={() => setShowAS(false)}
             onSave={(s) => { setStudents(prev => [s, ...prev]); setShowAS(false); }}
           />
@@ -552,6 +557,7 @@ function CentreDetail({ centre, onBack, onUpdate }) {
         {showAddAssign && (
           <AssignmentModal
             centreId={centre.id}
+            callerUid={callerUid}
             onClose={() => setShowAA(false)}
             onSave={(a) => { setAssignments(prev => [a, ...prev]); setShowAA(false); }}
           />
@@ -860,7 +866,7 @@ export default function AdminCoaching() {
   })();
 
   useEffect(() => {
-    supabase.from('coaching_centres').select('*').order('created_at', { ascending: false })
+    supabase.rpc('admin_list_coaching_centres', { p_caller: callerUid })
       .then(({ data }) => { setCentres(data ?? []); setLoading(false); });
   }, []);
 
@@ -884,6 +890,7 @@ export default function AdminCoaching() {
     return (
       <CentreDetail
         centre={selected}
+        callerUid={callerUid}
         onBack={() => setSelected(null)}
         onUpdate={() => setEditTarget(selected)}
       />
@@ -997,6 +1004,7 @@ export default function AdminCoaching() {
         {(showAdd || editTarget) && (
           <CentreModal
             centre={editTarget}
+            callerUid={callerUid}
             onClose={() => { setShowAdd(false); setEditTarget(null); }}
             onSave={handleSaved}
           />

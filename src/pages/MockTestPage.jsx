@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { getPublishedTest, getTestAttempt } from '../lib/supabase';
+import { getPublishedTest, getTestAttempt, lockExamAttemptMode } from '../lib/supabase';
 import MockTestEngine from '../components/exam/MockTestEngine';
 import SkeletonLoader from '../components/ui/SkeletonLoader';
 import { useAuth } from '../context/AuthContext';
@@ -50,6 +50,17 @@ export default function MockTestPage() {
         // is_published, so an unpublished (or since-unpublished) test was
         // still fully launchable.
         if (data.is_published === false) { setLoadErr('This test is not currently available.'); setLoading(false); return; }
+
+        // Item 7: once a student has started this test in either mode, they're
+        // locked to it — idempotent, so this is a no-op if already locked to
+        // 'online'. If it comes back 'paper' (started there instead, e.g. via
+        // /paper-mode), bounce straight there instead of letting a second,
+        // independent online attempt spin up.
+        const lockedMode = await lockExamAttemptMode(currentUser?.uid, testId, 'online');
+        if (lockedMode === 'paper') {
+          navigate(`/paper-mode?id=${encodeURIComponent(testId)}`, { replace: true });
+          return;
+        }
 
         const storageKey = `ewe_exam_${String(data.title || '').replace(/\W+/g, '_').slice(0, 40)}`;
         const hasLocalProgress = (() => {

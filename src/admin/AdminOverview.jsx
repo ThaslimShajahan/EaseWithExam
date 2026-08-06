@@ -15,6 +15,13 @@ import {
 
 const IST_DATE = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
+function getCallerUid() {
+  try {
+    const key = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch { return ''; }
+}
+
 function StatCard({ icon: Icon, label, value, color, sub, delay = 0 }) {
   return (
     <motion.div
@@ -63,12 +70,12 @@ export default function AdminOverview() {
   useEffect(() => {
     const today = IST_DATE();
     Promise.all([
-      adminGetAllUsers(),
+      adminGetAllUsers(getCallerUid()),
       adminGetAllTestSessions(),
-      adminGetDoubtChats(),
+      adminGetDoubtChats(getCallerUid()),
       adminGetPapers(),
       adminGetKBCount(),
-      supabase.from('coaching_centres').select('id', { count: 'exact' }),
+      supabase.rpc('admin_get_coaching_centre_count', { p_caller: getCallerUid() }),
       supabase.from('daily_usage_quota').select('user_id', { count: 'exact' }).eq('usage_date', today),
       supabase.from('subscriptions').select('user_id', { count: 'exact' }).eq('status', 'active'),
       supabase.from('published_tests').select('id', { count: 'exact' }),
@@ -89,7 +96,7 @@ export default function AdminOverview() {
         chats:         chats?.length       ?? 0,
         papers:        papers?.length      ?? 0,
         kbChunks:      kbCount             ?? 0,
-        centres:       centres.count       ?? 0,
+        centres:       centres.data        ?? 0,
         activeToday:   activeToday.count   ?? 0,
         premiumUsers:  premium.count       ?? 0,
         publishedTests: pubTests.count     ?? 0,

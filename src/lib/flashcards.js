@@ -83,12 +83,15 @@ export async function getFlashcardSummary(firebaseUid) {
   return data ?? [];
 }
 
-/* ── Mark a card as known/unknown ──────────────────────────── */
-export async function markFlashcard(firebaseUid, id, isKnown) {
-  const { error } = await supabase.rpc('mark_flashcard_known', {
-    p_uid:     firebaseUid,
-    p_id:      id,
-    p_is_known: isKnown,
+/* ── Grade a card review (SM-2) ──────────────────────────────
+   grade: 1=again (forgot), 3=hard, 4=good, 5=easy — same scale as the
+   Error Notebook's recordReview(). Returns the card's new SRS state. */
+export async function reviewFlashcard(firebaseUid, id, grade) {
+  const { data, error } = await supabase.rpc('review_flashcard', {
+    p_uid:   firebaseUid,
+    p_id:    id,
+    p_grade: grade,
   });
   if (error) throw error;
+  return data?.[0] ?? null;
 }

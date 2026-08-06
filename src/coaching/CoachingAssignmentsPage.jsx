@@ -113,8 +113,8 @@ export default function CoachingAssignmentsPage() {
           <Loader2 size={24} className="animate-spin text-primary-500" />
         </div>
       ) : error ? (
-        <div className="bg-danger-light border border-danger/20 rounded-card p-6 text-center">
-          <p className="text-sm font-semibold text-danger">Failed to load assignments</p>
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-6 text-center">
+          <p className="text-sm font-semibold text-red-600">Failed to load assignments</p>
           <p className="text-xs text-slate-500 mt-1">{error}</p>
         </div>
       ) : filtered.length === 0 ? (

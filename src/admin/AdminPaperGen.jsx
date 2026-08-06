@@ -16,6 +16,13 @@ import { CATEGORIES, EXAM_TYPE_GROUPS, BOARDS, CLASS_LEVELS, getSubjectsForExam 
 import { useSyllabusSubjects } from '../hooks/useSyllabusSubjects';
 import { useSyllabusChapters } from '../hooks/useSyllabusChapters';
 
+function getCallerUid() {
+  try {
+    const key = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch { return ''; }
+}
+
 async function uploadQuestionImage(file, questionIndex) {
   const ext  = file.name.split('.').pop();
   const path = `question-images/${Date.now()}-q${questionIndex}.${ext}`;
@@ -1171,6 +1178,7 @@ export default function AdminPaperGen() {
       setShowPubDlg(false);
       // Notify all students in-app
       broadcastNotification(
+        getCallerUid(),
         'new_paper',
         `New ${examType} ${subject} Test Available`,
         `${pubTitle.trim()} — ${engineQs.length} questions · ${durationMin} min`,

@@ -3,8 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Send, Loader2, AlertCircle, User, Mic, MicOff } from 'lucide-react';
 import katex from 'katex';
 import { VedaAvatarSm } from '../ui/VedaAvatar';
-import { searchKnowledgeBase, createDoubtChat, saveDoubtMessage } from '../../lib/supabase';
-import { chatCompleteStream } from '../../lib/aiProxy';
+import { searchKnowledgeBase, createDoubtChat, saveDoubtMessage, getRecentDoubtChat } from '../../lib/supabase';
+import { chatCompleteStream, embedText } from '../../lib/aiProxy';
 import MathText from '../ui/MathText';
 import { awardXP } from '../../lib/gamification';
 import { createNotification } from '../../lib/notifications';
@@ -401,6 +401,30 @@ export default function ChatInterface({ imageFiles = [] }) {
     }]);
   }, [imageFiles.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* Resume the student's most recent doubt-chat thread on load instead of
+     always starting fresh — the answer-sheet analysis flow (hasImages) is
+     deliberately a new session each time, so this only applies to plain
+     text chat. Guards against clobbering an already-started new chat if
+     the user sends a message before this fetch resolves. */
+  useEffect(() => {
+    if (hasImages || !currentUser?.uid) return;
+    let cancelled = false;
+    getRecentDoubtChat(currentUser.uid)
+      .then((chat) => {
+        if (cancelled || chatIdRef.current) return;
+        const msgs = chat?.messages;
+        if (!chat?.id || !msgs?.length) return;
+        chatIdRef.current = chat.id;
+        historyRef.current = msgs.map((m) => ({
+          role:    m.role === 'ai' ? 'assistant' : m.role,
+          content: m.content,
+        }));
+        setMessages(msgs.map((m) => ({ id: m.id, role: m.role, content: m.content })));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [currentUser?.uid, hasImages]);
+
   /* Called explicitly by the Analyse button */
   const runAnalysis = async () => {
     // This is the most expensive call in the app (GPT-4o vision over full-page
@@ -500,7 +524,7 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
       historyRef.current.push({ role: 'assistant', content: full });
       if (uid) incrementQuota(uid, 'veda_messages_used').catch(() => {});
       persistMessage('user', `[Uploaded ${imageFiles.length > 1 ? `${imageFiles.length} pages` : '1 page'} for answer-sheet analysis]`);
-      persistMessage('assistant', full);
+      persistMessage('ai', full);
 
       if (!xpAwardedRef.current && currentUser) {
         xpAwardedRef.current = true;
@@ -568,7 +592,16 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
     /* RAG: inject relevant knowledge base chunks into system prompt */
     let systemPrompt = buildSystemPrompt(userProfile);
     try {
-const chunks = await searchKnowledgeBase(text);
+      let embedding = null;
+      try {
+        embedding = await embedText(text);
+      } catch {
+        embedding = null;
+      }
+      if (!embedding) {
+        console.warn('[doubt] embedText failed — falling back to keyword search for this query');
+      }
+      const chunks = await searchKnowledgeBase(text, embedding);
       if (chunks.length > 0) {
         const context = chunks.map((c) => `[${c.subject || 'Content'}]\n${c.content}`).join('\n\n---\n\n');
         systemPrompt = `${buildSystemPrompt(userProfile)}\n\n## Reference material from question papers:\n${context}`;
@@ -601,7 +634,7 @@ const chunks = await searchKnowledgeBase(text);
       historyRef.current.push({ role: 'assistant', content: full });
       // Increment quota after successful response
       if (uid) incrementQuota(uid, 'veda_messages_used').catch(() => {});
-      persistMessage('assistant', full);
+      persistMessage('ai', full);
     } catch (err) {
       setMessages((m) => m.filter((msg) => msg.id !== aiId));
       setApiError(

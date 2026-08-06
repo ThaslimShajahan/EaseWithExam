@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Users, Search, RefreshCw, Pencil, X, Save, Check, Crown, Trash2, AlertTriangle } from 'lucide-react';
-import { adminGetAllUsers, adminGetAllTestSessions, adminGetAllSubscriptions, updateUser, adminGrantPremium, adminDeleteStudent } from '../lib/supabase';
+import { adminGetAllUsers, adminGetAllTestSessions, adminGetAllSubscriptions, adminUpdateUser, adminGrantPremium, adminDeleteStudent } from '../lib/supabase';
 import { EXAM_TYPE_GROUPS, BOARDS, CLASS_LEVELS } from '../lib/categories';
 
 function getCallerUid() {
@@ -47,7 +47,7 @@ function EditDrawer({ user, onClose, onSaved }) {
     setSaving(true);
     setError('');
     try {
-      await updateUser(user.firebase_uid, {
+      await adminUpdateUser(getCallerUid(), user.firebase_uid, {
         display_name: form.display_name.trim() || null,
         target_exam:  form.target_exam,
         syllabus:     form.syllabus,
@@ -306,7 +306,7 @@ export default function AdminStudents() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([adminGetAllUsers(), adminGetAllTestSessions(), adminGetAllSubscriptions()])
+    Promise.all([adminGetAllUsers(getCallerUid()), adminGetAllTestSessions(), adminGetAllSubscriptions()])
       .then(([u, s, subscriptions]) => {
         setUsers(u || []);
         setSessions(s || []);

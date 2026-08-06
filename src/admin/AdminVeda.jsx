@@ -46,6 +46,13 @@ function ChatRow({ chat, messages }) {
   );
 }
 
+function getCallerUid() {
+  try {
+    const key = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch { return ''; }
+}
+
 export default function AdminVeda() {
   const [chats,    setChats]    = useState([]);
   const [msgMap,   setMsgMap]   = useState({});
@@ -53,10 +60,11 @@ export default function AdminVeda() {
 
   const load = async () => {
     setLoading(true);
-    const chatData = await adminGetDoubtChats();
+    const callerUid = getCallerUid();
+    const chatData = await adminGetDoubtChats(callerUid);
     setChats(chatData || []);
 
-    const msgs = await adminGetDoubtMessages((chatData || []).map((c) => c.id));
+    const msgs = await adminGetDoubtMessages(callerUid, (chatData || []).map((c) => c.id));
     setMsgMap(msgs);
     setLoading(false);
   };

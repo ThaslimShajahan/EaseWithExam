@@ -3,6 +3,13 @@ import { Search, User, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 
+function getCallerUid() {
+  try {
+    const key = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch { return ''; }
+}
+
 /**
  * Searchable student picker — replaces "paste a Firebase UID you looked up
  * somewhere" text inputs across admin screens with a live name/email search
@@ -26,11 +33,9 @@ export default function StudentPicker({ value, onSelect, placeholder = 'Search b
     if (q.length < 2) { setResults([]); return; }
     setLoading(true);
     const t = setTimeout(async () => {
-      const { data } = await supabase
-        .from('users')
-        .select('firebase_uid, display_name, email, photo_url')
-        .or(`email.ilike.%${q}%,display_name.ilike.%${q}%`)
-        .limit(8);
+      const { data } = await supabase.rpc('admin_search_users', {
+        p_caller: getCallerUid(), p_query: q, p_limit: 8,
+      });
       setResults(data ?? []);
       setLoading(false);
     }, 300);

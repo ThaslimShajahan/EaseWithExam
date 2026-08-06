@@ -33,11 +33,12 @@ export function IST_WEEK_START() {
 const WEEKLY_FIELDS = new Set(['mock_tests_used']);
 
 export const FREE_LIMITS = {
-  ai_questions_used:      10,
-  veda_messages_used:      5,
-  mock_tests_used:         1, // per week — see WEEKLY_FIELDS
-  paper_evaluations_used:  3,
-  podcasts_used:           3,
+  ai_questions_used:       20,
+  veda_messages_used:      15,
+  mock_tests_used:          2, // per week — see WEEKLY_FIELDS
+  paper_evaluations_used:   3,
+  podcasts_used:            3,
+  paper_generations_used:   2, // full Exam Center papers/day — see quota.js:resolveQuota callers
 };
 
 export const FIELD_LABELS = {
@@ -46,6 +47,7 @@ export const FIELD_LABELS = {
   mock_tests_used:        'mock tests',
   paper_evaluations_used: 'paper evaluations',
   podcasts_used:          'podcasts',
+  paper_generations_used: 'full papers',
 };
 
 const FIELD_TO_CONFIG = {
@@ -54,6 +56,7 @@ const FIELD_TO_CONFIG = {
   mock_tests_used:        'mock_tests',
   paper_evaluations_used: 'paper_evaluations',
   podcasts_used:          'podcasts',
+  paper_generations_used: 'paper_generations',
 };
 
 // Shared by checkQuota (gate) and getQuotaSnapshot (display-only, used by the

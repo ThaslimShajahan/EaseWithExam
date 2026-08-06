@@ -10,6 +10,13 @@ import {
   adminGetTestSessionsStats,
 } from '../lib/supabase';
 
+function getCallerUid() {
+  try {
+    const key = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch { return ''; }
+}
+
 function formatDate(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -81,7 +88,7 @@ export default function AdminDataViewer() {
         adminGetPapers(),
         getPublishedTests(),
         adminGetTestSessionsStats(),
-        adminGetAllUsers(),
+        adminGetAllUsers(getCallerUid()),
       ]);
       setKBStats(kb);
       setPapers(pap);

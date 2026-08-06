@@ -9,7 +9,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { getAllChapters } from '../lib/syllabus';
 import { buildExamType } from '../lib/categories';
-import { generateFlashcards, getFlashcards, getFlashcardSummary, markFlashcard } from '../lib/flashcards';
+import { generateFlashcards, getFlashcards, getFlashcardSummary, reviewFlashcard } from '../lib/flashcards';
 import { checkQuota, incrementQuota } from '../lib/quota';
 import { createNotification } from '../lib/notifications';
 import RingChart from '../components/ui/RingChart';
@@ -30,7 +30,7 @@ const FALLBACK_COLOR = { chip: 'bg-slate-100 text-slate-600 border-slate-200', r
 const colorsFor = (subject) => SUBJECT_COLORS[subject] || FALLBACK_COLOR;
 
 /* ── Flip card — real 3D flip with a peek of the next card behind it ── */
-function FlipCard({ card, onKnow, onDontKnow, index, total }) {
+function FlipCard({ card, onGrade, index, total }) {
   const [flipped, setFlipped] = useState(false);
   const hasNext = index + 1 < total;
 
@@ -87,15 +87,23 @@ function FlipCard({ card, onKnow, onDontKnow, index, total }) {
         {flipped && (
           <motion.div
             initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-            className="grid grid-cols-2 gap-3"
+            className="grid grid-cols-4 gap-2"
           >
-            <button onClick={() => { setFlipped(false); onDontKnow(card.id); }}
-              className="flex items-center justify-center gap-2 py-3 rounded-xl bg-red-50 border border-red-200 text-red-700 font-semibold text-sm hover:bg-red-100 transition-colors">
-              <XCircle size={16} /> Again
+            <button onClick={() => { setFlipped(false); onGrade(card.id, 1); }}
+              className="flex flex-col items-center justify-center gap-1 py-3 rounded-xl bg-red-50 border border-red-200 text-red-700 font-semibold text-xs hover:bg-red-100 transition-colors">
+              <XCircle size={15} /> Again
             </button>
-            <button onClick={() => { setFlipped(false); onKnow(card.id); }}
-              className="flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold text-sm hover:bg-emerald-100 transition-colors">
-              <CheckCircle2 size={16} /> Got it
+            <button onClick={() => { setFlipped(false); onGrade(card.id, 3); }}
+              className="flex flex-col items-center justify-center gap-1 py-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 font-semibold text-xs hover:bg-amber-100 transition-colors">
+              Hard
+            </button>
+            <button onClick={() => { setFlipped(false); onGrade(card.id, 4); }}
+              className="flex flex-col items-center justify-center gap-1 py-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold text-xs hover:bg-emerald-100 transition-colors">
+              <CheckCircle2 size={15} /> Good
+            </button>
+            <button onClick={() => { setFlipped(false); onGrade(card.id, 5); }}
+              className="flex flex-col items-center justify-center gap-1 py-3 rounded-xl bg-primary-50 border border-primary-200 text-primary-700 font-semibold text-xs hover:bg-primary-100 transition-colors">
+              <Zap size={15} /> Easy
             </button>
           </motion.div>
         )}
@@ -117,29 +125,28 @@ function StudySession({ cards, chapterName, onFinish }) {
   const { currentUser } = useAuth();
   const uid = currentUser?.uid;
 
-  const mutKnow = useMutation({
-    mutationFn: (id) => markFlashcard(uid, id, true),
+  const mutReview = useMutation({
+    mutationFn: ({ id, grade }) => reviewFlashcard(uid, id, grade),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['flashcard-summary'] }),
-  });
-  const mutUnknown = useMutation({
-    mutationFn: (id) => markFlashcard(uid, id, false),
   });
 
   const advance = (knownCount, unknownCount) => {
     if (idx + 1 >= cards.length) onFinish({ known: knownCount, total: cards.length });
     else setIdx((i) => i + 1);
   };
-  const handleKnow = (id) => {
-    mutKnow.mutate(id);
-    const nextKnown = new Set(known); nextKnown.add(id);
-    setKnown(nextKnown);
-    advance(nextKnown.size, unknown.size);
-  };
-  const handleDontKnow = (id) => {
-    mutUnknown.mutate(id);
-    const nextUnknown = new Set(unknown); nextUnknown.add(id);
-    setUnknown(nextUnknown);
-    advance(known.size, nextUnknown.size);
+  // grade >= 3 (Hard/Good/Easy) counts as "known" for the session tally —
+  // matches review_flashcard's own is_known threshold on the backend.
+  const handleGrade = (id, grade) => {
+    mutReview.mutate({ id, grade });
+    if (grade >= 3) {
+      const nextKnown = new Set(known); nextKnown.add(id);
+      setKnown(nextKnown);
+      advance(nextKnown.size, unknown.size);
+    } else {
+      const nextUnknown = new Set(unknown); nextUnknown.add(id);
+      setUnknown(nextUnknown);
+      advance(known.size, nextUnknown.size);
+    }
   };
 
   return (
@@ -155,8 +162,7 @@ function StudySession({ cards, chapterName, onFinish }) {
       </div>
       <FlipCard
         card={cards[idx]}
-        onKnow={handleKnow}
-        onDontKnow={handleDontKnow}
+        onGrade={handleGrade}
         index={idx}
         total={cards.length}
       />

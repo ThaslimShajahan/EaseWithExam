@@ -7,10 +7,11 @@ import {
   ChevronDown, ChevronUp, Star, ZoomIn, X, BookOpen,
   ScanSearch, Pencil, RefreshCw, Download,
 } from 'lucide-react';
-import { getPublishedTest, saveTestSession } from '../lib/supabase';
+import { getPublishedTest, saveTestSession, getTestAttempt, lockExamAttemptMode } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { createNotification } from '../lib/notifications';
 import MathText from '../components/ui/MathText';
+import EweLogo from '../components/ui/EweLogo';
 import { chatComplete } from '../lib/aiProxy';
 import { saveWrongAnswers } from '../lib/errorNotebook';
 import { awardXP } from '../lib/gamification';
@@ -119,6 +120,7 @@ function QuestionPaper({ questions, title, examType, subject }) {
 
   return (
     <div className="paper-page">
+      <EweLogo variant="color" className="paper-watermark" aria-hidden="true" />
       {/* Header */}
       <div className="paper-header">
         <div className="paper-title">{title}</div>
@@ -172,6 +174,80 @@ function QuestionPaper({ questions, title, examType, subject }) {
   );
 }
 
+/* ── Printable answer key — same layout as the question paper, but shows
+ * the correct answer + explanation per question instead of blank options/
+ * answer lines. Students previously had to photograph and upload their own
+ * answers to get anything graded — there was no way to just self-check
+ * against the real answer key. ── */
+function AnswerKey({ questions, title, examType, subject }) {
+  const sections = groupBySection(questions);
+  const hasSections = Object.keys(sections).some(k => k !== '__unsectioned__');
+  const tm = totalMarks(questions);
+
+  const renderAnswer = (q) => {
+    const qMarks = typeof q.marks === 'number' ? q.marks : (q.marks?.correct ?? 4);
+    const isMCQ = Array.isArray(q.options) && q.options.length > 0;
+    const answerText = isMCQ
+      ? `${OPT_LETTERS[q.correctOption] ?? '?'}. ${q.options[q.correctOption] ?? ''}`
+      : (q.correctAnswer || '(see explanation below)');
+    return (
+      <div key={q.id ?? q._num} className="question-block">
+        <div className="q-header">
+          <span className="q-num">Q{q._num}.</span>
+          <div className="q-body">
+            <div className="q-text" style={{ fontWeight: 700 }}>
+              Answer: <MathText text={answerText} />
+            </div>
+            {q.explanation && (
+              <div className="q-text" style={{ fontSize: 12, color: '#333', fontWeight: 400 }}>
+                <MathText text={q.explanation} />
+              </div>
+            )}
+          </div>
+          <span className="q-marks">[{qMarks}]</span>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="paper-page">
+      <EweLogo variant="color" className="paper-watermark" aria-hidden="true" />
+      <div className="paper-header">
+        <div className="paper-title">{title || 'Question Paper'} — Answer Key</div>
+        <div className="paper-meta">
+          <span>{examType}{subject ? ` · ${subject}` : ''}</span>
+          <span>{questions.length} Questions · {tm} Marks</span>
+        </div>
+      </div>
+
+      {hasSections ? (
+        <>
+          {Object.entries(sections).filter(([k]) => k !== '__unsectioned__').map(([sec, qs]) => (
+            <div key={sec} className="section-block">
+              <div className="section-header">
+                <span>{SECTION_META[sec]?.label ?? `Section ${sec}`}</span>
+              </div>
+              {qs.map((q) => renderAnswer(q))}
+            </div>
+          ))}
+          {(sections['__unsectioned__'] ?? []).length > 0 && (
+            <div className="section-block">
+              {sections['__unsectioned__'].map((q) => renderAnswer(q))}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="section-block">
+          {(sections['__unsectioned__'] ?? []).map((q) => renderAnswer(q))}
+        </div>
+      )}
+
+      <div className="paper-footer">*** End of Answer Key ***</div>
+    </div>
+  );
+}
+
 /* ── Upload answer sheet ─────────────────────────────────── */
 function UploadPanel({ onEvaluate, loading }) {
   const [images, setImages] = useState([]);
@@ -215,7 +291,7 @@ function UploadPanel({ onEvaluate, loading }) {
           Drop photos or click to browse
         </p>
         <p className="text-xs text-slate-500">JPG, PNG — upload all pages of your answer sheet</p>
-        <input ref={inputRef} type="file" multiple accept="image/*" capture="environment"
+        <input ref={inputRef} type="file" multiple accept="image/*"
           className="hidden" onChange={(e) => addFiles(e.target.files)} />
       </div>
 
@@ -526,7 +602,7 @@ function ImageDropZone({ label, hint, images, setImages }) {
       >
         <Camera size={18} className="text-primary-400" />
         <p className="text-xs text-slate-400 text-center">Drop or tap to add pages</p>
-        <input ref={ref} type="file" multiple accept="image/*" capture="environment"
+        <input ref={ref} type="file" multiple accept="image/*"
           className="hidden" onChange={(e) => addFiles(e.target.files)} />
       </div>
       {images.length > 0 && (
@@ -855,6 +931,11 @@ function EvaluatedPaperView({ result, answerImages }) {
 }
 
 /* ── Print styles injected into head ─────────────────────── */
+// Typography now matches the app's own type scale/font stack (tailwind.config.js:
+// fontFamily.sans = Inter, fontSize.body = 0.875rem/14px at line-height 1.6) instead
+// of a one-off Times New Roman serif system at 11-13px — the small serif text was
+// the actual cause of the "unreadable" report, not a contrast/color issue (#111 on
+// white already has good contrast).
 const PRINT_CSS = `
 @media print {
   body * { visibility: hidden !important; }
@@ -862,28 +943,30 @@ const PRINT_CSS = `
   .paper-print-area { position: fixed; inset: 0; background: white; padding: 24px; }
   .no-print { display: none !important; }
 }
-.paper-page { font-family: 'Times New Roman', serif; color: #111; background: white; padding: 24px 28px; max-width: 800px; }
+.paper-page { position: relative; font-family: 'Inter', system-ui, sans-serif; color: #111; background: white; padding: 24px 28px; max-width: 800px; overflow: hidden; }
+.paper-watermark { position: absolute; top: 50%; left: 50%; width: 55%; transform: translate(-50%, -50%) rotate(-28deg); opacity: 0.05; pointer-events: none; z-index: 0; }
+.paper-header, .paper-page > .section-block, .paper-page > .paper-footer { position: relative; z-index: 1; }
 .paper-header { border-bottom: 3px double #111; padding-bottom: 12px; margin-bottom: 20px; text-align: center; }
-.paper-title { font-size: 18px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
-.paper-meta { display: flex; justify-content: space-between; font-size: 12px; margin-top: 6px; }
-.paper-instructions { font-size: 11px; margin-top: 10px; text-align: left; }
+.paper-title { font-size: 20px; font-weight: 800; letter-spacing: -0.01em; }
+.paper-meta { display: flex; justify-content: space-between; font-size: 13px; margin-top: 6px; }
+.paper-instructions { font-size: 12px; margin-top: 10px; text-align: left; line-height: 1.5; }
 .paper-instructions ul { margin: 4px 0 0 16px; }
 .paper-instructions li { margin-bottom: 2px; }
 .section-block { margin-bottom: 18px; }
-.section-header { background: #f0f0f0; border: 1px solid #ccc; padding: 6px 12px; font-weight: 700; font-size: 12px; display: flex; justify-content: space-between; margin-bottom: 10px; }
+.section-header { background: #f0f0f0; border: 1px solid #ccc; padding: 6px 12px; font-weight: 700; font-size: 13px; display: flex; justify-content: space-between; margin-bottom: 10px; }
 .section-note { font-weight: 400; font-style: italic; }
 .question-block { margin-bottom: 14px; page-break-inside: avoid; }
 .q-header { display: flex; align-items: flex-start; gap: 8px; }
-.q-num { font-weight: 700; font-size: 13px; min-width: 28px; shrink: 0; }
-.q-body { flex: 1; font-size: 13px; line-height: 1.6; }
+.q-num { font-weight: 700; font-size: 14px; min-width: 28px; shrink: 0; }
+.q-body { flex: 1; font-size: 14px; line-height: 1.6; }
 .q-text { margin-bottom: 6px; }
-.q-marks { font-size: 11px; font-weight: 700; color: #444; white-space: nowrap; shrink: 0; }
+.q-marks { font-size: 12px; font-weight: 700; color: #444; white-space: nowrap; shrink: 0; }
 .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 16px; margin-top: 4px; margin-left: 8px; }
-.option-item { display: flex; gap: 6px; font-size: 12px; }
+.option-item { display: flex; gap: 6px; font-size: 13px; }
 .option-letter { font-weight: 600; color: #555; }
 .answer-lines { margin-top: 8px; }
 .answer-line { border-bottom: 1px solid #bbb; margin-bottom: 12px; height: 0; }
-.paper-footer { text-align: center; font-size: 11px; color: #666; margin-top: 24px; padding-top: 12px; border-top: 1px solid #ccc; }
+.paper-footer { text-align: center; font-size: 12px; color: #666; margin-top: 24px; padding-top: 12px; border-top: 1px solid #ccc; }
 `;
 
 /* ── Main page ───────────────────────────────────────────── */
@@ -908,6 +991,7 @@ export default function PaperModePage() {
   const [selfError,    setSelfError]   = useState('');
   const [selfAImages,  setSelfAImages] = useState([]);
   const [showPaywall,  setShowPaywall] = useState(false);
+  const [priorAttempt, setPriorAttempt] = useState(null);
   const printAreaRef = useRef(null);
 
   // Inject print CSS once
@@ -930,19 +1014,44 @@ export default function PaperModePage() {
       return;
     }
     if (testId) {
-      getPublishedTest(testId).then((test) => {
+      (async () => {
+        // Item 7: this page previously had NO completion check at all — a
+        // student who finished a test via Online Mode could still reload it
+        // here and submit a second, independent Paper Mode attempt.
+        // test_sessions (what getTestAttempt reads) is written by both modes,
+        // so this check is mode-agnostic by construction.
+        const [attempt, test] = await Promise.all([
+          getTestAttempt(currentUser?.uid, testId),
+          getPublishedTest(testId),
+        ]);
         if (test) {
-          setQuestions(test.questions ?? []);
           setTitle(test.title ?? 'Question Paper');
           setExamType(test.exam_type ?? '');
           setSubject(test.subject ?? '');
         }
+        if (attempt) {
+          setPriorAttempt(attempt);
+          setLoadingTest(false);
+          return;
+        }
+        if (!test) { setLoadingTest(false); return; }
+
+        // Mode lock — idempotent, no-op if already locked to 'paper'. If the
+        // student started this same test in Online Mode instead, bounce them
+        // there rather than letting an independent paper attempt spin up.
+        const lockedMode = await lockExamAttemptMode(currentUser?.uid, testId, 'paper');
+        if (lockedMode === 'online') {
+          navigate(`/test?id=${encodeURIComponent(testId)}`, { replace: true });
+          return;
+        }
+
+        setQuestions(test.questions ?? []);
         setLoadingTest(false);
-      });
+      })();
     } else {
       setLoadingTest(false);
     }
-  }, [testId]);
+  }, [testId, currentUser?.uid]);
 
   const handleEvaluate = async (imageUrls) => {
     if (!imageUrls.length || !questions.length) return;
@@ -1074,6 +1183,43 @@ export default function PaperModePage() {
     );
   }
 
+  /* Already submitted (in either mode) — show score summary, no retake */
+  if (priorAttempt) {
+    const pct = priorAttempt.total_marks
+      ? Math.round((priorAttempt.score / priorAttempt.total_marks) * 100) : 0;
+    return (
+      <div className="max-w-md mx-auto flex flex-col items-center justify-center min-h-[60vh] p-8 text-center gap-5">
+        <div className="h-20 w-20 rounded-full bg-emerald-900/40 flex items-center justify-center">
+          <span className="text-4xl">✅</span>
+        </div>
+        <div>
+          <h2 className="text-xl font-bold text-white">Already Submitted</h2>
+          <p className="text-sm text-slate-400 mt-1">{title || 'This paper'}</p>
+        </div>
+        <div className="bg-slate-800 border border-white/10 rounded-2xl px-8 py-5 space-y-1 shadow-sm w-full">
+          <p className="text-4xl font-extrabold text-primary-400">
+            {priorAttempt.score}<span className="text-xl text-slate-500">/{priorAttempt.total_marks}</span>
+          </p>
+          <p className="text-sm font-semibold text-slate-300">{pct}%</p>
+          <p className="text-[11px] text-slate-500 mt-1">
+            Submitted {new Date(priorAttempt.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+          </p>
+          {priorAttempt.correct != null && (
+            <div className="flex justify-center gap-4 mt-2 text-xs">
+              <span className="text-emerald-400 font-semibold">✓ {priorAttempt.correct} correct</span>
+              <span className="text-red-400 font-semibold">✗ {priorAttempt.wrong} wrong</span>
+            </div>
+          )}
+        </div>
+        <p className="text-xs text-slate-500">Each exam can only be attempted once.</p>
+        <button onClick={() => navigate('/exams?tab=papers')}
+          className="px-6 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-bold hover:bg-primary-700 transition-colors">
+          Back to Exam Center
+        </button>
+      </div>
+    );
+  }
+
   const hasQuestions = questions.length > 0;
 
   // No pre-loaded questions → jump straight to standalone grader
@@ -1088,17 +1234,31 @@ export default function PaperModePage() {
           <ArrowLeft size={18} />
         </button>
         <div className="flex-1">
-          <h1 className="text-xl font-bold text-white">{title}</h1>
-          <p className="text-xs text-slate-400 mt-0.5">{questions.length} questions · {totalMarks(questions)} marks · {examType} {subject}</p>
+          <h1 className="text-xl font-bold text-white">{hasQuestions ? title : 'Grade Any Paper'}</h1>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {hasQuestions
+              ? `${questions.length} questions · ${totalMarks(questions)} marks · ${examType} ${subject}`
+              : 'Upload photos of any answer sheet — AI reads and grades it instantly'}
+          </p>
         </div>
         {/* Phase tabs */}
         <div className="flex gap-1 bg-slate-800 rounded-xl p-1 flex-wrap">
           {[
             { id: 'paper',       label: 'Question Paper',    icon: <BookOpen size={12} />,   hide: !hasQuestions },
+            // Seeing the answer key mid-attempt defeats the point of taking
+            // the exam — gated behind evalResult (set once the uploaded
+            // answer sheet has actually been graded), not just hasQuestions.
+            { id: 'answerkey',   label: 'Answer Key',        icon: <CheckCircle2 size={12} />, hide: !hasQuestions || !evalResult },
             { id: 'upload',      label: 'Upload Answers',    icon: <Upload size={12} />,     hide: !hasQuestions },
             { id: 'results',     label: 'Results',           icon: <Star size={12} />,       hide: !hasQuestions, disabled: !evalResult },
-            { id: 'selfeval',    label: 'Grade Any Paper',   icon: <ScanSearch size={12} /> },
-            { id: 'selfresults', label: 'Grade Results',     icon: <RefreshCw size={12} />,  disabled: !selfResult },
+            // Grade Any Paper is a different use case (upload+check any
+            // paper any time, not tied to this exam attempt) — only shown
+            // here when there's no active exam loaded (hasQuestions=false,
+            // e.g. reached via its own nav entry point at /paper-mode with
+            // no id); hidden during an active attempt so it's not bundled
+            // into the in-exam tab bar.
+            { id: 'selfeval',    label: 'Grade Any Paper',   icon: <ScanSearch size={12} />, hide: hasQuestions },
+            { id: 'selfresults', label: 'Grade Results',     icon: <RefreshCw size={12} />,  hide: hasQuestions, disabled: !selfResult },
           ].filter((t) => !t.hide).map(({ id, label, icon, disabled }) => (
             <button key={id}
               disabled={disabled}
@@ -1156,6 +1316,40 @@ export default function PaperModePage() {
           >
             <Camera size={16} /> I've Written My Answers — Upload Answer Sheet
           </button>
+        </motion.div>
+      )}
+
+      {/* ── Answer Key view — self-check against the real answers, no upload/AI needed ── */}
+      {phase === 'answerkey' && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+          <div className="flex items-center gap-3 flex-wrap no-print">
+            <div className="flex items-start gap-2 flex-1 bg-emerald-900/20 border border-emerald-700/30 rounded-xl px-4 py-3">
+              <CheckCircle2 size={13} className="text-emerald-400 shrink-0 mt-0.5" />
+              <p className="text-[11px] text-emerald-300 leading-relaxed">
+                <strong>Answer Key:</strong> The correct answer and explanation for every question in this paper — print it or check it after attempting the paper on your own.
+              </p>
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <button
+                onClick={() => window.print()}
+                className="flex items-center gap-2 px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-sm font-semibold transition-colors no-print"
+                title="Print answer key"
+              >
+                <Printer size={14} /> Print
+              </button>
+              <button
+                onClick={() => window.print()}
+                className="flex items-center gap-2 px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-sm font-semibold transition-colors no-print"
+                title="Save as PDF — select 'Save as PDF' in the print dialog"
+              >
+                <Download size={14} /> Download PDF
+              </button>
+            </div>
+          </div>
+
+          <div className="paper-print-area bg-white rounded-2xl overflow-hidden shadow-lg">
+            <AnswerKey questions={questions} title={title} examType={examType} subject={subject} />
+          </div>
         </motion.div>
       )}
 

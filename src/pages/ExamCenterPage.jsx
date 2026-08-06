@@ -3,15 +3,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import {
   Sparkles, Play, Clock, FileText, Plus, Loader2, Trophy,
-  Target, BookOpen, X, ChevronRight, Zap, GraduationCap, Printer, ClipboardList,
+  Target, BookOpen, X, ChevronRight, Zap, GraduationCap, Printer, ClipboardList, Bell,
 } from 'lucide-react';
-import { generateQuestionPaper, toEngineFormat } from '../lib/questionGen';
 import { getExamPattern, getMarkingLabel, getSubjectQuestionCount, getTestDurationMinutes } from '../lib/examPattern';
-import { publishTest, getPublishedTests, getCompletedTestIds, supabase, publishPYQPaper } from '../lib/supabase';
+import { getPublishedTests, getCompletedTestIds, supabase, publishPYQPaper } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
-import { checkQuota, incrementQuota } from '../lib/quota';
+import { checkQuota } from '../lib/quota';
 import { getFeatureFlag, FLAGS } from '../lib/featureFlags';
 import PaywallModal from '../components/ui/PaywallModal';
+import { startBackgroundPaperGeneration, isGenerationInFlight } from '../lib/backgroundGeneration';
 
 import { useSyllabusSubjects } from '../hooks/useSyllabusSubjects';
 import { useSyllabusChapters } from '../hooks/useSyllabusChapters';
@@ -94,7 +94,7 @@ function ChapterPicker({ examType, subject, selected, onChange, disabled }) {
 }
 
 /* ── Generate modal ──────────────────────────────────────── */
-function GenerateModal({ onClose, onDone }) {
+function GenerateModal({ onClose, onStarted }) {
   const { currentUser, isPremium, userProfile } = useAuth();
 
   // Lock exam type to the student's registered target exam. userProfile.target_exam is
@@ -107,7 +107,6 @@ function GenerateModal({ onClose, onDone }) {
   const [subject,    setSubject]    = useState(subjectList[0] || 'Physics');
   const [difficulty, setDiff]       = useState('Mixed');
   const [chapters,   setChapters]   = useState([]);
-  const [status,     setStatus]     = useState('idle');
   const [error,      setError]      = useState('');
   const [showPaywall, setShowPaywall] = useState(false);
 
@@ -120,52 +119,48 @@ function GenerateModal({ onClose, onDone }) {
   const examPat     = getExamPattern(examType);
   const questionCount = getSubjectQuestionCount(examPat);
 
+  // Generation now runs in the background (startBackgroundPaperGeneration
+  // is fire-and-forget, not tied to this component's lifecycle) — closing
+  // this modal or navigating away no longer aborts anything, unlike the
+  // previous blocking-modal flow. That's intentional: navigating away is
+  // now the expected, supported path (Item 2), not an abandonment signal,
+  // so there is deliberately no AbortController here any more.
   const handleGenerate = async () => {
     setError('');
-    const quota = await checkQuota(currentUser?.uid, 'ai_questions_used', isPremium, undefined, questionCount);
-    if (!quota.allowed) { setShowPaywall(true); return; }
-    setStatus('generating');
-    const examQTypes = EXAM_QTYPES[examType] || ['MCQ'];
-    try {
-      const raw = await generateQuestionPaper({
-        subject,
-        topics:        chapters.join(', '), // empty = full-syllabus spread across all chapters
-        examType,
-        difficulty,
-        count:         questionCount,
-        qTypes:        examQTypes,
-        rotationSlot:  Math.floor(Math.random() * 5),
-      });
-      const formatted = toEngineFormat(raw?.questions ?? raw, subject, examType);
-      if (!formatted.length) throw new Error('No questions returned. Try different settings.');
-
-      setStatus('publishing');
-      const duration    = getTestDurationMinutes(examPat);
-      const published   = await publishTest({
-        title:           `${examType} · ${subject} · ${difficulty}`,
-        subject,
-        examType,
-        difficulty,
-        questions:       formatted,
-        durationMinutes: duration,
-        createdBy:       'student',
-      });
-
-      incrementQuota(currentUser?.uid, 'ai_questions_used', formatted.length).catch(() => {});
-      onDone(published.id);
-    } catch (e) {
-      setError(e.message || 'Generation failed. Please try again.');
-      setStatus('idle');
+    if (isGenerationInFlight(currentUser?.uid)) {
+      setError('A paper is already generating — check back in a moment.');
+      return;
     }
-  };
+    // Charges the paper_generations bucket (1 unit per full paper), not
+    // ai_questions_used — a full paper's question count (e.g. 45 for NEET)
+    // would otherwise exceed the whole free daily AI-question allowance in
+    // one generation, since that bucket is meant for individual practice
+    // questions (Practice Generator/Flashcards/Study Plan), not full papers.
+    const quota = await checkQuota(currentUser?.uid, 'paper_generations_used', isPremium);
+    if (!quota.allowed) { setShowPaywall(true); return; }
 
-  const isRunning = status !== 'idle';
+    const examQTypes = EXAM_QTYPES[examType] || ['MCQ'];
+    const duration    = getTestDurationMinutes(examPat);
+
+    startBackgroundPaperGeneration({
+      firebaseUid:     currentUser?.uid,
+      subject,
+      topics:          chapters.join(', '), // empty = full-syllabus spread across all chapters
+      examType,
+      difficulty,
+      count:           questionCount,
+      qTypes:          examQTypes,
+      durationMinutes: duration,
+    }).catch(() => {}); // failure already surfaced via in-app notification
+
+    onStarted();
+  };
 
   return (
     <motion.div
       className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-      onClick={(e) => { if (e.target === e.currentTarget && !isRunning) onClose(); }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <motion.div
         className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-5"
@@ -176,11 +171,9 @@ function GenerateModal({ onClose, onDone }) {
             <h3 className="font-bold text-slate-900 text-lg">Generate New Paper</h3>
             <p className="text-xs text-slate-500 mt-0.5">AI creates {questionCount} questions based on your uploaded PYQs</p>
           </div>
-          {!isRunning && (
-            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
-              <X size={18} />
-            </button>
-          )}
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+            <X size={18} />
+          </button>
         </div>
 
         {/* Locked exam badge */}
@@ -195,20 +188,20 @@ function GenerateModal({ onClose, onDone }) {
           <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2 block">Subject</label>
           <div className="flex flex-wrap gap-2">
             {subjectList.map((s) => (
-              <Chip key={s} label={s} selected={subject === s} onClick={() => !isRunning && setSubject(s)} />
+              <Chip key={s} label={s} selected={subject === s} onClick={() => setSubject(s)} />
             ))}
           </div>
         </div>
 
         {/* Chapters — live from Admin > Syllabus */}
-        <ChapterPicker examType={examType} subject={subject} selected={chapters} onChange={setChapters} disabled={isRunning} />
+        <ChapterPicker examType={examType} subject={subject} selected={chapters} onChange={setChapters} />
 
         {/* Difficulty */}
         <div>
           <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2 block">Difficulty</label>
           <div className="flex flex-wrap gap-2">
             {DIFFICULTIES.map((d) => (
-              <Chip key={d} label={d} selected={difficulty === d} onClick={() => !isRunning && setDiff(d)} />
+              <Chip key={d} label={d} selected={difficulty === d} onClick={() => setDiff(d)} />
             ))}
           </div>
         </div>
@@ -221,28 +214,22 @@ function GenerateModal({ onClose, onDone }) {
           <p>Estimated duration: {getTestDurationMinutes(examPat)} min · {examPat?.totalMarks ?? '—'} total marks</p>
         </div>
 
+        <div className="flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-[11px] text-slate-500">
+          <Bell size={13} className="text-slate-400 shrink-0 mt-0.5" />
+          Generates in the background — feel free to close this and keep using the app. We'll notify you the moment it's ready.
+        </div>
+
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-xs text-red-600">
             {error}
           </div>
         )}
 
-        {/* Status bar */}
-        {isRunning && (
-          <div className="flex items-center gap-2 text-sm text-primary-700 font-medium">
-            <Loader2 size={16} className="animate-spin" />
-            {status === 'generating' ? `Generating ${questionCount} questions… (~25 sec)` : 'Saving paper…'}
-          </div>
-        )}
-
         <button
-          disabled={isRunning}
           onClick={handleGenerate}
-          className="w-full py-4 rounded-2xl bg-primary-600 text-white font-bold flex items-center justify-center gap-2 hover:bg-primary-700 disabled:opacity-50 transition-colors"
+          className="w-full py-4 rounded-2xl bg-primary-600 text-white font-bold flex items-center justify-center gap-2 hover:bg-primary-700 transition-colors"
         >
-          {isRunning
-            ? <><Loader2 size={16} className="animate-spin" /> Working…</>
-            : <><Sparkles size={16} /> Generate &amp; Start Exam</>}
+          <Sparkles size={16} /> Start Generating
         </button>
       </motion.div>
 
@@ -346,22 +333,8 @@ function CoachingTestsSection({ firebaseUid, onStart, onStartPaper, paperModeEna
 
   useEffect(() => {
     if (!firebaseUid) { setLoading(false); return; }
-    supabase
-      .from('coaching_students')
-      .select('centre_id')
-      .eq('firebase_uid', firebaseUid)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (!data?.centre_id) { setLoading(false); return; }
-        return supabase
-          .from('centre_published_tests')
-          .select('id, title, subject, exam_type, difficulty, questions, duration_minutes, created_at, centre_id')
-          .eq('centre_id', data.centre_id)
-          .eq('is_active', true)
-          .order('created_at', { ascending: false })
-          .limit(20);
-      })
-      .then((res) => { if (res) setTests(res.data ?? []); })
+    supabase.rpc('student_list_centre_tests', { p_uid: firebaseUid })
+      .then(({ data }) => setTests(data ?? []))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [firebaseUid]);
@@ -588,10 +561,13 @@ export default function ExamCenterPage() {
   const handleStart      = (id) => navigate(`/test?id=${id}`);
   const handleStartPaper = (id) => navigate(`/paper-mode?id=${id}`);
 
-  const handleDone = (id) => {
+  // Generation now runs in the background (Item 2) — there's no synchronous
+  // "done" moment from the modal's perspective any more, just "started".
+  // The student gets notified (in-app toast + push) when it actually
+  // finishes; loadPapers() re-runs naturally next time this page mounts
+  // (e.g. via the notification's deep link), so the new paper just appears.
+  const handleGenerationStarted = () => {
     setShowModal(false);
-    loadPapers();          // refresh list first
-    navigate(`/test?id=${id}`);
   };
 
   return (
@@ -666,7 +642,7 @@ export default function ExamCenterPage() {
         {showModal && (
           <GenerateModal
             onClose={() => setShowModal(false)}
-            onDone={handleDone}
+            onStarted={handleGenerationStarted}
           />
         )}
       </AnimatePresence>

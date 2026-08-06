@@ -351,6 +351,37 @@ function HowItWorks() {
   );
 }
 
+function SuccessShowcase({ onGetStarted }) {
+  return (
+    <section className="max-w-6xl mx-auto px-4 sm:px-6 py-16 sm:py-20 text-center">
+      <span className="inline-block text-xs font-bold text-primary-600 uppercase tracking-wide mb-3">Your Success Story</span>
+      <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 max-w-2xl mx-auto">
+        Every topper started exactly where you are now
+      </h2>
+      <p className="text-slate-500 mt-3 max-w-lg mx-auto">
+        Thousands of NEET, JEE, and board students are already studying smarter with EWE — join them today.
+      </p>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}
+        className="relative max-w-lg mx-auto mt-6 h-[320px] sm:h-[420px]"
+      >
+        <ImgOrPlaceholder
+          src="/landing/ewe_img.png"
+          alt="Students celebrating exam success with EaseWithExam"
+          label="Drop ewe_img.png into public/landing/"
+          className="w-full h-full object-contain"
+        />
+      </motion.div>
+      <button
+        onClick={onGetStarted}
+        className="mt-4 inline-flex items-center gap-2 px-7 py-3.5 rounded-2xl bg-primary-600 hover:bg-primary-700 text-white font-bold shadow-lg shadow-primary-600/20 transition-colors"
+      >
+        Get Started Free <ArrowRight size={16} />
+      </button>
+    </section>
+  );
+}
+
 function PlanCard({ plan, highlight, onSelect }) {
   return (
     <div className={[
@@ -444,6 +475,7 @@ export default function LandingPage() {
       <ExploreSubjects />
       <WhySection />
       <HowItWorks />
+      <SuccessShowcase onGetStarted={() => setShowAuth(true)} />
       <Pricing onSelect={() => setShowAuth(true)} />
       <FinalCTA onGetStarted={() => setShowAuth(true)} />
       <PublicFooter />

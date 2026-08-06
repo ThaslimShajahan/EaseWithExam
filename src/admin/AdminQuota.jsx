@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Gauge, Zap, MessageSquare, ClipboardList, FileCheck, Headphones,
+  Gauge, Zap, MessageSquare, ClipboardList, FileCheck, Headphones, Files,
   Edit3, Save, X, Trash2, RotateCcw, Search, AlertTriangle, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -23,6 +23,7 @@ const FIELDS = [
   { key: 'mock_tests',        label: 'Mock Tests / wk',   icon: ClipboardList, color: 'text-blue-400'   },
   { key: 'paper_evaluations', label: 'Paper Evaluations', icon: FileCheck,     color: 'text-amber-400'  },
   { key: 'podcasts',          label: 'Podcasts',          icon: Headphones,   color: 'text-pink-400'   },
+  { key: 'paper_generations', label: 'Full Papers /day',  icon: Files,        color: 'text-cyan-400'   },
 ];
 
 // Map quota_config key → daily_usage_quota column
@@ -32,6 +33,7 @@ const USAGE_KEY = {
   mock_tests:        'mock_tests_used',
   paper_evaluations: 'paper_evaluations_used',
   podcasts:          'podcasts_used',
+  paper_generations: 'paper_generations_used',
 };
 
 function pctColor(pct) {
@@ -76,6 +78,7 @@ function PlanLimitsSection() {
       p_mock:              values.mock_tests,
       p_paper_evaluations: values.paper_evaluations,
       p_podcasts:          values.podcasts,
+      p_paper_generations: values.paper_generations,
     });
     if (error) { setErr(error.message); setSaving(false); return; }
     setConfig(c => c.map(r => r.plan_id === planId ? { ...r, ...values } : r));
@@ -331,6 +334,7 @@ function OverridesSection() {
       p_expires_at:        form.expires_at || null,
       p_paper_evaluations: values.paper_evaluations,
       p_podcasts:          values.podcasts,
+      p_paper_generations: values.paper_generations,
     });
     if (error) { setErr(error.message); setSaving(false); return; }
     const newRow = {

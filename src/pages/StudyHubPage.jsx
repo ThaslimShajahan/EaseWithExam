@@ -1,11 +1,12 @@
 import { lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Target, BookOpen, BookMarked, Sparkles, Headphones } from 'lucide-react';
+import { Target, BookOpen, BookMarked, Sparkles, Headphones, Star } from 'lucide-react';
 import SkeletonLoader from '../components/ui/SkeletonLoader';
 import HubTabBar from '../components/ui/HubTabBar';
 
 const StudyPlanPage     = lazy(() => import('./StudyPlanPage'));
 const NotesBrowser      = lazy(() => import('../components/study/NotesBrowser'));
+const ImportantQAPage   = lazy(() => import('../components/study/ImportantQAPage'));
 const ErrorNotebookPage = lazy(() => import('./ErrorNotebookPage'));
 const SummarizerPage    = lazy(() => import('./SummarizerPage'));
 const PodcastPage       = lazy(() => import('./PodcastPage'));
@@ -18,6 +19,7 @@ const PodcastPage       = lazy(() => import('./PodcastPage'));
 // Notes/Study Plan, not a progress metric.
 const TABS = [
   { key: 'notes',      label: 'Notes',          icon: BookOpen   },
+  { key: 'important',  label: 'Important Q&A',  icon: Star       },
   { key: 'notebook',   label: 'Error Notebook', icon: BookMarked },
   { key: 'plan',       label: 'Study Plan',     icon: Target     },
   { key: 'summarizer', label: 'Summarizer',     icon: Sparkles   },
@@ -26,6 +28,7 @@ const TABS = [
 
 const PAGES = {
   notes:      <div className="p-4 lg:p-0"><NotesBrowser /></div>,
+  important:  <div className="p-4 lg:p-0"><ImportantQAPage /></div>,
   notebook:   <ErrorNotebookPage />,
   plan:       <StudyPlanPage />,
   summarizer: <SummarizerPage />,

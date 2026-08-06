@@ -30,6 +30,13 @@ export function AuthProvider({ children }) {
   const [userProfile,  setUserProfile]  = useState(null);
   const [subscription, setSubscription] = useState(null);
   const [loading,      setLoading]      = useState(true);
+  // Set whenever fetching/creating the Supabase profile row fails for an
+  // otherwise-authenticated Firebase user (RLS/RPC error, network drop,
+  // anything). Route guards use this to show a real retry screen instead of
+  // silently waiting forever on a `userProfile` that structurally can never
+  // arrive once this has failed — see RequireNoAuth in App.jsx, which
+  // previously had no escape from that wait at all.
+  const [profileError, setProfileError] = useState(null);
 
   /* ── Supabase helpers ──────────────────────────────────── */
 
@@ -48,8 +55,28 @@ export function AuthProvider({ children }) {
       photo_url:    user.photoURL    || null,
     });
     setUserProfile(profile);
+    setProfileError(null);
     await loadSubscription(user.uid);
     return profile;
+  };
+
+  // Re-runs the same profile fetch onAuthStateChanged does on mount — exposed
+  // so the retry screen can recover from a transient failure (network blip,
+  // RLS/RPC misconfig) without forcing a full sign-out/sign-in round trip.
+  const retryProfile = async () => {
+    if (!currentUser) return;
+    setLoading(true);
+    try {
+      const profile = await getUser(currentUser.uid);
+      setUserProfile(profile);
+      setProfileError(null);
+      await loadSubscription(currentUser.uid);
+    } catch (err) {
+      console.error('Profile fetch error (retry):', err);
+      setProfileError(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   /* ── Auth state listener ───────────────────────────────── */
@@ -85,7 +112,13 @@ export function AuthProvider({ children }) {
       .then(async (result) => {
         if (result?.user) await createOrFetchProfile(result.user);
       })
-      .catch(console.error);
+      .catch((err) => {
+        console.error(err);
+        // onAuthStateChanged (below) still fires independently once Firebase's
+        // own auth state resolves, and will set its own profileError/loading —
+        // this catch only covers the profile-creation half of the redirect flow.
+        setProfileError(err);
+      });
 
     const unsub = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
@@ -93,13 +126,16 @@ export function AuthProvider({ children }) {
         try {
           const profile = await getUser(user.uid);
           setUserProfile(profile);
+          setProfileError(null);
           await loadSubscription(user.uid);
         } catch (err) {
           console.error('Profile fetch error:', err);
+          setProfileError(err);
         }
       } else {
         setUserProfile(null);
         setSubscription(null);
+        setProfileError(null);
       }
       setLoading(false);
     });
@@ -232,7 +268,8 @@ export function AuthProvider({ children }) {
 
   const value = {
     currentUser, userProfile, subscription, isPremium,
-    loading, signInWithGoogle, sendOTP, verifyOTP, completeOnboarding, signOut, refreshSubscription,
+    loading, profileError, retryProfile,
+    signInWithGoogle, sendOTP, verifyOTP, completeOnboarding, signOut, refreshSubscription,
   };
 
   return (

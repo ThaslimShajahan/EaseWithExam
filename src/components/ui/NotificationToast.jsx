@@ -22,8 +22,13 @@ export default function NotificationToast() {
         {
           event:  'INSERT',
           schema: 'public',
-          table:  'notifications',
-          filter: `firebase_uid=eq.${currentUser.uid}`,
+          // createNotification() (lib/notifications.js) inserts into
+          // user_notifications keyed by user_id — this was previously
+          // subscribed to a different table/column ('notifications' /
+          // firebase_uid) that nothing in the app ever writes to, so this
+          // toast has never actually fired for any real notification.
+          table:  'user_notifications',
+          filter: `user_id=eq.${currentUser.uid}`,
         },
         (payload) => {
           const n = payload.new;

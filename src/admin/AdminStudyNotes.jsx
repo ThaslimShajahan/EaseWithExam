@@ -499,7 +499,7 @@ export default function AdminStudyNotes() {
     setLoading(true);
     const [notesRes, centresRes] = await Promise.all([
       supabase.rpc('admin_list_study_notes', { p_caller: callerUid }),
-      supabase.from('coaching_centres').select('id,name,city').eq('status', 'active'),
+      supabase.rpc('admin_list_active_centres_lite', { p_caller: callerUid }),
     ]);
     setNotes(Array.isArray(notesRes.data) ? notesRes.data : []);
     setCentres(centresRes.data ?? []);

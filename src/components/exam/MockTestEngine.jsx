@@ -11,7 +11,7 @@ import { chatComplete } from '../../lib/aiProxy';
 import { useIsDesktop } from '../../hooks/useMediaQuery';
 import { SAMPLE_QUESTIONS, SAMPLE_NEET_TEST } from '../../data/sampleQuestions';
 import { useAuth } from '../../context/AuthContext';
-import { saveTestSession } from '../../lib/supabase';
+import { saveTestSession, clearExamAttemptMode, lockExamAttemptMode } from '../../lib/supabase';
 import { awardXP, incrementActivityCount } from '../../lib/gamification';
 import { saveWrongAnswers } from '../../lib/errorNotebook';
 import { createNotification } from '../../lib/notifications';
@@ -1013,7 +1013,20 @@ export default function MockTestEngine({
         questions={questions}
         hasSavedProgress={hasSaved}
         onBack={() => navigate(-1)}
-        onStart={() => { qStartRef.current = Date.now(); setStatus('in_progress'); }}
+        onStart={() => {
+          // "Start Fresh" (hasSaved true) discards old progress and counts as a
+          // genuinely new attempt — free the mode lock and re-take it for
+          // online immediately, so a student who backs out to Exam Center
+          // right after this click can still legitimately pick Paper Mode
+          // instead, per Item 7's "start fresh can offer mode choice again".
+          if (hasSaved && testId) {
+            clearExamAttemptMode(currentUser?.uid, testId)
+              .then(() => lockExamAttemptMode(currentUser?.uid, testId, 'online'))
+              .catch(() => {});
+          }
+          qStartRef.current = Date.now();
+          setStatus('in_progress');
+        }}
         onResume={resumeExam}
       />
     );

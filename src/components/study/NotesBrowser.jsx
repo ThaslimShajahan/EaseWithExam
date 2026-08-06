@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../context/AuthContext';
 import { isRelevantToStudent } from '../../lib/categories';
 import HubPageHeader from '../ui/HubPageHeader';
+import MathText from '../ui/MathText';
 
 const SUBJECT_COLORS = {
   Biology:     'bg-violet-100 text-violet-700',
@@ -16,7 +17,10 @@ const SUBJECT_COLORS = {
 // Note content is AI-generated with lightweight markdown (**bold** section
 // headings) — it was being dumped as a raw string, so students saw literal
 // asterisks instead of formatted headings. Paragraphs split on blank lines;
-// **bold** spans are parsed within each line.
+// **bold** spans are parsed within each line. Same handling as
+// SummarizerPage's renderer — segments go through MathText so any LaTeX in
+// the AI-generated notes (physics/chem/maths content) renders as equations
+// instead of literal $...$ text.
 function renderNoteContent(content) {
   const paragraphs = content.split(/\n\s*\n/);
   return paragraphs.map((para, pi) => (
@@ -25,8 +29,8 @@ function renderNoteContent(content) {
         <span key={li}>
           {line.split(/(\*\*[^*]+\*\*)/g).map((seg, si) =>
             seg.startsWith('**') && seg.endsWith('**')
-              ? <strong key={si} className="font-semibold text-slate-900">{seg.slice(2, -2)}</strong>
-              : <span key={si}>{seg}</span>
+              ? <strong key={si} className="font-semibold text-slate-900"><MathText text={seg.slice(2, -2)} /></strong>
+              : <MathText key={si} text={seg} />
           )}
           {li < lines.length - 1 && <br />}
         </span>

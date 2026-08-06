@@ -15,5 +15,9 @@ placeholders are shown instead.
                             CTA banner (desktop only, transparent PNG
                             recommended since it sits on a dark gradient).
 
+  ewe_img.png               "Your Success Story" section, between How It
+                            Works and Pricing. Centered showcase image,
+                            transparent PNG.
+
 Currently filled with a placeholder 3D character illustration set — swap
 any of these for on-brand art whenever you have it.

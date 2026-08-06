@@ -41,8 +41,14 @@ async function getOpenAI() {
 /**
  * Drop-in replacement for openai.chat.completions.create().
  * Returns the same shape as the OpenAI SDK response.
+ *
+ * @param {object} params
+ * @param {{ signal?: AbortSignal }} [opts] - pass an AbortController's signal
+ *   so a caller that unmounts mid-request (navigated away) can cancel the
+ *   in-flight call instead of letting it complete unattended in the
+ *   background (which would still burn quota and write its result).
  */
-export async function chatComplete(params) {
+export async function chatComplete(params, { signal } = {}) {
   if (USE_EDGE) {
     const res = await fetch(PROXY_URL, {
       method: 'POST',
@@ -51,6 +57,7 @@ export async function chatComplete(params) {
         'Authorization': `Bearer ${ANON_KEY}`,
       },
       body: JSON.stringify(params),
+      signal,
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -61,7 +68,7 @@ export async function chatComplete(params) {
 
   // Dev fallback — direct browser call (key never leaves local machine)
   const openai = await getOpenAI();
-  return openai.chat.completions.create(params);
+  return openai.chat.completions.create(params, { signal });
 }
 
 /**

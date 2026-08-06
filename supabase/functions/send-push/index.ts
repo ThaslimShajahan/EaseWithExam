@@ -194,10 +194,15 @@ serve(async (req) => {
 
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
-  // Verify caller is a platform admin
-  const { data: adminCheck } = await supabase
-    .from('admins').select('uid').eq('uid', caller_uid).eq('is_active', true).maybeSingle();
-  if (!adminCheck) return json(403, { error: 'Unauthorized' });
+  // Verify caller is either a platform admin, or pushing a notification to
+  // themselves only (self-notify — e.g. "your paper is ready" — needs no
+  // elevated privilege since it can't affect anyone but the caller).
+  const isSelfNotify = !!user_id && caller_uid === user_id;
+  if (!isSelfNotify) {
+    const { data: adminCheck } = await supabase
+      .from('admins').select('uid').eq('uid', caller_uid).eq('is_active', true).maybeSingle();
+    if (!adminCheck) return json(403, { error: 'Unauthorized' });
+  }
 
   // Read VAPID keys from platform_settings (no Supabase secrets needed)
   const { data: settings } = await supabase

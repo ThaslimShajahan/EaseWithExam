@@ -74,7 +74,6 @@ function DropZone({ onFiles, hasImages }) {
         type="file"
         accept="image/*"
         multiple
-        capture="environment"
         className="hidden"
         onChange={(e) => handleFiles(e.target.files)}
       />

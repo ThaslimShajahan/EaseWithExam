@@ -7,6 +7,13 @@ import {
 import { supabase } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 
+function getCallerUid() {
+  try {
+    const key = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch { return ''; }
+}
+
 /* ── Test UID constants (all cleanup queries target this prefix) ── */
 const TEST_PREFIX  = 'TEST_DUMMY_';
 const TEST_UIDS    = ['TEST_DUMMY_001', 'TEST_DUMMY_002', 'TEST_DUMMY_003'];
@@ -25,7 +32,9 @@ async function seedStudents() {
     onboarding_completed: true,
     auth_method:          'google',
   }));
-  const { error } = await supabase.from('users').upsert(rows, { onConflict: 'firebase_uid' });
+  const { error } = await supabase.rpc('admin_bulk_upsert_test_users', {
+    p_caller: getCallerUid(), p_rows: rows,
+  });
   if (error) throw new Error('users: ' + error.message);
   return `${rows.length} test students upserted`;
 }
@@ -84,9 +93,9 @@ async function seedQuestionHistory() {
       });
     });
   });
-  // Use upsert-like approach: delete first, then insert
-  await supabase.from('question_history').delete().in('user_id', TEST_UIDS);
-  const { error } = await supabase.from('question_history').insert(rows);
+  const { error } = await supabase.rpc('admin_seed_question_history', {
+    p_caller: getCallerUid(), p_uids: TEST_UIDS, p_rows: rows,
+  });
   if (error) throw new Error('question_history: ' + error.message);
   return `${rows.length} question history rows inserted`;
 }
@@ -106,30 +115,37 @@ async function seedWeakTopics() {
       });
     });
   });
-  await supabase.from('user_weak_topics').delete().in('user_id', TEST_UIDS);
-  const { error } = await supabase.from('user_weak_topics').insert(rows);
+  const { error } = await supabase.rpc('admin_seed_weak_topics', {
+    p_caller: getCallerUid(), p_uids: TEST_UIDS, p_rows: rows,
+  });
   if (error) throw new Error('user_weak_topics: ' + error.message);
   return `${rows.length} weak topic rows inserted`;
 }
 
 async function seedCoaching() {
-  // Delete old test centre first
-  await supabase.from('coaching_centres').delete().eq('name', TEST_CENTRE);
+  const callerUid = getCallerUid();
 
-  const { data: centre, error: cErr } = await supabase.from('coaching_centres').insert({
-    name:          TEST_CENTRE,
-    city:          'Mumbai',
-    contact_email: 'admin@testacademy.edu',
-    contact_phone: '9000000001',
-    plan:          'premium',
-    max_students:  100,
-    status:        'active',
-    notes:         'Seeded for testing',
-  }).select().single();
+  // Delete old test centre first
+  await supabase.rpc('admin_delete_test_rows', {
+    p_caller: callerUid, p_table: 'coaching_centres', p_col: 'name', p_values: [TEST_CENTRE],
+  });
+
+  const { data: centre, error: cErr } = await supabase.rpc('admin_upsert_coaching_centre', {
+    p_caller: callerUid, p_id: null,
+    p_fields: {
+      name:          TEST_CENTRE,
+      city:          'Mumbai',
+      contact_email: 'admin@testacademy.edu',
+      contact_phone: '9000000001',
+      plan:          'premium',
+      max_students:  100,
+      status:        'active',
+      notes:         'Seeded for testing',
+    },
+  });
   if (cErr) throw new Error('coaching_centres: ' + cErr.message);
 
   const students = TEST_UIDS.slice(0, 2).map((uid, i) => ({
-    centre_id:    centre.id,
     firebase_uid: uid,
     name:         `Test Student ${i + 1}`,
     email:        `test.student${i + 1}@dummy.edu`,
@@ -138,17 +154,23 @@ async function seedCoaching() {
     batch:        'Batch A 2025',
     target_exam:  'NEET',
   }));
-  const { error: sErr } = await supabase.from('coaching_students').insert(students);
-  if (sErr) throw new Error('coaching_students: ' + sErr.message);
+  for (const s of students) {
+    const { error: sErr } = await supabase.rpc('admin_add_coaching_student', {
+      p_caller: callerUid, p_centre_id: centre.id, p_fields: s,
+    });
+    if (sErr) throw new Error('coaching_students: ' + sErr.message);
+  }
 
-  const { error: aErr } = await supabase.from('coaching_assignments').insert({
-    centre_id:   centre.id,
-    title:       'Weekly Biology Test',
-    exam_type:   'NEET',
-    subject:     'Biology',
-    due_date:    new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
-    description: 'Seeded test assignment covering Cell Biology and Genetics',
-    questions:   JSON.stringify([]),
+  const { error: aErr } = await supabase.rpc('admin_upsert_coaching_assignment', {
+    p_caller: callerUid, p_centre_id: centre.id, p_id: null,
+    p_fields: {
+      title:       'Weekly Biology Test',
+      exam_type:   'NEET',
+      subject:     'Biology',
+      due_date:    new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
+      description: 'Seeded test assignment covering Cell Biology and Genetics',
+      questions:   [],
+    },
   });
   if (aErr) throw new Error('coaching_assignments: ' + aErr.message);
   return `1 centre, ${students.length} students, 1 assignment created`;
@@ -184,19 +206,24 @@ async function removeAllDummyData() {
     { table: 'user_weak_topics',   col: 'user_id' },
     { table: 'user_gamification',  col: 'user_id' },
     { table: 'daily_usage_quota',  col: 'user_id' },
-    { table: 'flashcards',         col: 'user_id' },
+    { table: 'flashcards',         col: 'firebase_uid' }, // was 'user_id' — not a real column, every cleanup run silently no-op'd on this table
     { table: 'notification_prefs', col: 'user_id' },
     { table: 'users',              col: 'firebase_uid' },
   ];
 
+  const callerUid = getCallerUid();
   const errors = [];
   for (const { table, col } of tables) {
-    const { error } = await supabase.from(table).delete().in(col, TEST_UIDS);
+    const { error } = await supabase.rpc('admin_delete_test_rows', {
+      p_caller: callerUid, p_table: table, p_col: col, p_values: TEST_UIDS,
+    });
     if (error) errors.push(`${table}: ${error.message}`);
   }
 
   // Remove test coaching centre (cascades to students + assignments)
-  const { error: cErr } = await supabase.from('coaching_centres').delete().eq('name', TEST_CENTRE);
+  const { error: cErr } = await supabase.rpc('admin_delete_test_rows', {
+    p_caller: callerUid, p_table: 'coaching_centres', p_col: 'name', p_values: [TEST_CENTRE],
+  });
   if (cErr) errors.push(`coaching_centres: ${cErr.message}`);
 
   if (errors.length) throw new Error(errors.join('\n'));
