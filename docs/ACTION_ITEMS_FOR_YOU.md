@@ -155,6 +155,33 @@ continue serving unreviewed generated questions with the validation now in place
 
 ---
 
+## FOLLOW-UP (gated) — use chapter_pattern_stats to STEER generation, not just score it
+
+Today the stats measure a paper after it is generated. Steering means feeding the
+measured chapter / type / marks mix into generation so the paper is built to
+match, rather than graded against it afterwards.
+
+**Level 1 — extend the existing allocation. ~2–3 hours.** Blueprint V2 already
+computes `blueprintAllocation` (chapter → target count) and injects it into the
+prompt. The same mechanism can carry target *type* and *marks* mixes from
+`chapter_pattern_stats`, so the ask becomes "6 questions on Circles, of which 3
+MCQ at 1 mark and 3 Case-Based at 4 marks". Low risk: it reuses proven plumbing,
+and `pattern_match` gives an immediate before/after read.
+
+*(Level 2, per-chapter generation batches, ~1–2 days, multiplies API calls by
+chapter count and runs into the 30,000 TPM ceiling. Level 3, over-generate and
+select the best-matching subset, ~3–5 days. Neither is worth scoping further
+until Level 1 has been tried.)*
+
+**GATED ON: a second paper per subject** (see below). Steering makes the
+generator imitate the measured pattern *harder*, which is only an improvement if
+the pattern is right. It currently rests on one paper per subject — steering hard
+toward a sample of one would faithfully reproduce 2025's particular emphasis,
+quirks included, and present it as "the exam pattern". A confident wrong answer
+is worse than the current honest-but-loose behaviour.
+
+---
+
 ## OPEN — a second paper per subject is needed, for two separate reasons
 
 Everything Phase 2 §3/§4b now computes rests on **one paper per subject, two
