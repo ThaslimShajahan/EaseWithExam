@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Settings, Upload, Image, Cookie, Palette, Globe, CheckCircle2, Loader2, AlertTriangle, Trash2 } from 'lucide-react';
 import { supabase, adminClearAllData } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
+import { invalidatePlatformSettings } from '../hooks/usePlatformSettings';
 
 function getCallerUid() {
   try {
@@ -124,6 +125,9 @@ export default function AdminPlatformSettings() {
         { before: settings[key] ?? null, after: value },
         `Platform setting "${key}" updated`);
       setSettings(prev => ({ ...prev, [key]: value }));
+      // Drop the shared cache so the logo/avatar update everywhere immediately
+      // instead of only after a full page reload.
+      invalidatePlatformSettings();
       setSaved(key);
       setTimeout(() => setSaved(''), 2500);
     } catch (e) {

@@ -13,8 +13,12 @@ import { usePlatformSettings } from '../../hooks/usePlatformSettings';
  * whenever unset or the image fails to load.
  */
 function VedaBadge({ size = 32 }) {
-  const { settings } = usePlatformSettings();
-  const url = settings?.ewe_avatar_url;
+  // usePlatformSettings returns the settings FLAT (`{ ...settings, loaded }`),
+  // not wrapped in a `settings` key. Destructuring `{ settings }` here yielded
+  // undefined on every render, so an admin-uploaded avatar was silently ignored
+  // and this always fell back to the logo. Every other consumer (EweLogo,
+  // AuthCard, PlatformChrome) already reads it flat.
+  const { ewe_avatar_url: url } = usePlatformSettings();
 
   return (
     <div

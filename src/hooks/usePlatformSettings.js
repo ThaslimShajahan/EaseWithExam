@@ -14,13 +14,36 @@ const DEFAULTS = {
 
 // Module-level cache — these rarely change, no need to refetch on every mount.
 let cache = null;
+// Components already mounted when a setting changes need telling; the cache
+// alone would keep serving the old value to them for the rest of the session.
+const subscribers = new Set();
+
+/**
+ * Drops the cache and re-renders every mounted consumer.
+ *
+ * Called by Admin > Platform > Settings after a save. Without it an admin who
+ * uploaded a new avatar or logo saw no change anywhere in the app until a full
+ * page reload — the upload had genuinely worked, it just wasn't observable.
+ */
+export function invalidatePlatformSettings() {
+  cache = null;
+  subscribers.forEach((fn) => fn());
+}
 
 export function usePlatformSettings() {
   const [settings, setSettings] = useState(cache ?? DEFAULTS);
   const [loaded,   setLoaded]   = useState(!!cache);
+  const [nonce,    setNonce]    = useState(0);
+
+  // Re-run the effect below when the cache is invalidated elsewhere.
+  useEffect(() => {
+    const bump = () => setNonce((n) => n + 1);
+    subscribers.add(bump);
+    return () => { subscribers.delete(bump); };
+  }, []);
 
   useEffect(() => {
-    if (cache) return;
+    if (cache) { setSettings(cache); setLoaded(true); return; }
     supabase
       .from('platform_settings')
       .select('key, value')
@@ -32,7 +55,9 @@ export function usePlatformSettings() {
         setSettings(merged);
         setLoaded(true);
       });
-  }, []);
+    // `nonce` is the invalidation signal — without it in the deps this effect
+    // would never re-run and the invalidate call above would do nothing.
+  }, [nonce]);
 
   return { ...settings, loaded };
 }
