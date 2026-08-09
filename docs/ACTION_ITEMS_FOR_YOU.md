@@ -155,6 +155,31 @@ continue serving unreviewed generated questions with the validation now in place
 
 ---
 
+## OPEN — a second paper per subject is needed, for two separate reasons
+
+Everything Phase 2 §3/§4b now computes rests on **one paper per subject, two
+subjects, one year** — 34 Class 10 Mathematics + 53 Class 10 Science questions
+from 2025. A second paper each is the cheapest thing that improves it, and it
+settles two distinct questions at once.
+
+**1. It firms up the stats.** `chapter_pattern_stats` currently reports a single
+paper's chapter mix as if it were the subject's pattern. One paper is a sample of
+one: CBSE rotates emphasis year to year, so a chapter carrying 6 questions in
+2025 may carry 2 in 2024. Blueprint V2 and `pattern_match` both allocate and
+score against that single sample. Two papers roughly halves the variance; three
+to five would make year-over-year trend analysis possible at all (see the
+deferred `year` axis).
+
+**2. It settles the over-spreading question** (detailed below) — whether the
+closed chapter list is being treated as a vocabulary or as a quota.
+
+**What to upload:** one more CBSE Class 10 Mathematics and one more Class 10
+Science board paper, any year other than 2025, through Admin > Content Intake
+with the same settings. Nothing needs re-running afterwards; the view is live and
+recomputes on read.
+
+---
+
 ## OPEN — check chapter over-spreading when more papers are uploaded
 
 `runPYQExtraction` now hands the model a **closed list** of syllabus chapters and

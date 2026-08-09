@@ -1105,6 +1105,7 @@ export default function AdminPaperGen() {
   const [showPubDlg,       setShowPubDlg]        = useState(false);
   const [sourceMeta,       setSourceMeta]        = useState(null); // { pyqCount, studyNotesCount }
   const [blueprintMatchPct, setBlueprintMatchPct] = useState(null);
+  const [patternMatch,      setPatternMatch]      = useState(null);
   const paperRef = useRef(null);
 
   const toggleType = (t) =>
@@ -1130,6 +1131,7 @@ export default function AdminPaperGen() {
     setQuestions([]);
     setSourceMeta(null);
     setBlueprintMatchPct(null);
+    setPatternMatch(null);
     setShowAnswers(false);
     setPublished(false);
     try {
@@ -1140,6 +1142,7 @@ export default function AdminPaperGen() {
       let qs   = result?.questions ?? result;
       const meta = result?.meta ?? null;
       if (result?.blueprint_match_pct !== undefined) setBlueprintMatchPct(result.blueprint_match_pct);
+      setPatternMatch(result?.pattern_match ?? null);
       if (!Array.isArray(qs)) {
         qs = qs?.questions ?? qs?.data ?? qs?.items ?? Object.values(qs ?? {}).find(Array.isArray) ?? [];
       }
@@ -1516,7 +1519,7 @@ export default function AdminPaperGen() {
                     </span>
                   ))}
                 </div>
-                {(sourceMeta || blueprintMatchPct !== null) && (
+                {(sourceMeta || blueprintMatchPct !== null || patternMatch) && (
                   <div className="flex flex-wrap gap-2 mt-2 pt-2 border-t border-white/5">
                     <span className="text-[10px] text-slate-500 uppercase tracking-widest self-center">Sources used:</span>
                     {sourceMeta && <>
@@ -1529,7 +1532,28 @@ export default function AdminPaperGen() {
                     </>}
                     {blueprintMatchPct !== null && (
                       <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${blueprintMatchPct >= 80 ? 'bg-violet-900/60 text-violet-300' : 'bg-amber-900/40 text-amber-300'}`}>
-                        {blueprintMatchPct}% pattern-matched
+                        {blueprintMatchPct}% blueprint-matched (chapter)
+                      </span>
+                    )}
+                    {/* Measured against real past-year papers for this exam+subject.
+                        hasData:false is rendered as "no baseline", never as 0% —
+                        a paper cannot mismatch a pattern that does not exist. */}
+                    {patternMatch?.hasData && (
+                      <>
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${patternMatch.overall >= 70 ? 'bg-emerald-900/60 text-emerald-300' : patternMatch.overall >= 45 ? 'bg-amber-900/40 text-amber-300' : 'bg-red-900/40 text-red-300'}`}
+                              title={`Measured against ${patternMatch.basedOn.questions} real past-year questions across ${patternMatch.basedOn.chapters} chapters`}>
+                          {patternMatch.overall}% PYQ-pattern match
+                        </span>
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400"
+                              title="How closely the generated paper's chapter / question-type / marks spread mirrors real past-year papers. Difficulty is derived from marks and shown for reference only.">
+                          chapter {patternMatch.chapter}% · type {patternMatch.type}% · marks {patternMatch.marks}%
+                        </span>
+                      </>
+                    )}
+                    {patternMatch && !patternMatch.hasData && (
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-500"
+                            title={patternMatch.reason}>
+                        no PYQ baseline for this subject
                       </span>
                     )}
                   </div>
