@@ -4,6 +4,39 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-10 (session 19) — §3 pattern stats and §4b paper scoring, narrowed to what the data supports
+
+### §3 — `chapter_pattern_stats`, deliberately two axes short of its original scope
+
+A **view**, not a materialised table: `pyq_questions` is 87 rows and a stale blueprint is worse than a marginally slower query. Nothing to refresh, nothing to drift.
+
+§3 was scoped as *chapter / year / difficulty / type*. Two of those four carry no information in the data that exists, so they are **absent rather than present-and-useless** — aggregating a constant column produces something that looks like data and is not:
+
+- **`year`** — every loaded question is 2025. Year-over-year trend needs 3–5 years per subject, which is more papers, not more SQL.
+- **`difficulty`** — `pyq_questions.difficulty` is hardcoded `'Medium'` by `savePYQRows`, and `runPYQExtraction` never asks the model for it. **Difficulty is derived from marks instead** (≥5 hard, 3–4 medium, ≤2 easy), which is the better signal anyway: marks are set by the exam board rather than guessed, and a 5-mark Long Answer really is harder than a 1-mark MCQ.
+
+What it does aggregate, per chapter: `question_count`, `total_marks`, `avg_marks`, `pct_of_questions`, `pct_of_marks`, and jsonb breakdowns by question type, marks, section and derived difficulty. 27 chapters across the two loaded subjects.
+
+`technique_frequency` is **not** built. `pyq_questions` has no techniques column, and `knowledge_base`'s equivalent holds 1,189 distinct free-text values across 2,095 rows — that needs a controlled vocabulary before aggregation means anything.
+
+### No data is not zero
+
+Only 2 of 11 exam+subject combinations have any PYQs. `getChapterPatternStats()` always returns the same shape with an explicit `hasData` flag and a human-readable reason, and callers must branch on that rather than on `chapters.length` — which is 0 both when there is genuinely no data and when a query fails. Verified live across seven combinations: the two with papers return real stats, and CBSE Class 11 Physics/Biology, Class 9 Science, Class 8 Mathematics and NEET Physics all return *"No past-year questions have been uploaded for … yet"* rather than an empty table a UI would happily render as a red 0%.
+
+### §4b — scoring generated papers on chapter, type and marks
+
+`generateQuestionPaper` now returns `pattern_match` alongside the existing `blueprint_match_pct`. The difference matters: `blueprint_match_pct` only exists when the 20-PYQ allocation threshold fired and only scores **chapter**. `pattern_match` works off whatever measured data exists and scores **chapter, question type and marks** separately, plus derived difficulty.
+
+Scoring reuses the total-variation formula already behind `blueprint_match_pct` (100 − half the summed absolute percentage difference), so the new per-dimension numbers are directly comparable to the one already displayed. Difficulty is reported but **excluded from the headline average** — it is derived from marks, so folding it in would count the same signal twice.
+
+Sanity-checked against a deliberately lopsided paper (10 questions, all MCQ, all 1 mark, all one chapter): Class 10 Mathematics scores overall 43 (chapter 18, type 53, marks 59) and Science 30 (chapter 15, type 28, marks 47). A bad paper scores badly, which is the point.
+
+Scoring is wrapped so a failure logs and returns undefined rather than losing a generated paper — it is reporting, not a gate.
+
+One bug caught by its own test: `difficultyFromMarks(null)` returned `'easy'`, because `Number(null)` is 0. A question with no marks was being labelled the easiest possible rather than unknown.
+
+---
+
 ## 2026-08-10 (session 18) — Step 4: real PYQs loaded, chapter attribution fixed
 
 Two real CBSE Class 10 board papers (2025 Mathematics Standard and Science) are in `pyq_questions`. **Blueprint V2's 20-question threshold now passes for both subjects** — the first time it has been reachable for any exam+subject.

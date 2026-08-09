@@ -2,6 +2,7 @@ import { supabase } from './supabase';
 import { getTopicFrequency } from './supabase';
 import { chatComplete, embedText } from './aiProxy';
 import { getFeatureFlag, FLAGS } from './featureFlags';
+import { getChapterPatternStats, scorePaperAgainstPattern } from './patternStats';
 import { getChapters } from './syllabus';
 import { attachDiagrams } from './diagrams';
 // getExamPattern() checks admin-uploaded paper_templates overrides before
@@ -1244,10 +1245,35 @@ MATCH THE FOLLOWING — mandatory shape, options must NEVER be null for this typ
     diagramCount = await attachDiagrams(allQuestions, { signal });
   } catch { /* figures are enrichment, not a reason to lose the paper */ }
 
+  // §4b: score the finished paper against what real past-year papers for this
+  // exam+subject actually ask — chapter mix, question-type mix and marks mix,
+  // not just chapter. Unlike blueprint_match_pct this does not depend on the
+  // 20-PYQ allocation threshold having fired; it works off whatever measured
+  // data exists, and reports hasData:false when there is none. A paper cannot
+  // be "0% matching" a pattern that does not exist.
+  let patternMatch;
+  try {
+    patternMatch = scorePaperAgainstPattern(
+      allQuestions.map((q) => ({
+        chapter: q.chapter ?? q.topic ?? null,
+        type:    q.type ?? 'MCQ',
+        marks:   q.marks,
+      })),
+      await getChapterPatternStats(examType, subject),
+    );
+    if (import.meta.env.DEV && patternMatch?.hasData) {
+      console.log(`[questionGen] pattern match — overall ${patternMatch.overall}% (chapter ${patternMatch.chapter}%, type ${patternMatch.type}%, marks ${patternMatch.marks}%)`);
+    }
+  } catch (e) {
+    // Scoring is reporting, never a reason to lose a generated paper.
+    console.warn('[questionGen] pattern scoring failed:', e.message);
+  }
+
   return {
     questions:           allQuestions,
     blueprint_match_pct: blueprintMatchPct,
     allocation_table:    allocationTable,
+    pattern_match:       patternMatch,
     meta: {
       pyqCount:            pyqExamples.length,
       studyNotesCount:     studyNotes.length,
