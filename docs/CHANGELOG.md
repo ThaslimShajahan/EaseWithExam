@@ -4,6 +4,108 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-10 (session 15) — full corpus load: 148 files, and the four bugs it took to get there
+
+Loaded the whole local NCERT STEM corpus into `knowledge_base` (option D — STEM only, figures off, concurrency 1) and backfilled `study_notes` from it. **148/148 files, 4,458 chunks, 0 outstanding failures.** Getting there surfaced four separate defects, three of them mine from session 14.
+
+### The TPM ceiling — a reasoning error, corrected
+
+Session 14 claimed the smaller notes batch kept reserved tokens under the org's 30,000 TPM ceiling. Per call that was true; in aggregate it was backwards. OpenAI charges `max_tokens` as **reserved**, not consumed, so the real unit is tokens per *minute*:
+
+```
+input ~3,200 + max_tokens 6,000  =  ~9,200 reserved/call  ->  ~3.3 calls/min
+```
+
+A 74.6k-char Physics chapter needs ~10 calls, so one file alone wanted ~92,000 reserved tokens — three minutes of the entire org budget, with zero headroom for the file after it. Files 1–52 (short Biology and Class 10 Science chapters) stayed under; Chemistry, Maths and Physics did not. `keph104` and `keph107` failed with `Limit 30000, Used 30000`.
+
+Fixed by sizing `max_tokens` from measured output instead of padding: **6,000 → 3,000**, now a documented `NOTES_MAX_TOKENS` constant. A batch yields 5–8 chunks and the largest chunk ever measured was 1,092 characters, so real output lands near 2,000–2,500 tokens — 6,000 was reserved on every call and thrown away. That lifts sustainable throughput to ~4.8 calls/min.
+
+**Verified no quality cost**, on the same file under both settings (`keph104`, "Laws of Motion"):
+
+| | max_tokens 6000 | max_tokens 3000 |
+|---|---|---|
+| chunks | 51 | 50 |
+| median chunk | 630 chars | 650 |
+| retention | 32,721 chars | 34,383 |
+
+Across the full corpus, the 71 files loaded at 3,000 have a *higher* median (607 vs 600) and a *lower* rate of chunks ending mid-sentence (0.2% vs 0.3%) than the 77 loaded at 6,000. Added a `finish_reason === 'length'` guard that throws a named error rather than letting a truncated response fail as an opaque `JSON.parse` offset — it never fired across ~700 calls.
+
+Backoff alone could not have fixed this. A 429 anywhere in a file throws out the **whole file**, and the retry restarts from batch 1 — so a file needing more calls than one minute's budget allows re-saturates at the same point forever. `keph107` burned all six attempts (380s) three separate times before the ceiling was raised.
+
+**Still open:** `runPYQExtraction` reserves `max_tokens: 16000` — over half the org's entire per-minute budget in one call. Same hazard, latent on the question-paper path, untouched here.
+
+### `knowledge_base` insert: one statement was too wide
+
+`adminSaveKnowledgeChunks` inserted every chunk in a single `INSERT`. A dense chapter builds 50+ rows each carrying a 1,536-float embedding, which hit Postgres's `statement_timeout` and was cancelled outright — `keph104` lost a full extraction pass at the write step, after all the AI cost was already paid. Now inserted in batches of 20, matching `_addEmbeddings` directly above it.
+
+Batching costs the all-or-nothing guarantee a single statement gave for free, so a failed batch now **rolls back the rows this call already wrote** before throwing; without that, the loader's retry (it only checkpoints successes) would duplicate them. If the cleanup itself fails the error says so explicitly. This also fixes the same latent bug on the admin Content Intake path, where a long chapter would have failed identically.
+
+### Loader hardening — three ways a run died silently
+
+`scripts/bulk-load-corpus.mjs` only. All three shared one failure signature: the run kept going and reported every remaining file as a genuine failure.
+
+1. **Chromium OOM.** All 148 files ran through one long-lived page, each loading a whole PDF as an ArrayBuffer into the same renderer. It crashed around file 6–7 every time, and the loop then ran the rest of the queue against the corpse — 20 files "failed" in milliseconds. Added crash detection, one honest retry on a rebuilt page, and proactive context recycling (`--recycle`, default 8). The first attempt at this was insufficient: the crash takes the **whole browser process**, not just the tab, so reviving also relaunches Chromium on `!browser.isConnected()`.
+2. **Dead dev server.** Port 5173 died mid-run, producing an identical-looking cascade with a completely different cause (`Failed to fetch dynamically imported module`) that cost another 10 files. Added a preflight fetch of `/src/lib/pdfVision.js` that refuses to start rather than emit a queue-length list of misleading failures.
+3. **Background runs terminated.** Two long runs ended with no error, no exit code, no crash trace. Cause never established; worked around by running in bounded foreground slices. The per-file checkpoint made every interruption cost at most one file.
+
+### `study_notes` backfill
+
+The bulk loader writes `knowledge_base` only — `admin_upsert_study_note` checks `p_caller` against `admins`, and a headless script has no admin identity. But Content Intake writes **both** tables deliberately (`saveNoteChunks`), so bulk-loaded chapters were invisible to Admin > Study Notes, Content Map, the student `NotesBrowser`, and `getStudyChapters()`'s chapter picker. Confirmed live: 345 Class 10 Science chunks in `knowledge_base`, zero Class 10 Science rows in `study_notes` — which is why the Study Notes subject chips showed All/Mathematics/English and no Science.
+
+New `scripts/backfill-study-notes.mjs` groups existing `knowledge_base` rows by (exam_type, subject, chapter) and creates the missing note per chapter. **No re-extraction and no API cost** — every field already exists as a column, and `embedding` is excluded from the read. The body is reconstructed to be byte-shaped like an intake-written note: `buildKbRows` stores `heading\n\ncontent`, so splitting on the first blank line recovers both halves and re-emits `**heading**\ncontent`.
+
+It only ever adds: a skip-set of existing (exam_type, subject, chapter) keys is built before any write, every call passes `p_id: null`, and re-running writes nothing. **29 rows before → 191 after (+162), 0 failed**, with the 29 pre-existing rows untouched.
+
+**Known limitation, documented in the script:** chunk order within a chapter is not reconstructable. `knowledge_base` has no chunk-index column and `created_at` is transaction time — all 35 chunks of "Life Processes" share one identical timestamp. The backfill reads with no `ORDER BY`, which returns physical (= insertion) order for an insert-only table. Best-effort, not guaranteed.
+
+### Cleanup: front matter and split artifacts removed from both tables
+
+Making the corpus visible in the notes library also made its junk visible. Ten "chapters" were not chapters, and they fell into two groups that look alike in a list and are not the same problem at all. Telling them apart needed the sibling chapters from each one's **source file**, not the title:
+
+**Front matter (5 notes, 87 chunks).** Four files produced nothing but front matter, so nothing real was attached to them: `CURIOSITY INTEX.pdf` → "Foreword and Introduction" + "The Constitution of India"; `LEARNING MATERIAL SHEETS & INDEX.pdf` → "Foreword"; `Ganithaprakash part 1 INDEX.pdf` and `GANITA MANJARI.pdf` → "Foreword and Introduction". The NCERT short-code filter in the loader (`isFrontMatter`) couldn't catch these because they don't use short codes — the rule only works on `jesc1an`-style names.
+
+**Split artifacts (5 notes, 8 chunks).** Not front matter at all — the session 14 chapter-splitting failure surviving in miniature. Each is a tiny sibling of a dominant chapter from the *same* file: "Game of Hex" (1 chunk) beside "The Balancing Act" (31), "Peaceful Knights" (1) beside "Fractions as Percentages" (37), "Cell Signaling" (2) beside "Metabolic Pathways" (22) and "Cell Cycle" (18).
+
+Deleted from `study_notes` first (**191 → 181**), then the corresponding chunks from `knowledge_base` (**4,472 → 4,377**, 95 rows). Removing the note alone would have left the chunks retrievable by the doubt-tutor — a student could still have been served "Foreword" as Class 8 Maths.
+
+**The filter was chapter identity + source file, never source file alone.** Three of the artifact files also contain legitimate chapters, so a file-wide delete would have destroyed a 31-chunk chapter to remove a 1-chunk artifact. Verified after the fact: all ten deleted chapter names return 0 rows, the six legitimate siblings are intact at their exact original counts, and 144 of 148 corpus files still have chunks (the missing four being the all-front-matter ones).
+
+---
+
+## 2026-08-10 (session 14) — study-note chunking: coverage, chapter splitting, text-layer equations
+
+Preparing the full 148-file NCERT bulk load surfaced three defects in `runNotesExtraction`, all of which would have been baked into every row the load wrote.
+
+**1. One call per chapter meant the model summarised instead of transcribing.** A 22-page chapter went in as a single 30,000-char batch and came back as ~14 chunks averaging ~170 characters — an outline, not the book. This is an output-length prior, not an instruction-following failure: telling the model harder to write more moved the median only 169 → 284 chars. Fixed by shrinking `NOTES_BATCH_CHARS` to 8,000 (~6 pages), where "about one chunk per page" is a request the model will actually satisfy. Coverage now comes from batching, not from nagging.
+
+> **Correction (session 15).** This entry originally claimed the smaller batch also drops each call's reserved tokens "well under the 30,000 TPM ceiling." That was true per call and wrong in effect, and it is the reasoning error that cost two files mid-load. Shrinking the batch multiplied *calls per file* roughly fourfold, so tokens reserved per *minute* went up, not down. See session 15 for the measurement and the fix.
+
+**2. Chapters were being split into sections.** The prompt said "return a single lesson if it's really one chapter" but never defined a lesson, so one Class 8 Maths chapter came back as three: "A Square and A Cube", "Understanding Perfect Squares", "Cubes and Cube Roots" — the last two are sections of the first. That corrupts chapter-level analytics downstream, and batching made it worse, since a batch starting mid-chapter had no idea what it was in the middle of. Two fixes: the prompt now defines a lesson as a whole Contents-page chapter with a worked wrong/right example and pushes section headings into the chunk `heading` field, and each batch after the first is told which lesson titles earlier batches already produced so a continuation reuses the exact title instead of coining its own.
+
+**3. Merging a multi-batch lesson dropped its figures and equations.** The merge widened `page_start`/`page_end` but not `marker_start`/`marker_end`. `buildKbRows` filters figures and equations by that marker range, so a chapter assembled from four batches kept only the first batch's markers and silently discarded everything past its opening pages. Markers now widen with the pages.
+
+**Also added: text-layer equation harvesting.** Equations previously came only from vision, which fires only on pages that trip the thin-text or raster-image gate — so on a cleanly typeset chapter, where vision never runs, every equation in the book was lost. Chunks now carry a `latex[]` field harvested from the text they were built from (`chunkLatex()`), and `buildKbRows` unions it with the vision set, chunk-level first since it is the better-attributed of the two.
+
+### Verified on two files, different subjects and structures
+
+Dry runs (extraction + row-building, no DB writes), each a 22-page chapter:
+
+| | Class 8 Maths — *A Square and A Cube* | Class 11 Physics — *Laws of Motion* |
+|---|---|---|
+| lessons returned | 1 (was 3) | 1 |
+| chunks | 24 (was ~14) | 51 |
+| median chunk | 526 chars (was 169) | 630 chars |
+| in the 600–1800 band | 4 / 24 | 27 / 51 |
+| stored vs source chars | 12.6k / 31.3k | 32.7k / 74.6k |
+| distinct LaTeX | 76 (was 0) | 80 |
+| `content_type` spread | prose 23, definition 1 | prose 30, solved_example 16, law 3, derivation 1, definition 1 |
+
+The fix generalises: the Physics chapter, which is denser and more heavily mathematical, came back as one lesson with correct printed page numbers (51–70) and markers spanning the whole file, and its classification spread is genuinely varied rather than collapsing to `prose`. Chunks still run shorter than the 100–300 word target more often than not — accepted at this quality level for now rather than shrinking batches further.
+
+**Known caveat, unchanged by this work:** vision-harvested equations are unioned in at *lesson* granularity, so when vision does run every chunk in that lesson inherits the whole set — which is why all 51 Physics chunks report `has_equations`. It barely affects the bulk load, where figures are off and vision fires on only ~3% of pages, leaving `latex` almost entirely chunk-attributed.
+
+---
+
 ## 2026-08-10 (session 13b) — production: admin login unblocked, avatar upload fixed
 
 Two production issues, both traced to infrastructure rather than app code.

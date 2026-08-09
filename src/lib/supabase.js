@@ -375,8 +375,39 @@ export async function adminSaveKnowledgeChunks(chunks) {
       `${failedCount} KB chunk(s) inserted without embeddings — embed API unavailable`);
   }
 
-  const { data, error } = await supabase.from('knowledge_base').insert(rows).select('id');
-  if (error) throw new Error(error.message);
+  // Inserted in batches, not as one statement. A dense chapter builds 50+ rows
+  // each carrying a 1536-float embedding, and a single INSERT that wide hits
+  // Postgres's statement_timeout and is cancelled outright — the whole chapter
+  // lost after all the extraction work was already paid for (seen on
+  // keph104.pdf, "Laws of Motion", 51 rows). 20 matches _addEmbeddings above.
+  const INSERT_BATCH = 20;
+  const inserted = [];
+  for (let i = 0; i < rows.length; i += INSERT_BATCH) {
+    const { data: part, error } = await supabase
+      .from('knowledge_base')
+      .insert(rows.slice(i, i + INSERT_BATCH))
+      .select('id');
+
+    if (error) {
+      // Batching costs the all-or-nothing guarantee a single statement gave us:
+      // without this, a failure midway leaves earlier batches committed, and a
+      // retry (the bulk loader re-runs whatever it didn't checkpoint) would
+      // insert those rows a second time. Undo what this call wrote so a retry
+      // starts from clean ground.
+      let cleanupNote = '';
+      if (inserted.length) {
+        const { error: delErr } = await supabase
+          .from('knowledge_base').delete().in('id', inserted.map((r) => r.id));
+        cleanupNote = delErr
+          ? ` — WARNING: ${inserted.length} row(s) from this batch remain in knowledge_base, cleanup failed (${delErr.message})`
+          : ` — rolled back ${inserted.length} row(s) already inserted`;
+      }
+      throw new Error(`${error.message} (batch ${i / INSERT_BATCH + 1} of ${Math.ceil(rows.length / INSERT_BATCH)})${cleanupNote}`);
+    }
+    inserted.push(...(part ?? []));
+  }
+  const data = inserted;
+
   logChange(ENTITY.CONTENT_ITEM, 'bulk', ACTION.CREATE,
     {
       count:     chunks.length,

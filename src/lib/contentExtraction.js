@@ -80,37 +80,114 @@ ${batches[b]}`,
   return { questions: allQuestions, paperTitle, totalMarks };
 }
 
+/**
+ * Notes are batched far smaller than the 30,000-char default.
+ *
+ * Asking one call to cover a whole 22-page chapter reliably produced ~14 chunks
+ * of ~170 chars each — the model treats a large input as a request to SUMMARISE
+ * and its output-length prior beats any "MUST be 100-300 words" instruction.
+ * Measured: telling it to write more moved the median only 169 -> 284 chars.
+ * At ~6 pages a call the ask ("one chunk per page") lands inside the length the
+ * model will actually produce, so coverage comes from batching, not nagging.
+ *
+ * The trade-off is call COUNT: a 75k-char chapter goes from 3 calls to ~10, and
+ * OpenAI charges max_tokens as RESERVED against TPM, so per-minute pressure
+ * rises even though each individual call is smaller. That is what exhausted the
+ * org's 30,000 TPM mid-load and cost two files. See NOTES_MAX_TOKENS.
+ */
+const NOTES_BATCH_CHARS = 8000;
+
+/**
+ * Sized from measured output, not padded by guesswork.
+ *
+ * A batch is ~6 pages and yields ~5-8 chunks. Measured across the two pilot
+ * chapters: median chunk 526-630 chars, largest 1,092 — so even a generous
+ * 8 x 1,100 chars of content plus the JSON scaffolding (headings, keywords,
+ * latex, classification fields) lands near 2,000-2,500 tokens. 6,000 was never
+ * reached; it was reserved on every call and thrown away.
+ *
+ * Since reserved tokens are what the TPM ceiling actually counts, halving this
+ * roughly doubles sustainable throughput: at ~3,200 input + 6,000 reserved the
+ * org's 30,000 TPM allowed ~3.3 calls/min, which one dense chapter alone
+ * exceeds. At 3,000 it allows ~4.8.
+ *
+ * If output ever does hit this ceiling the response is truncated mid-JSON and
+ * the parse fails loudly rather than silently shortening a chunk — a failed
+ * file, not a quietly degraded one.
+ */
+const NOTES_MAX_TOKENS = 3000;
+
 export async function runNotesExtraction({ rawText, pages, examType, subject, onProgress }) {
-  const batches = splitIntoBatches(rawText);
+  const batches = splitIntoBatches(rawText, NOTES_BATCH_CHARS);
   const mergedLessons = []; // preserves first-seen order across batches
   let unit = null;
 
   for (let b = 0; b < batches.length; b++) {
     onProgress(batches.length > 1 ? `AI structuring study notes… (part ${b + 1}/${batches.length})` : 'AI structuring study notes…');
 
+    // Titles already established, so a batch landing mid-chapter continues the
+    // existing lesson instead of inventing a section-shaped one of its own.
+    const seenTitles = mergedLessons.map((l) => l.title).filter(Boolean);
+
     const resp = await chatComplete({
       model:           'gpt-4o',
-      max_tokens:      16000,
+      max_tokens:      NOTES_MAX_TOKENS,
       temperature:     0,
       response_format: { type: 'json_object' },
       messages: [
         {
           role: 'system',
-          content: 'You structure textbook/study material PDFs into their real table-of-contents shape (unit, individual lessons/chapters, and the page range each one actually spans) and break each lesson into searchable knowledge chunks. Return only valid JSON. Use the page numbers as they actually appear printed in the PDF — do not invent them. This may be one part of a larger unit split across multiple calls — only extract lessons/chunks whose content appears in THIS excerpt; if a lesson clearly continues from where it left off, reuse the SAME title so it can be merged back together.',
+          content: 'You structure textbook/study material PDFs into their real table-of-contents shape (unit, individual lessons/chapters, and the page range each one actually spans) and break each lesson into searchable knowledge chunks. Return only valid JSON. Use the page numbers as they actually appear printed in the PDF — do not invent them. This may be one part of a larger unit split across multiple calls — only extract lessons/chunks whose content appears in THIS excerpt; if a lesson clearly continues from where it left off, reuse the SAME title so it can be merged back together.\n\nYou are TRANSCRIBING AND ORGANISING, not summarising. The chunks are the only record of this material that survives — anything you leave out is lost. A short answer is a failure, not a virtue.',
         },
         {
           role: 'user',
           content: `This is ${examType} ${subject} content, possibly spanning one unit with multiple lessons/chapters (like a textbook "Contents" page), or just a single chapter — read the actual content and structure it correctly either way.${batches.length > 1 ? ` (excerpt ${b + 1} of ${batches.length} of a larger unit)` : ''}
 
 Each page in CONTENT below is prefixed with a literal [[PAGE N]] marker.
+${seenTitles.length ? `
+ALREADY IN PROGRESS: earlier excerpts of this same upload produced the
+lesson(s) ${seenTitles.map((t) => `"${t}"`).join(', ')}. This excerpt is very
+likely a CONTINUATION of the last one. If it is, reuse that EXACT title so the
+chunks merge back into one chapter — do not coin a new title for what is only a
+later section of it. Only introduce a new title if a genuinely new numbered
+chapter starts here.
+` : ''}
 
-For each distinct lesson/chapter you find, extract:
-- title: its real title, from the content (e.g. a story/chapter name) — not a generic label
-- page_start / page_end: the actual printed page numbers this lesson spans, as they visibly appear in the text (e.g. a running header showing "23"). Use null if you can't tell.
+WHAT COUNTS AS A LESSON — read this before splitting anything:
+A lesson is a WHOLE TEXTBOOK CHAPTER, the kind that appears as one line in a
+Contents page ("A Square and A Cube", "Laws of Motion"). It is NOT a section,
+sub-heading, worked-example block or topic within a chapter.
+
+  Most uploads are ONE chapter. Default to returning a SINGLE lesson.
+  Return more than one ONLY if the excerpt genuinely contains two or more
+  separate numbered chapters.
+
+  WRONG: one chapter split into "A Square and A Cube", "Understanding Perfect
+         Squares", "Cubes and Cube Roots" — the last two are sections of the
+         first, and splitting them corrupts chapter-level analytics downstream.
+  RIGHT: one lesson "A Square and A Cube", whose CHUNKS carry those section
+         names in their "heading" field.
+
+Section headings belong in chunk headings. They never create a new lesson.
+
+For each lesson, extract:
+- title: the real chapter title, from the content — not a generic label
+- page_start / page_end: the actual printed page numbers this lesson spans, as they visibly appear in the text (e.g. a running header showing "23"). Use null if you can't tell — a guess is worse than null.
 - marker_start / marker_end: the [[PAGE N]] marker numbers where this lesson's content begins and ends — NOT the printed page numbers, just which markers it falls between. Always fill these in, they're always visible.
-- chunks: 100–300 word self-contained knowledge chunks covering that lesson's content, each with a heading, keywords, and the classification fields described below.
+- chunks: see below.
 
-If the whole upload is really just one chapter/topic, return a single lesson.
+CHUNK LENGTH AND COVERAGE — the most common failure is chunks that are far too
+short, so treat this as a hard requirement:
+- Each chunk's "content" MUST be 100–300 words (roughly 600–1800 characters).
+  A one-line fact such as "The cube roots of 64, 512 and 729 are 4, 8 and 9" is
+  NOT a chunk — it is a fragment. Expand it into the full explanation the book
+  gives: the reasoning, the method, the worked steps, the numbers, the examples.
+- Your chunks must account for essentially ALL of the substantive content in
+  THIS excerpt. Expect roughly ONE CHUNK PER [[PAGE N]] MARKER below — count the
+  markers, and return about that many chunks. Six pages of content means about
+  six chunks, not two.
+- Keep the concrete detail: actual numbers, worked calculations, named results,
+  puzzle set-ups, tables described in words. Do not compress them away.
 
 CHUNK CLASSIFICATION — every chunk needs these, they drive retrieval filtering:
 - content_type: exactly one of
@@ -130,8 +207,16 @@ CHUNK CLASSIFICATION — every chunk needs these, they drive retrieval filtering
 - difficulty: "easy" | "medium" | "hard" — relative to the target exam level.
 - confidence: 0.0-1.0, how confident you are in the content_type label. Use a
   low value when the chunk is genuinely mixed rather than forcing a guess.
+- latex: array of every equation, formula or mathematical expression that
+  appears in this chunk's source text, written as LaTeX (no delimiters), e.g.
+  ["a^2 + b^2 = c^2", "\\\\sqrt{729} = 27"]. Harvest these from the TEXT you are
+  reading — plain-text maths such as "12 x 12 = 144", "5^3 = 125" or a table of
+  squares all count. Use [] only when the chunk genuinely contains no maths.
 
-Return JSON:
+These labels are metadata ABOUT the chunk. They never replace or shorten the
+chunk's "content", which must still be the full 100–300 word passage.
+
+Return JSON (the "content" below shows the expected LENGTH and DEPTH — match it):
 {
   "unit": "Unit name if this content is part of a numbered/named unit, else null",
   "lessons": [
@@ -140,13 +225,14 @@ Return JSON:
       "page_start": 2, "page_end": 8,
       "marker_start": 1, "marker_end": 7,
       "chunks": [ {
-        "heading": "concept name",
-        "content": "explanation",
-        "keywords": ["kw1","kw2"],
-        "content_type": "formula",
-        "technique": ["vector_resolution"],
+        "heading": "Finding a square root by prime factorisation",
+        "content": "A square root of a number is the value that, multiplied by itself, gives that number. Because 12 x 12 = 144, the square root of 144 is 12. For larger numbers the prime factorisation method is quicker than guessing. Take 1296. Divide repeatedly by the smallest prime that goes in: 1296 = 2 x 648 = 2 x 2 x 324 = 2 x 2 x 2 x 162 = 2 x 2 x 2 x 2 x 81, and 81 = 3 x 3 x 3 x 3. So 1296 = 2^4 x 3^4. Every prime now appears an even number of times, which is exactly what makes a number a perfect square. Pair the factors up — two 2s in each pair, two 3s in each pair — and take one factor from each pair: 2 x 2 x 3 x 3 = 36. Checking, 36 x 36 = 1296. If any prime is left unpaired, the number is not a perfect square, and that leftover factor tells you the smallest number you would have to multiply or divide by to make it one. For example 200 = 2^3 x 5^2 has a spare 2, so 200 x 2 = 400 is a perfect square with square root 20.",
+        "keywords": ["square root","prime factorisation","perfect square","factor pairs"],
+        "content_type": "derivation",
+        "technique": ["prime_factorisation","square_root_calculation"],
         "difficulty": "medium",
-        "confidence": 0.9
+        "confidence": 0.9,
+        "latex": ["12 \\\\times 12 = 144", "1296 = 2^4 \\\\times 3^4", "\\\\sqrt{1296} = 36"]
       } ]
     }
   ]
@@ -157,6 +243,15 @@ ${batches[b]}`,
         },
       ],
     });
+
+    // A truncated response is a cut-off JSON string, so JSON.parse below would
+    // fail with a position offset that says nothing about the cause. Naming it
+    // here is the difference between "max_tokens is too low" and a mystery.
+    if (resp.choices[0].finish_reason === 'length') {
+      throw new Error(
+        `Structuring response hit the ${NOTES_MAX_TOKENS}-token output cap on batch ${b + 1}/${batches.length} — raise NOTES_MAX_TOKENS or lower NOTES_BATCH_CHARS.`,
+      );
+    }
 
     const data = JSON.parse(resp.choices[0].message.content);
     unit = unit || data.unit || null;
@@ -181,6 +276,12 @@ ${batches[b]}`,
         existing.chunks.push(...lesson.chunks);
         existing.page_start = existing.page_start != null ? Math.min(existing.page_start, lesson.page_start ?? existing.page_start) : lesson.page_start ?? null;
         existing.page_end   = existing.page_end   != null ? Math.max(existing.page_end,   lesson.page_end   ?? existing.page_end)   : lesson.page_end   ?? null;
+        // Markers must widen too. buildKbRows filters figures and equations by
+        // this range, so a chapter merged from four batches that kept only the
+        // first batch's markers would silently drop every figure and equation
+        // past its opening pages.
+        existing.marker_start = existing.marker_start != null ? Math.min(existing.marker_start, lesson.marker_start ?? existing.marker_start) : lesson.marker_start ?? null;
+        existing.marker_end   = existing.marker_end   != null ? Math.max(existing.marker_end,   lesson.marker_end   ?? existing.marker_end)   : lesson.marker_end   ?? null;
         if (verbatimText) existing.verbatimText = existing.verbatimText ? `${existing.verbatimText}\n\n${verbatimText}` : verbatimText;
       } else {
         mergedLessons.push({ ...lesson, chunks: [...lesson.chunks], verbatimText });
@@ -217,6 +318,20 @@ export function normaliseClassification(c) {
       : [],
     confidence:   Number.isFinite(conf) ? Math.min(1, Math.max(0, conf)) : null,
   };
+}
+
+/**
+ * Equations the structuring pass harvested from a chunk's TEXT layer.
+ *
+ * Vision only runs on pages that trip the thin-text or raster-image gate, so on
+ * a clean typeset chapter it never fires and every equation in the book would
+ * otherwise be lost. This is the text-layer half of that pair; buildKbRows
+ * unions the two.
+ */
+export function chunkLatex(c) {
+  return Array.isArray(c?.latex)
+    ? c.latex.filter((e) => typeof e === 'string' && e.trim()).map((e) => e.trim()).slice(0, 25)
+    : [];
 }
 
 /** Class level as a bare string ("10"), parsed out of "CBSE Class 10". */
@@ -285,6 +400,11 @@ export function buildKbRows({
       ? lessonFigures[0] ?? null
       : null;
 
+    // Text-layer equations are per-chunk and precise; vision equations are only
+    // known per-page, so the lesson's whole set is inherited. Chunk-level wins
+    // the head of the list because it is the better-attributed of the two.
+    const latex = [...new Set([...chunkLatex(c), ...lessonLatex])].slice(0, 25);
+
     return {
       content:       `${c.heading}\n\n${c.content}`,
       subject,
@@ -296,8 +416,8 @@ export function buildKbRows({
       ...cls,
       page_no:       mStart ?? null,
       figure_url:    figure?.image_url ?? null,
-      has_equations: lessonLatex.length > 0,
-      latex:         lessonLatex.slice(0, 25),
+      has_equations: latex.length > 0,
+      latex,
       source_ref: {
         source,
         lesson_title: lesson.title ?? chapterName,
