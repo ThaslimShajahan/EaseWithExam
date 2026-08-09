@@ -893,7 +893,12 @@ export default function PracticeGeneratorPage({ embedded = false }) {
       }
 
       const raw       = await generateQuestionPaper({ subject, topics: topic, examType, difficulty, count, qTypes, rotationSlot: Math.floor(Math.random() * 5), signal: controller.signal });
-      const formatted = toEngineFormat(raw, subject, examType);
+      const engineQs  = toEngineFormat(raw, subject, examType);
+      // This path scores the student and writes weak_topics accuracy, so a
+      // question whose key disagrees with its own explanation must not be
+      // served — being marked wrong for a right answer is worse than getting
+      // one question fewer. Admin > Paper Gen keeps them, flagged, for a human.
+      const formatted = engineQs.filter((q) => !q.needs_review);
       if (!formatted.length) throw new Error('No questions returned — try different settings.');
       setQs(formatted); setQIdx(0); setCorrect(0); setPhase('quiz');
 

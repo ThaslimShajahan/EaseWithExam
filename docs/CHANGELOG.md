@@ -4,6 +4,42 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-10 (session 17) — generated answer keys: measured, then partly fixed
+
+Tracing the verification path for generated questions found there isn't one. A repo-wide search for `verifyAnswer`, `validateQuestion`, `answer_verified`, `solution_check` and any `verify*`/`validate*` in `questionGen.js` returns nothing. The only gate is structural (`toEngineFormat`): does the question have text, does an MCQ have ≥2 options. **Nothing looked at the answer key at all**, and `Numerical` questions were waved through unconditionally.
+
+Exposure is very uneven. The student path (`PracticeGeneratorPage.jsx`) runs `generateQuestionPaper() → toEngineFormat() → live quiz` with no review of any kind — and because that quiz awards XP and writes `weak_topics` accuracy, a wrong key marks a correct student wrong *and* corrupts their diagnostics. The admin path renders questions for a human before Publish, but nothing requires or records that review. `CONTENT_REVIEW_QUEUE` does not cover either — it gates Content Intake and `extractPYQFromKB` only.
+
+### Measured before fixing
+
+30 questions through the real pipeline (Class 10 Maths ×15, Class 11 Physics ×15), every answer hand-checked: **10% hard-wrong keys, 10% flawed questions, 80% clean.** The three wrong keys were three different failure modes — a value not present among the options at all, an option set where nothing satisfied the question, and one where the explanation correctly computed 28 while the key pointed at 30.
+
+Separately, **answer positions were badly skewed: A 50%, B 37%, C 7%, D 7%** — Class 10 Maths produced not one C or D in 15 questions. Always guessing "A" scored ~50%.
+
+### Fixed
+
+- **Option shuffling.** Fisher-Yates over options with the key index remapped, guarded by `hasOrderedOptions()` — Assertion-Reason ladders and anything containing "all/none/both of the above" or "Both A and C" keep their order, because shuffling an option that references other options by letter is a worse bug than the skew it fixes.
+- **Unparseable keys now fail loudly.** `correctOption` was `LETTER_IDX[...] ?? 0`, so a missing or malformed answer silently became a confidently-scored "A". It now resolves to `null` and the question is dropped with a warning.
+- **Key-vs-explanation cross-check**, as a soft flag rather than a drop: a numeric keyed option sharing *no* value with its own explanation sets `needs_review`. The student path filters those out; admin Paper Gen still renders them, flagged, for a human.
+
+### Re-measured — one fix works, one doesn't
+
+| | before | after |
+|---|---|---|
+| answer position A/B/C/D | 50 / 37 / 7 / 7 | **33 / 30 / 20 / 17** |
+| hard-wrong keys | 3/30 (10%) | 4/30 — 1 caught and withheld → **3/28 (11%) served** |
+| flagged | — | 2/30: 1 true positive, 1 false positive |
+
+**Shuffling is a decisive win.** The cross-check is not: it caught a genuinely wrong key (flywheel at 1200 rpm keyed `20π` against an explanation correctly deriving `40π`) and withheld one sound question (a 45° triangle whose explanation happened to mention only 180 and 90).
+
+It cannot catch the dominant failure mode, where the explanation agrees with the wrong key — "10th term of AP 2, 5, 8" keyed `31` with an explanation stating `2 + 9 × 3 = 31`, which is simply false arithmetic. An earlier claim in this session that the cross-check would catch all three measured failures was wrong; it only catches the class where key and explanation disagree. The wrong-key rate is statistically unchanged.
+
+Closing that gap needs semantic verification, not logic. Tracked, with both the before and after numbers, in `docs/ACTION_ITEMS_FOR_YOU.md` (created this session — the CHANGELOG had referenced it for weeks without it existing).
+
+**Numericals remain unmeasured.** Both benchmark runs produced MCQ and Assertion-Reason only, so the category with no structural filter whatsoever still has no measured error rate.
+
+---
+
 ## 2026-08-10 (session 16) — Phase 2 groundwork: provenance, taxonomy, type-filtered retrieval
 
 Three changes off the back of the Phase 2 audit. §3 (`chapter_pattern_stats`, `technique_frequency`) and §4b (exam-pattern blueprint scoring) are deliberately **not** built: `pyq_questions` is empty — not thin, zero rows — so both would ship as an empty table plus UI that renders nothing. Blueprint V2's 20-PYQ threshold is currently unreachable for all 11 exam+subject combinations.

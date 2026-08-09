@@ -59,6 +59,76 @@ function cbseMarksForSection(section, type, examType) {
   return 1; // default
 }
 
+/* ── Answer-key validation ─────────────────────────────────── */
+/*
+ * Measured on 30 questions through the real pipeline (2026-08-10): 10% had a
+ * hard-wrong key and 10% were flawed, with nothing anywhere in the pipeline
+ * looking at `correct_answer`. The student path feeds straight into a live quiz
+ * that awards XP and writes weak_topics accuracy, so a bad key marks a correct
+ * student wrong AND corrupts their diagnostics.
+ *
+ * Everything here is pure logic — no model call, no cost. It cannot catch a key
+ * that is semantically wrong but agrees with its own explanation (measured Q2:
+ * "2(3)^2 + 7(3) + k = 0 gives k = -12" is internally consistent and simply
+ * wrong arithmetic). That class needs real verification and is tracked in
+ * docs/ACTION_ITEMS_FOR_YOU.md.
+ */
+
+/** Answer letter -> index. null (never 0) when absent or unparseable. */
+export function parseAnswerLetter(raw) {
+  const ch = String(raw ?? '').trim().toUpperCase().charAt(0);
+  return ch in LETTER_IDX ? LETTER_IDX[ch] : null;
+}
+
+/**
+ * Options whose ORDER carries meaning and must never be shuffled.
+ *
+ * Assertion-Reason options are a fixed conventional ladder ("Both A and R are
+ * true and R is the correct explanation" ... ), and "All/None of the above"
+ * only makes sense in last position. Shuffling either produces nonsense, which
+ * would be a worse bug than the answer-position skew being fixed.
+ */
+export function hasOrderedOptions(type, options) {
+  if (type === 'Assertion-Reason') return true;
+  return (options ?? []).some((o) =>
+    /\b(all|none|both)\s+of\s+the\s+above\b|\bboth\s+a\s+and\b|\ba\s+and\s+r\b|\bassertion\b|\breason\b/i.test(String(o)));
+}
+
+/** Fisher-Yates over options, returning the key's new index alongside. */
+export function shuffleOptions(options, keyIdx) {
+  const idx = options.map((_, i) => i);
+  for (let i = idx.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [idx[i], idx[j]] = [idx[j], idx[i]];
+  }
+  return {
+    options: idx.map((i) => options[i]),
+    keyIdx:  idx.indexOf(keyIdx),
+  };
+}
+
+const numbersIn = (s) => (String(s ?? '').match(/-?\d+(?:\.\d+)?/g) ?? []);
+
+/**
+ * Flags a key whose option shares NO number with its own explanation.
+ *
+ * This is the measured Q14 failure: the explanation correctly computed
+ * "100 - 72 = 28" while the key pointed at "30". Deliberately conservative —
+ * it fires only when the keyed option is numeric, the explanation is numeric,
+ * and they have nothing in common at all. A partial overlap passes, because
+ * explanations routinely carry working the option doesn't repeat.
+ *
+ * Returns a reason string, or null when the key looks fine / isn't checkable.
+ */
+export function keyContradictsExplanation(optionText, explanation) {
+  const optNums = numbersIn(optionText);
+  const expNums = numbersIn(explanation);
+  if (!optNums.length || !expNums.length) return null;   // not checkable
+  const expSet = new Set(expNums);
+  if (optNums.some((n) => expSet.has(n))) return null;   // some agreement
+  return `keyed option (${optNums.join(', ')}) shares no value with its explanation (${expNums.slice(0, 6).join(', ')})`;
+}
+
 export function toEngineFormat(questionsInput, subject, examType = 'NEET') {
   // generateQuestionPaper() returns { questions, meta, ... }, not a bare array — accept
   // either shape here instead of requiring every caller to remember to unwrap it (one
@@ -96,6 +166,31 @@ export function toEngineFormat(questionsInput, subject, examType = 'NEET') {
         marks = { correct: 4, incorrect: isNumerical ? 0 : -1 };  // NTA: +4/-1
       }
 
+      const isMCQ = !isNumerical && !isDescr;
+      let options = isMCQ ? (q.options || []).map((o) => o.replace(/^[A-D]\.\s*/, '')) : null;
+
+      // Was `LETTER_IDX[...] ?? 0` — a missing or unparseable answer silently
+      // became index 0, i.e. a confidently-scored "A". Now it stays null and
+      // the question is dropped below rather than mis-scoring a student.
+      let keyIdx = isMCQ ? parseAnswerLetter(q.answer) : null;
+
+      let invalid = null;
+      if (isMCQ) {
+        if (keyIdx === null) invalid = `unparseable answer key (${JSON.stringify(q.answer ?? null)})`;
+        else if (keyIdx >= options.length) invalid = `answer key index ${keyIdx} beyond ${options.length} options`;
+      }
+
+      // Shuffle AFTER the key is resolved, so the index follows its option.
+      let review = null;
+      if (isMCQ && !invalid) {
+        review = keyContradictsExplanation(options[keyIdx], q.explanation);
+        if (!hasOrderedOptions(type, options)) {
+          const s = shuffleOptions(options, keyIdx);
+          options = s.options;
+          keyIdx  = s.keyIdx;
+        }
+      }
+
       return {
         id:                  `${batchId}-${String(i + 1).padStart(4, '0')}`,
         type,
@@ -109,14 +204,28 @@ export function toEngineFormat(questionsInput, subject, examType = 'NEET') {
         image_url:           q.image_url || null,
         columnI:             q.columnI  || null,
         columnII:            q.columnII || null,
-        options:             isNumerical || isDescr ? null : (q.options || []).map((o) => o.replace(/^[A-D]\.\s*/, '')),
-        correctOption:       isNumerical || isDescr ? null : (LETTER_IDX[String(q.answer ?? '').toUpperCase().charAt(0)] ?? 0),
+        options,
+        correctOption:       keyIdx,
         correctAnswer:       isNumerical ? String(q.answer ?? '') : null,
         explanation:         q.explanation || '',
         marks,
         year:                q.year || year,
+        // Soft flag, not a drop: the cross-check is a heuristic, and silently
+        // binning a good question is its own failure. Callers decide — the
+        // student path filters these out, admin renders them for a human.
+        needs_review:        Boolean(review),
+        review_reason:       review,
+        _invalid:            invalid,
       };
-    });
+    })
+    // Hard drop: a question with no usable key cannot be scored at all, and
+    // guessing one is exactly the bug this replaces.
+    .filter((q) => {
+      if (!q._invalid) return true;
+      console.warn(`[toEngineFormat] dropped question — ${q._invalid}`);
+      return false;
+    })
+    .map(({ _invalid, ...q }) => q);
 }
 
 
