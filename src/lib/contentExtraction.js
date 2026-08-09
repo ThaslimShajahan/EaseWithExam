@@ -16,6 +16,83 @@ import { splitIntoBatches } from './pdfAnalyzer';
 
 
 /**
+ * Snaps an AI-guessed chapter name onto the real syllabus.
+ *
+ * Lives here rather than in AdminContentIntake so the intake screen and any
+ * headless loader snap identically — a copy that drifted would produce two
+ * different chapter vocabularies in the same table.
+ *
+ * Three passes, narrowest first. The third exists because exact-then-substring
+ * matching missed "Human Eye and Colourful World" against the real "The Human
+ * Eye and the Colourful World" — an interior "the" is enough to defeat
+ * containment, and the near-miss then becomes its own phantom chapter in
+ * Blueprint V2's per-chapter counts.
+ *
+ * Returns the guess untouched when nothing is close enough; callers decide
+ * whether that is acceptable.
+ */
+const STOPWORDS = new Set(['the', 'a', 'an', 'and', 'of', 'in', 'to', 'for', 'on', 'its', 'their', 'with']);
+const chapterTokens = (s) => String(s ?? '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/)
+  .filter((w) => w && !STOPWORDS.has(w))
+  // Crude stem so "reproduce"/"reproduction" and "identities"/"identity" meet.
+  .map((w) => w.replace(/(ies|ing|ion|ions|es|s)$/, ''));
+
+export function matchSyllabusChapter(guess, chapterNames) {
+  if (!guess || !chapterNames?.length) return guess;
+  const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const g = norm(guess);
+
+  const exact = chapterNames.find((c) => norm(c) === g);
+  if (exact) return exact;
+
+  const partial = chapterNames.find((c) => norm(c).includes(g) || g.includes(norm(c)));
+  if (partial) return partial;
+
+  // Token overlap, Jaccard over stemmed content words. Tokens also count as
+  // shared when one is a long prefix of the other, which is what lets
+  // "trigonometric" meet "trigonometry" — suffix stripping alone does not.
+  // Shared COMMON PREFIX, not startsWith: "trigonometric" and "trigonometry"
+  // agree for 11 characters and then diverge, so neither is a prefix of the
+  // other. Six characters is long enough that "triangle"/"trigonometry" (3)
+  // and "simple"/"some" (1) stay apart.
+  const shareToken = (a, b) => {
+    if (a === b) return true;
+    const n = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < n && a[i] === b[i]) i++;
+    return i >= 6;
+  };
+
+  const gt = [...new Set(chapterTokens(guess))];
+  if (!gt.length) return guess;
+  let best = null, bestScore = 0;
+  for (const c of chapterNames) {
+    const ct = [...new Set(chapterTokens(c))];
+    if (!ct.length) continue;
+    const shared = gt.filter((t) => ct.some((u) => shareToken(t, u))).length;
+    const score = shared / (gt.length + ct.length - shared);
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+
+  // 1/3 is where the measured cases separate, and the separation is narrow:
+  //   "Human Eye and Colourful World" -> "The Human Eye and the Colourful World"  1.00
+  //   "Trigonometric Identities"      -> "Introduction to Trigonometry"           0.33
+  //   "Chemical Bonding"              -> "Chemical Reactions and Equations"       0.25  rejected
+  //   "Human Reproduction"            -> "How do Organisms Reproduce?"            0.20  rejected
+  //   "Simple Interest"               -> nothing in Class 10 Maths                0.00  rejected
+  //
+  // "Human Reproduction" IS a real rename of "How do Organisms Reproduce?" and
+  // is deliberately not recovered: it scores below "Chemical Bonding" against
+  // "Chemical Reactions and Equations", which is a genuinely wrong snap. No
+  // purely lexical rule separates them, and a wrong snap is worse than none —
+  // it silently attributes a question to a chapter it does not test. Cases like
+  // that are what the closed chapter list in runPYQExtraction is for; this
+  // backstop only covers uploads with no syllabus to constrain against.
+  return bestScore >= 1 / 3 ? best : guess;
+}
+
+/**
  * PYQ batching and output ceiling, sized from measured question JSON.
  *
  * This call used to reserve `max_tokens: 16000` against a 30,000 TPM org — over
@@ -37,9 +114,29 @@ import { splitIntoBatches } from './pdfAnalyzer';
 const PYQ_BATCH_CHARS = 12000;
 const PYQ_MAX_TOKENS  = 5000;
 
-export async function runPYQExtraction({ rawText, examType, subject, year, onProgress }) {
+export async function runPYQExtraction({ rawText, examType, subject, year, onProgress, syllabusChapters = [] }) {
   const isMixed = subject === 'Mixed';
   const batches = splitIntoBatches(rawText, PYQ_BATCH_CHARS);
+
+  // Constrain, don't clean up afterwards. Left to invent chapter names freely
+  // the model produced "Chemical Bonding" and "Exponents and Powers" for a
+  // Class 10 paper — chapters that don't exist at that level — plus near-misses
+  // like "Human Eye and Colourful World" against the real "The Human Eye and
+  // the Colourful World". Measured over two real board papers: 14% of questions
+  // landed on a chapter no matcher could rescue, each becoming its own phantom
+  // low-frequency chapter in Blueprint V2's allocation. Showing the model the
+  // actual chapter list turns that from fuzzy string matching into
+  // multiple-choice.
+  const chapterList = (syllabusChapters ?? []).filter(Boolean);
+  const chapterRule = chapterList.length
+    ? `\nCHAPTER — this is a CLOSED LIST. Every question's "chapter" MUST be copied
+EXACTLY, character for character, from this list of ${chapterList.length} chapters:
+${chapterList.map((c) => `  - ${c}`).join('\n')}
+Pick the single best fit. Do NOT invent a chapter name, do NOT abbreviate one,
+do NOT merge two, and do NOT use a name from a different class's syllabus. If a
+question genuinely spans two, choose the one it is mostly testing. Only if a
+question fits none of them at all, use "Other".\n`
+    : '';
   const allQuestions = [];
   let paperTitle = null, totalMarks = null;
 
@@ -66,7 +163,7 @@ Extract every question. For each include:
 - Section label (A/B/C/D/E or blank)
 - Marks per question
 - Question type (MCQ / Short Answer / Long Answer / Numerical / Assertion-Reason / Case-Based)
-- Chapter or topic — identify this from the actual content, as precisely as you can
+- Chapter or topic — identify this from the actual content, as precisely as you can${chapterRule ? ' (SEE THE CLOSED CHAPTER LIST BELOW — it overrides this line)' : ''}
 - All 4 options if MCQ (A, B, C, D)
 - Correct answer if in answer key
 - Brief explanation if available
@@ -86,6 +183,7 @@ Return JSON:
   ]
 }
 
+${chapterRule}
 RAW TEXT:
 ${batches[b]}`,
         },

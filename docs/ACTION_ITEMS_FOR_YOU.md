@@ -155,21 +155,58 @@ continue serving unreviewed generated questions with the validation now in place
 
 ---
 
-## OPEN — `pyq_questions` is empty, blocking Phase 2 §3 and §4b
+## OPEN — check chapter over-spreading when more papers are uploaded
 
-`pyq_questions` has **0 rows**. Blueprint V2's 20-PYQ threshold
-(`questionGen.js`, `pyqTotal >= 20`) is therefore unreachable for all 11
-exam+subject combinations, and `chapter_pattern_stats` / `technique_frequency`
-would aggregate nothing.
+`runPYQExtraction` now hands the model a **closed list** of syllabus chapters and
+requires it to copy one exactly. That took chapter snapping from 86–87% to 100%
+and eliminated invented chapters entirely (0 of 87 questions outside the
+syllabus, against 11 of 83 before).
 
-This is a **content task, not a code task**: past papers need ingesting through
-the existing Content Intake PYQ path. Roughly 20 published questions per
-exam+subject to cross the threshold (~220 total), or fewer if one or two subjects
-are targeted first to prove the pipeline.
+The risk it introduces: **forcing a choice from a list can make the model spread
+questions across it** rather than concentrate them where the paper actually
+concentrates. Both re-run papers came out covering *every* chapter in their
+syllabus — 14/14 Mathematics, 13/13 Science.
 
-The 186 `exercise` chunks now tagged in `knowledge_base` are real,
-chapter-attributed questions and are the closest available substitute — but they
-are textbook exercises, not past-year papers.
+That is plausible for CBSE, which samples broadly, and the distributions are
+naturally skewed rather than uniform (Science 8, 8, 6, 6, 5, 4, 4, 3, 3, 2, 2,
+1, 1; Mathematics keeps a clear 6/5/4/4 head), so this is a watch item, not a
+known defect.
+
+**What to check when a second paper per subject is uploaded:** whether chapters
+that genuinely carry no questions in that paper still come back with 1–2. If they
+do, the closed list is being treated as a quota rather than a vocabulary, and the
+prompt needs an explicit "not every chapter will appear; leave a chapter out
+rather than forcing a question into it".
+
+This matters because Blueprint V2 allocates generation proportionally to these
+counts — an artificially flattened distribution produces an artificially flat
+paper.
+
+---
+
+## RESOLVED 2026-08-10 — `pyq_questions` was empty, blocking Phase 2 §3 and §4b
+
+Two 2025 CBSE Class 10 board papers are loaded (34 Mathematics + 53 Science
+questions, all `published`, all chapter-attributed). **Blueprint V2's 20-question
+threshold now passes for both**, the first time it has been reachable for any
+exam+subject.
+
+**Still thin, and it constrains what can be built on top:**
+
+| axis | state |
+|---|---|
+| `chapter` | 100% populated, snapped to syllabus — **usable** |
+| `question_type` | 6 real values (MCQ 33, Short Answer 24, Long Answer 11, Case-Based 9, Assertion-Reason 6, Numerical 4) — **usable** |
+| `marks` | 5 real values (1, 2, 3, 4, 5) — **usable** |
+| `section` | A–E, real spread — **usable** |
+| `year` | **single value (2025)** — no year-over-year trend is possible |
+| `difficulty` | **single value ("Medium")** — hardcoded in `savePYQRows`, carries zero information |
+| `techniques` | **column does not exist** on `pyq_questions` |
+| `correct_answer` | **0 of 87** — neither board paper shipped an answer key |
+
+Only 2 of 11 exam+subject combinations have any PYQ data at all. Class 11 remains
+empty and, having no board exam, has no real past-year papers to source — see the
+NEET/JEE decision above.
 
 ---
 

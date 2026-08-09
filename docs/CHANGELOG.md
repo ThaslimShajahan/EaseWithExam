@@ -4,6 +4,49 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-10 (session 18) — Step 4: real PYQs loaded, chapter attribution fixed
+
+Two real CBSE Class 10 board papers (2025 Mathematics Standard and Science) are in `pyq_questions`. **Blueprint V2's 20-question threshold now passes for both subjects** — the first time it has been reachable for any exam+subject.
+
+### Seeding the syllabus first was the load-bearing step
+
+Content Intake runs every extracted question's chapter through `matchSyllabusChapter()`, and Blueprint V2 then groups by the **exact** chapter string. With `syllabus_nodes` nearly empty there was nothing to snap onto, so a paper's questions would scatter across spelling variants — the threshold gets crossed and the allocation is still junk, silently, because each variant looks like its own low-frequency chapter.
+
+`scripts/seed-syllabus-from-corpus.mjs` lifted clean chapter titles out of `knowledge_base` (they were read off the actual NCERT books during the corpus load) into `syllabus_nodes`: 15 → 42 rows, adding 14 Class 10 Mathematics and 13 Class 10 Science. Sorting by source file then first page produced exact textbook order.
+
+### First upload measured 86–87% snapping — the misses were two different problems
+
+| | Mathematics | Science |
+|---|---|---|
+| questions | 39 | 44 |
+| snapped to syllabus | 87% | 86% |
+
+**Near-misses** the matcher should have caught: `Human Eye and Colourful World` against the real `The Human Eye and the Colourful World` — exact-then-substring matching fails because an interior "the" defeats containment. **Invented chapters** no matcher can rescue: `Chemical Bonding`, `Exponents and Powers`, `Simple Interest` — names that don't exist at Class 10.
+
+### Fixed by constraining the model, not by cleaning up after it
+
+`runPYQExtraction` now receives the syllabus and requires each question's chapter to be **copied exactly from a closed list**. That turns fuzzy string matching into multiple choice. `matchSyllabusChapter` also moved into `contentExtraction.js` (so intake and any headless loader snap identically rather than drifting from a copy) and gained a token-overlap backstop using common-prefix matching — `trigonometric` and `trigonometry` agree for 11 characters and then diverge, so neither is a prefix of the other and stemming alone can't unite them.
+
+The backstop deliberately **declines** `Human Reproduction` → `How do Organisms Reproduce?` (0.20), because that scores below `Chemical Bonding` → `Chemical Reactions and Equations` (0.25), which would be a genuinely wrong snap. No purely lexical rule separates them, and a wrong snap is worse than none — it silently attributes a question to a chapter it doesn't test.
+
+### Re-run result
+
+| | Mathematics | Science |
+|---|---|---|
+| questions | 39 → 34 | 44 → 53 |
+| distinct chapters matched | 11/16 → **14/14** | 11/15 → **13/13** |
+| snap rate | 87% → **100%** | 86% → **100%** |
+
+**0 of 87 questions landed outside the syllabus**, against 11 of 83 before. Distributions also look more like real papers: `Some Applications of Trigonometry` 0 → 4 and `Quadratic Equations` 0 → 1, with the inflated `Introduction to Trigonometry` dropping 10 → 2 as its applications questions were attributed correctly.
+
+**Confound, stated plainly:** this is not a clean A/B. The PDFs were identical but the *extracted text* was not — the re-run harness called `extractPagesWithVision` with `extractFigures: false` while Content Intake passes figures on, so vision triggered differently and the question counts moved (−5, +9) when a prompt-only change should have left them alone. A deliberate choice was made not to burn another upload cycle isolating this: the mechanism proof stands on its own, since the model can only emit names from the list. What is *not* isolated is how much of the distribution improvement came from the constraint versus the different text.
+
+### Also this session
+
+`runPYQExtraction`'s `max_tokens` dropped 16000 → 5000 with batches at 12,000 chars, sized from measurement (30 real questions serialised into this extractor's schema: median 354 chars, ~90 tokens each, so a 38-question paper is ~3,500 output tokens, not 16,000). Per-call reservation fell from ~20,000 to ~8,600 against a 30,000 TPM ceiling. A `finish_reason === 'length'` guard was added — truncation here silently drops questions off the end of a paper while the upload still reports success.
+
+---
+
 ## 2026-08-10 (session 17) — generated answer keys: measured, then partly fixed
 
 Tracing the verification path for generated questions found there isn't one. A repo-wide search for `verifyAnswer`, `validateQuestion`, `answer_verified`, `solution_check` and any `verify*`/`validate*` in `questionGen.js` returns nothing. The only gate is structural (`toEngineFormat`): does the question have text, does an MCQ have ≥2 options. **Nothing looked at the answer key at all**, and `Numerical` questions were waved through unconditionally.

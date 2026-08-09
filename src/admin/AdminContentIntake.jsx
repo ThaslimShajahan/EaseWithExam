@@ -14,6 +14,7 @@ import { fetchPdfBuffer } from '../lib/pdfAnalyzer';
 import { extractPagesWithVision, MAX_VISION_PAGES } from '../lib/pdfVision';
 import {
   runPYQExtraction, runNotesExtraction, buildKbRows, buildFigureRows, figuresForLesson,
+  matchSyllabusChapter,
 } from '../lib/contentExtraction';
 import { getSubjectsForExam, BOARDS, CLASS_LEVELS, EXAM_TYPE_GROUPS } from '../lib/categories';
 import { getChapters } from '../lib/syllabus';
@@ -57,16 +58,6 @@ function cleanChapterGuess(filename) {
 // Align an AI-detected (or filename-guessed) chapter name to the admin's actual
 // syllabus chapter list where possible, so it registers correctly in Content Map
 // instead of showing up as an "unmapped" chapter with a slightly different name.
-function matchSyllabusChapter(guess, chapterNames) {
-  if (!guess || !chapterNames?.length) return guess;
-  const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-  const g = norm(guess);
-  const exact = chapterNames.find((c) => norm(c) === g);
-  if (exact) return exact;
-  const partial = chapterNames.find((c) => norm(c).includes(g) || g.includes(norm(c)));
-  return partial || guess;
-}
-
 /* ── AI extraction ──────────────────────────────────────────────── */
 
 // A single gpt-4o call has a fixed ~16K-token OUTPUT ceiling regardless of
@@ -489,7 +480,7 @@ export default function AdminContentIntake() {
 
         if (contentType === 'pyq') {
           const { questions } = await runPYQExtraction({
-            rawText, examType: dbExamType, subject, year,
+            rawText, examType: dbExamType, subject, year, syllabusChapters,
             onProgress: (msg) => setStepMsg({ message: msg }),
           });
           setStepMsg({ message: `Saving ${questions.length} questions…` });
