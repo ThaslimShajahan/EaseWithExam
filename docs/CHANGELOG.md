@@ -4,6 +4,20 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-10 (session 13b) — production: admin login unblocked, avatar upload fixed
+
+Two production issues, both traced to infrastructure rather than app code.
+
+**Admin login showed "Run the latest migration in Supabase".** Not a missing migration — the opposite. `get_admin_record` stopped returning the passcode hash to the browser when the auth-hardening migration landed (it was leaking the hash), but the frontend that understood the new `has_passcode` shape had never been deployed. Proof, from the backup of the previously-deployed bundle: `AdminGuard-DO2sSrat.js` referenced `passcode_hash` 3 times and `has_passcode` zero times, against a server that now returns only the latter. The old client therefore read `undefined`, concluded no passcode was set, offered the first-time setup screen, called `admin_set_passcode`, got `false` (a passcode already existed), and had no recovery branch — so it blamed the migration. Both superadmins were healthy server-side throughout: passcode set, 0 failed attempts, not locked. Nothing was damaged, because `admin_set_passcode` refuses to overwrite an existing passcode. Resolved by the frontend deploy; affected sessions need a hard reload to drop the cached service-worker shell.
+
+**Avatar/logo upload failed with "Bucket not found".** Also not an app bug: `AdminPlatformSettings` (EWE avatar + platform logo) and `CoachingSettingsPage` (centre logo) have always uploaded to a `platform-assets` bucket that was never created. Only `question-papers` and `documents` existed.
+
+Created it with a tighter posture than the existing buckets, which grant `ALL` to `anon` — anyone holding the public anon key can upload to those. `platform-assets` is public-read (the avatar renders for signed-out visitors) but writes require `is_verified_admin()`, and the 2 MB cap plus an image-only MIME allowlist are enforced server-side rather than trusted from the browser. Verified under enforced RLS: admin upload allowed, signed-in non-admin blocked, anon blocked, anon read allowed. Confirmed at the Storage API too — the bucket now returns `NoSuchKey` for a missing object, matching the known-good bucket, where before it returned `NoSuchBucket`.
+
+No frontend change was needed for the bucket fix, so no redeploy was issued.
+
+---
+
 ## 2026-08-10 (session 13) — Phase 1: multimodal extraction + content classification
 
 Implements §1 and §2 of the content-pipeline audit. Existing `knowledge_base` rows were disposable test data being re-uploaded from source, so this migration **truncates rather than backfills** and drops `tags[]` outright instead of keeping a compatibility shim.
