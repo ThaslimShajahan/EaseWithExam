@@ -15,9 +15,31 @@ import { chatComplete } from './aiProxy';
 import { splitIntoBatches } from './pdfAnalyzer';
 
 
+/**
+ * PYQ batching and output ceiling, sized from measured question JSON.
+ *
+ * This call used to reserve `max_tokens: 16000` against a 30,000 TPM org — over
+ * half the entire per-minute budget in one request, the same hazard that cost
+ * two files during the corpus load (see NOTES_MAX_TOKENS).
+ *
+ * Measured over 30 real questions, serialised into this extractor's own schema
+ * (section, marks, type, chapter, question_text, options, correct_answer,
+ * explanation, has_diagram): median 354 chars, max 644 — roughly 90 tokens per
+ * question, 160 at the top end. A whole 38-question CBSE board paper is
+ * therefore ~3,500 output tokens, not 16,000.
+ *
+ * 12,000 chars is ~20-25 questions a call, so even at the 160-token end that is
+ * ~4,000 tokens of output; 5,000 leaves headroom for a long case-based passage
+ * without reserving budget that is never used. Reservation per call drops from
+ * ~20,000 to ~8,600, which is the difference between one upload monopolising
+ * the minute and several running back to back.
+ */
+const PYQ_BATCH_CHARS = 12000;
+const PYQ_MAX_TOKENS  = 5000;
+
 export async function runPYQExtraction({ rawText, examType, subject, year, onProgress }) {
   const isMixed = subject === 'Mixed';
-  const batches = splitIntoBatches(rawText);
+  const batches = splitIntoBatches(rawText, PYQ_BATCH_CHARS);
   const allQuestions = [];
   let paperTitle = null, totalMarks = null;
 
@@ -26,7 +48,7 @@ export async function runPYQExtraction({ rawText, examType, subject, year, onPro
 
     const resp = await chatComplete({
       model:           'gpt-4o',
-      max_tokens:      16000,
+      max_tokens:      PYQ_MAX_TOKENS,
       temperature:     0,
       response_format: { type: 'json_object' },
       messages: [
@@ -69,6 +91,15 @@ ${batches[b]}`,
         },
       ],
     });
+
+    // Truncation matters more here than in notes: a cut-off response doesn't
+    // just shorten a chunk, it silently drops questions off the end of a paper
+    // and the upload still looks like it succeeded.
+    if (resp.choices[0].finish_reason === 'length') {
+      throw new Error(
+        `PYQ extraction hit the ${PYQ_MAX_TOKENS}-token output cap on batch ${b + 1}/${batches.length} — questions would be lost. Raise PYQ_MAX_TOKENS or lower PYQ_BATCH_CHARS.`,
+      );
+    }
 
     const data = JSON.parse(resp.choices[0].message.content);
     allQuestions.push(...(data.questions ?? []));

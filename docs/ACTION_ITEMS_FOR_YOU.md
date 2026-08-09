@@ -173,11 +173,82 @@ are textbook exercises, not past-year papers.
 
 ---
 
-## OPEN — `runPYQExtraction` reserves `max_tokens: 16000`
+## DECISION NEEDED — how NEET/JEE relates to the CBSE Class 11 corpus
 
-Over half the org's entire 30,000 TPM budget in a single reserved call. This is
-the same hazard that cost two files during the corpus load (see CHANGELOG session
-15) — latent on the question-paper extraction path, untouched so far.
+Not urgent, but it blocks the PYQ work that actually serves the product, so it
+wants deciding before NEET papers are sourced rather than after.
+
+### The problem
+
+The platform is positioned as NEET/JEE prep, and NEET's syllabus *is* Class 11 +
+12 Physics, Chemistry and Biology. **1,531 Class 11 Physics/Chemistry/Biology
+chunks are already loaded** — the right content, tagged for a different exam.
+
+Everything joins on `exam_type + subject`:
+
+- `match_knowledge_base(filter_exam_type, filter_subject, …)`
+- Blueprint V2: `.eq('exam_type', examType).eq('subject', subject)`
+- `syllabus_nodes`, `study_notes`, `getStudyChapters()` — all the same key
+
+So NEET PYQs tagged `exam_type: 'NEET'` will **not** see a single one of those
+1,531 chunks. Blueprint V2 would compute a NEET allocation with no NEET
+knowledge base behind it, and §4a's type-filtered retrieval would return nothing
+for NEET.
+
+CBSE Class 10 is unaffected — corpus, syllabus and PYQs all share
+`'CBSE Class 10'`. This only bites the Class 11 slice.
+
+### Options
+
+**A. Re-tag the Class 11 corpus as NEET.**
+Cheapest to execute (an UPDATE over ~1,531 rows plus their `study_notes`), and
+everything joins immediately. But it *loses* the CBSE Class 11 identity — a
+Class 11 board/school user would then find nothing, and JEE (Physics, Chemistry,
+Maths — no Biology) still wouldn't join. Rules out serving both audiences from
+one corpus.
+
+**B. Mapping layer at query time.**
+Keep the corpus tagged `'CBSE Class 11'` and resolve a NEET query to the set
+`['NEET', 'CBSE Class 11', 'CBSE Class 12']` before hitting the DB.
+`match_knowledge_base` already takes `filter_exam_type` as a scalar, so this
+needs the RPC widened to `text[]` (it already does exactly this for
+`filter_content_type`), plus a small `examTypesFor(examType)` helper used by the
+retrieval call sites. Preserves both identities, serves NEET and JEE from one
+corpus, and is the only option that survives adding Class 12. Most code, but the
+code is small and mostly already patterned.
+
+**C. Dual-tag rows.**
+Add a `exam_types text[]` alongside `exam_type` and write both. Avoids touching
+query logic much, but introduces two sources of truth for the same fact and
+every existing `.eq('exam_type', …)` in the app becomes subtly wrong.
+
+**D. Load NEET PYQs and NEET-specific content separately.**
+Treat NEET as its own vertical with its own corpus. Honest and simple, but
+duplicates ~1,500 chunks of identical NCERT content and doubles ingestion cost
+for every future chapter.
+
+### Read
+
+**B is the only option that doesn't paint you into a corner**, and the RPC
+already has the array-filter pattern to copy. A is tempting for speed but throws
+away the CBSE audience and still fails JEE. D is defensible only if NEET content
+will genuinely diverge from NCERT.
+
+**Note Class 12 is entirely absent from the corpus** — NEET is Class 11 + 12, so
+whichever option is picked, roughly half the NEET syllabus still isn't loaded.
+
+---
+
+## RESOLVED 2026-08-10 — `runPYQExtraction` reserved `max_tokens: 16000`
+
+Over half the org's entire 30,000 TPM budget in a single reserved call — the same
+hazard that cost two files during the corpus load. Fixed by measuring instead of
+guessing: 30 real questions serialised into this extractor's own schema come to a
+median 354 chars (~90 tokens) each, so a 38-question board paper is ~3,500 output
+tokens. Now `PYQ_MAX_TOKENS = 5000` with `PYQ_BATCH_CHARS = 12000`, dropping
+per-call reservation from ~20,000 to ~8,600. Added a `finish_reason === 'length'`
+guard, which matters more here than for notes: a truncated response silently
+drops questions off the end of a paper while the upload still reports success.
 
 ---
 
