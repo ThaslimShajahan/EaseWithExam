@@ -3,8 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- PNG fallback for browsers/contexts that ignore SVG favicons. -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <!-- iOS renders this opaque and applies its own rounding, so it needs the
+         solid-background variant rather than the transparent-corner icon. -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <!-- viewport-fit=cover is required for env(safe-area-inset-*) to resolve
+         to anything but 0 — without it, every safe-area padding rule in this
+         codebase (BottomNav, AppShell, MockTestEngine) was silently inert.
+         Matters here specifically because the PWA manifest runs
+         display:'standalone' (installed, no browser chrome), where content
+         genuinely extends under a notch/Dynamic Island/home indicator. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#21A375" />
     <meta name="description" content="AI-powered exam prep for NEET, JEE, and all state and central boards. Unlimited AI practice questions, real exam-pattern mock tests, an AI tutor that teaches instead of just answering, and a personalised study plan — free to start." />
     <meta name="keywords" content="NEET preparation, JEE preparation, JEE Main, JEE Advanced, board exam prep, state board exam prep, NEET mock test, JEE mock test, AI tutor for NEET JEE, NEET JEE practice questions, online exam preparation India, NEET 2026, JEE 2026, class 12 board exam prep, AI study plan" />

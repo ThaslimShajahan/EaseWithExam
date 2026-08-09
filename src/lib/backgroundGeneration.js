@@ -17,6 +17,7 @@ import { generateQuestionPaper, toEngineFormat } from './questionGen';
 import { publishTest } from './supabase';
 import { incrementQuota } from './quota';
 import { createNotification, getNotificationPrefs } from './notifications';
+import { sendTransactionalEmail } from './email';
 
 // Prevents the same student from starting a second background generation
 // while one is already running (e.g. reopening the modal and hitting
@@ -53,9 +54,16 @@ export async function startBackgroundPaperGeneration({
       questions:       formatted,
       durationMinutes,
       createdBy:       'student',
+      userId:          firebaseUid,
     });
 
     incrementQuota(firebaseUid, 'paper_generations_used').catch(() => {});
+
+    // Tell any open Exam Center to refetch. Generation is fire-and-forget and
+    // can finish while that page is already mounted, in which case the new
+    // paper wouldn't show up until a manual reload. A plain window event keeps
+    // this decoupled, same pattern as 'ewe:quota-updated'.
+    try { window.dispatchEvent(new CustomEvent('ewe:paper-ready', { detail: { examType, subject } })); } catch { /* non-browser */ }
 
     const link = '/exams?tab=papers';
     await createNotification(
@@ -66,6 +74,9 @@ export async function startBackgroundPaperGeneration({
       link,
     ).catch(() => {});
     sendPaperReadyPush(firebaseUid, formatted.length, examType, subject, link).catch(() => {});
+    sendTransactionalEmail(firebaseUid, 'paper_ready', {
+      examType, subject, questionCount: formatted.length, link,
+    });
 
     return published;
   } catch (e) {

@@ -196,7 +196,7 @@ export default function VideoLearningPage() {
               Videos open curated YouTube playlists in-app. Click{' '}
               <a
                 href={`https://www.youtube.com/results?search_query=${encodeURIComponent(`${currentSub} ${activeExam} NCERT`)}`}
-                target="_blank" rel="noreferrer"
+                target="_blank" rel="noopener noreferrer"
                 className="font-semibold underline flex-inline items-center gap-0.5"
               >
                 View on YouTube <ExternalLink size={10} className="inline" />

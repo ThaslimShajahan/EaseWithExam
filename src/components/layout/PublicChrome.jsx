@@ -1,120 +1,170 @@
 import { useState } from 'react';
-import { Sparkles, ListChecks, Crown, Menu, X } from 'lucide-react';
+import { Menu, X } from 'lucide-react';
 
 /**
- * Shared nav + footer for public marketing/info pages (landing page, about,
- * contact, terms, privacy) so they all read as one site instead of the
- * landing page looking branded and everything else looking like a bare
- * utility screen.
+ * Shared nav + footer for the public marketing/info pages (landing, about,
+ * contact, terms, privacy) so they read as one site.
+ *
+ * Light chrome on a light page, matching the reference design: logo left,
+ * centred links, and a two-button cluster on the right (outline "Sign Up" +
+ * solid "Get Started"). Flat brand green throughout — the previous version
+ * used a gradient top rule and a gradient CTA, both dropped per the no-gradient
+ * rule for this redesign.
  */
+
+const NAV_LINKS = [
+  { label: 'Home',     href: '/' },
+  { label: 'Features', href: '/#features' },
+  { label: 'Pricing',  href: '/#pricing' },
+  { label: 'About',    href: '/about' },
+  { label: 'Contact',  href: '/contact' },
+];
+
 export function PublicNavBar({ onSignIn }) {
   const [open, setOpen] = useState(false);
+
   return (
-    <nav className="sticky top-0 z-30">
-      <div className="h-1 bg-gradient-to-r from-primary-400 via-violet-400 to-primary-400" />
-      <div className="bg-slate-900 backdrop-blur-xl border-b border-white/10 shadow-lg shadow-black/20">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2.5">
-            <img src="/ewe_nav_icon.svg" alt="EaseWithExam" className="h-9 w-auto brightness-0 invert" />
-            <span className="hidden md:block text-sm font-semibold text-slate-300 border-l border-white/15 pl-2.5">AI Exam Prep for NEET, JEE &amp; Boards</span>
-          </a>
+    <nav className="sticky top-0 z-30 bg-white/90 backdrop-blur-xl border-b border-slate-100">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 h-[72px] flex items-center justify-between gap-4">
+        <a href="/" className="flex items-center gap-2.5 shrink-0">
+          {/* alt="" — the wordmark beside it already names the brand, so
+              repeating it would make a screen reader read "EaseWithExam"
+              twice for one link. */}
+          <img src="/ewe_nav_icon.svg" alt="" className="h-9 w-auto" />
+          <span className="text-[17px] font-bold text-slate-900 tracking-tight">EaseWithExam</span>
+        </a>
 
-          <div className="hidden sm:flex items-center gap-1">
-            <a href="/#features" className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-slate-300 hover:text-white hover:bg-white/10 transition-colors">
-              <Sparkles size={14} className="text-primary-400" /> Features
+        {/* Centre links — the reference puts these between the logo and the
+            action cluster rather than hugging either edge. */}
+        <div className="hidden lg:flex items-center gap-1 absolute left-1/2 -translate-x-1/2">
+          {NAV_LINKS.map(({ label, href }) => (
+            <a
+              key={label}
+              href={href}
+              className="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition-colors"
+            >
+              {label}
             </a>
-            <a href="/#how-it-works" className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-slate-300 hover:text-white hover:bg-white/10 transition-colors">
-              <ListChecks size={14} className="text-violet-400" /> How it works
-            </a>
-            <a href="/#pricing" className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold text-slate-300 hover:text-white hover:bg-white/10 transition-colors">
-              <Crown size={14} className="text-amber-400" /> Pricing
-            </a>
-            {onSignIn && (
-              <button onClick={onSignIn} className="ml-3 px-5 py-2.5 rounded-xl bg-gradient-to-r from-primary-500 to-violet-500 hover:from-primary-400 hover:to-violet-400 text-white text-sm font-bold shadow-md shadow-primary-900/40 transition-all">
-                Sign In
-              </button>
-            )}
-          </div>
-
-          <button onClick={() => setOpen((v) => !v)} className="sm:hidden p-2 rounded-lg bg-white/10 text-white">
-            {open ? <X size={20} /> : <Menu size={20} />}
-          </button>
+          ))}
         </div>
 
-        {open && (
-          <div className="sm:hidden border-t border-white/10 px-4 py-3 space-y-1 bg-slate-900/95">
-            <a href="/#features" onClick={() => setOpen(false)} className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold text-slate-300 hover:bg-white/10">
-              <Sparkles size={14} className="text-primary-400" /> Features
-            </a>
-            <a href="/#how-it-works" onClick={() => setOpen(false)} className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold text-slate-300 hover:bg-white/10">
-              <ListChecks size={14} className="text-violet-400" /> How it works
-            </a>
-            <a href="/#pricing" onClick={() => setOpen(false)} className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold text-slate-300 hover:bg-white/10">
-              <Crown size={14} className="text-amber-400" /> Pricing
-            </a>
-            {onSignIn && (
-              <button onClick={onSignIn} className="w-full mt-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-primary-500 to-violet-500 text-white text-sm font-bold shadow-md shadow-primary-900/40">
-                Sign In
+        <div className="hidden sm:flex items-center gap-2.5 shrink-0">
+          {onSignIn && (
+            <>
+              <button
+                onClick={onSignIn}
+                className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-700 text-sm font-semibold hover:border-slate-300 hover:bg-slate-50 transition-colors"
+              >
+                Sign Up
               </button>
-            )}
-          </div>
-        )}
+              <button
+                onClick={onSignIn}
+                className="px-5 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 text-white text-sm font-semibold transition-colors"
+              >
+                Get Started
+              </button>
+            </>
+          )}
+        </div>
+
+        <button
+          onClick={() => setOpen((v) => !v)}
+          aria-label={open ? 'Close menu' : 'Open menu'}
+          className="lg:hidden p-2 rounded-xl text-slate-700 hover:bg-slate-100 transition-colors"
+        >
+          {open ? <X size={20} /> : <Menu size={20} />}
+        </button>
       </div>
+
+      {open && (
+        <div className="lg:hidden border-t border-slate-100 px-4 py-3 space-y-1 bg-white">
+          {NAV_LINKS.map(({ label, href }) => (
+            <a
+              key={label}
+              href={href}
+              onClick={() => setOpen(false)}
+              className="block px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50"
+            >
+              {label}
+            </a>
+          ))}
+          {onSignIn && (
+            <div className="pt-2 space-y-2">
+              <button onClick={onSignIn} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-slate-700 text-sm font-semibold">
+                Sign Up
+              </button>
+              <button onClick={onSignIn} className="w-full px-4 py-2.5 rounded-xl bg-primary-600 text-white text-sm font-semibold">
+                Get Started
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </nav>
   );
 }
 
+const FOOTER_COLUMNS = [
+  {
+    heading: 'Explore',
+    links: [
+      { label: 'Home',        href: '/' },
+      { label: 'Features',    href: '/#features' },
+      { label: 'Pricing',     href: '/#pricing' },
+      { label: 'How it works', href: '/#how-it-works' },
+      { label: 'FAQ',         href: '/#faq' },
+    ],
+  },
+  {
+    heading: 'Company',
+    links: [
+      { label: 'About Us',            href: '/about' },
+      { label: 'Contact',             href: '/contact' },
+      { label: 'Privacy & Cookies',   href: '/privacy' },
+      { label: 'Terms of Service',    href: '/terms' },
+      { label: 'info@acenzos.com',    href: 'mailto:info@acenzos.com' },
+    ],
+  },
+];
+
 export function PublicFooter() {
   const year = new Date().getFullYear();
   return (
-    <footer className="bg-slate-900 text-slate-400">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-14 grid sm:grid-cols-2 lg:grid-cols-4 gap-10">
+    <footer className="bg-white border-t border-slate-100">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 pt-14 pb-10 grid gap-10 md:grid-cols-[1.8fr_1fr_1fr]">
         <div>
-          <img src="/ewe_nav_icon.svg" alt="EaseWithExam" className="h-9 w-auto brightness-0 invert" />
-          <p className="text-sm mt-4 leading-relaxed max-w-xs">
-            AI-powered exam prep for NEET, JEE &amp; Boards — unlimited practice, real exam-pattern mock tests,
-            and a personal AI tutor.
+          <img src="/ewe_nav_icon.svg" alt="EaseWithExam" className="h-9 w-auto" />
+          <p className="text-sm text-slate-500 mt-4 leading-relaxed max-w-xs">
+            AI-powered prep for NEET, JEE and board exams — real exam-pattern papers,
+            a tutor that explains, and progress you can actually see.
           </p>
         </div>
 
-        <div>
-          <h3 className="text-xs font-bold uppercase tracking-wide text-slate-300 mb-4">Product</h3>
-          <ul className="space-y-2.5 text-sm">
-            <li><a href="/#features" className="hover:text-white transition-colors">Features</a></li>
-            <li><a href="/#how-it-works" className="hover:text-white transition-colors">How it works</a></li>
-            <li><a href="/#pricing" className="hover:text-white transition-colors">Pricing</a></li>
-          </ul>
-        </div>
+        {FOOTER_COLUMNS.map(({ heading, links }) => (
+          <div key={heading}>
+            <h3 className="text-sm font-bold text-slate-900 mb-4">{heading}</h3>
+            <ul className="space-y-2.5 text-sm">
+              {links.map(({ label, href }) => (
+                <li key={label}>
+                  <a href={href} className="text-slate-500 hover:text-primary-700 transition-colors">{label}</a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
 
-        <div>
-          <h3 className="text-xs font-bold uppercase tracking-wide text-slate-300 mb-4">Company</h3>
-          <ul className="space-y-2.5 text-sm">
-            <li><a href="/about" className="hover:text-white transition-colors">About</a></li>
-            <li><a href="/contact" className="hover:text-white transition-colors">Contact</a></li>
-            <li><a href="mailto:info@acenzos.com" className="hover:text-white transition-colors">info@acenzos.com</a></li>
-          </ul>
-        </div>
-
-        <div>
-          <h3 className="text-xs font-bold uppercase tracking-wide text-slate-300 mb-4">Legal</h3>
-          <ul className="space-y-2.5 text-sm">
-            <li><a href="/privacy" className="hover:text-white transition-colors">Privacy &amp; Cookie Policy</a></li>
-            <li><a href="/terms" className="hover:text-white transition-colors">Terms of Service</a></li>
-          </ul>
-        </div>
       </div>
 
-      <div className="border-t border-white/10">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-5 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs">
-          <span>&copy; {year} EaseWithExam. All rights reserved.</span>
+      <div className="border-t border-slate-100">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-5 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-400">
+          <div className="flex items-center gap-5">
+            <a href="/terms" className="hover:text-slate-700 transition-colors">Terms of service</a>
+            <a href="/privacy" className="hover:text-slate-700 transition-colors">Privacy policy</a>
+          </div>
           <span>
-            A product by{' '}
-            <a
-              href="https://acenzos.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-semibold text-slate-300 hover:text-white transition-colors"
-            >
+            &copy; {year} EaseWithExam · A product by{' '}
+            <a href="https://acenzos.com" target="_blank" rel="noopener noreferrer"
+              className="font-semibold text-slate-500 hover:text-slate-800 transition-colors">
               Acenzos
             </a>
           </span>

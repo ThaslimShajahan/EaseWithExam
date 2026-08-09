@@ -7,6 +7,7 @@ import {
   BookOpen, Flame, Crown, TrendingUp, Zap,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { formatExamLabel } from '../../lib/categories';
 import { getTestSessions } from '../../lib/supabase';
 import { getUserGamification } from '../../lib/gamification';
 import Button from '../ui/Button';
@@ -110,13 +111,15 @@ export default function Dashboard() {
       getUserGamification(currentUser.uid),
     ])
       .then(([s, g]) => { setSessions(s); setGamification(g); })
-      .catch(console.error)
+      .catch((err) => { if (import.meta.env.DEV) console.error(err); })
       .finally(() => setLoading(false));
   }, [currentUser, userProfile?.target_exam]);
 
   const name      = userProfile?.display_name || currentUser?.displayName || 'Student';
   const exam      = userProfile?.target_exam;
-  const examLabel = exam === 'BOTH' ? 'NEET + JEE' : exam?.replace('_', ' ') || 'your exam';
+  // formatExamLabel (lib/categories.js) is THE canonical exam-label
+  // formatter — see its own comment for why this isn't reimplemented locally.
+  const examLabel = formatExamLabel(exam, 'your exam');
 
   const EXAM_DATES = { NEET: '2026-05-03', JEE_MAIN: '2026-01-22', JEE_ADVANCED: '2026-05-18' };
   const targetDate = EXAM_DATES[exam] ? new Date(EXAM_DATES[exam]) : null;

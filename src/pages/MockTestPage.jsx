@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { getPublishedTest, getTestAttempt, lockExamAttemptMode } from '../lib/supabase';
-import MockTestEngine from '../components/exam/MockTestEngine';
+import { Suspense, lazy } from 'react';
+const MockTestEngine = lazy(() => import('../components/exam/MockTestEngine'));
 import SkeletonLoader from '../components/ui/SkeletonLoader';
 import { useAuth } from '../context/AuthContext';
 import { checkQuota, incrementQuota } from '../lib/quota';
@@ -27,8 +28,12 @@ export default function MockTestPage() {
         // One-time attempt check — before quota so re-viewers don't burn quota
         const attempt = await getTestAttempt(currentUser?.uid, testId);
         if (attempt) {
-          const data = await getPublishedTest(testId);
-          if (!data) { setLoadErr('This test could not be found. It may have been removed.'); setLoading(false); return; }
+          const data = await getPublishedTest(testId, currentUser?.uid);
+          if (!data) {
+            setLoadErr('This test could not be found. It may have been removed or you do not have access to it.');
+            setLoading(false);
+            return;
+          }
           setTest(data);
           setPriorAttempt(attempt);
           setLoading(false);
@@ -43,8 +48,8 @@ export default function MockTestPage() {
         // a couple of times mid-exam could get shown "Daily Limit Reached" with no
         // way back into their in-progress answers. Fetch the test first (needed to
         // compute the same key) before deciding whether to charge quota at all.
-        const data = await getPublishedTest(testId);
-        if (!data) { setLoadErr('This test could not be found. It may have been removed.'); setLoading(false); return; }
+        const data = await getPublishedTest(testId, currentUser?.uid);
+        if (!data) { setLoadErr('This test could not be found. It may have been removed or you do not have access to it.'); setLoading(false); return; }
         // The Exam Center listing already hides drafts, but a direct/bookmarked
         // link to a test's id bypassed that entirely — nothing here checked
         // is_published, so an unpublished (or since-unpublished) test was
@@ -151,26 +156,32 @@ export default function MockTestPage() {
 
   if (test) {
     return (
-      <MockTestEngine
-        testId={testId}
-        questions={test.questions}
-        testConfig={{
-          title:        test.title,
-          duration:     test.duration_minutes,
-          instructions: (() => {
-            const isCBSE = isCBSEStyle(getExamPattern(test.exam_type));
-            return [
-              `${test.questions.length} questions · ${test.exam_type} style`,
-              isCBSE
-                ? 'Marks vary by section (1–5 marks per question). No negative marking.'
-                : 'Each correct answer carries +4 marks. Each wrong answer carries −1 mark.',
-              'Do not close the browser tab during the test.',
-            ];
-          })(),
-        }}
-      />
+      <Suspense fallback={<SkeletonLoader type="test" />}>
+        <MockTestEngine
+          testId={testId}
+          questions={test.questions}
+          testConfig={{
+            title:        test.title,
+            duration:     test.duration_minutes,
+            instructions: (() => {
+              const isCBSE = isCBSEStyle(getExamPattern(test.exam_type));
+              return [
+                `${test.questions.length} questions · ${test.exam_type} style`,
+                isCBSE
+                  ? 'Marks vary by section (1–5 marks per question). No negative marking.'
+                  : 'Each correct answer carries +4 marks. Each wrong answer carries −1 mark.',
+                'Do not close the browser tab during the test.',
+              ];
+            })(),
+          }}
+        />
+      </Suspense>
     );
   }
 
-  return <MockTestEngine />;
+  return (
+    <Suspense fallback={<SkeletonLoader type="test" />}>
+      <MockTestEngine />
+    </Suspense>
+  );
 }

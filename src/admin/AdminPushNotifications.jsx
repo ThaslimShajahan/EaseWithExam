@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bell, Send, Users, User, CheckCircle2, Loader2, X, AlertTriangle, MessageCircle, Smartphone } from 'lucide-react';
+import { Bell, Send, Users, User, CheckCircle2, Loader2, X, AlertTriangle, MessageCircle, Smartphone, Mail } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { createNotification, broadcastNotification } from '../lib/notifications';
 import StudentPicker from '../components/admin/StudentPicker';
@@ -12,12 +12,17 @@ function getCallerUid() {
   } catch { return ''; }
 }
 
+// Tinted-on-dark (bg/10-15 + -300/-400 text), matching this file's own alert-box
+// convention (e.g. the red/emerald error/success boxes below) — the previous
+// flat bg-X-100/text-X-700 pastels were lifted from the light-themed student
+// notification badges (lib/notifications.js) and read as washed-out/broken
+// against this screen's dark admin background.
 const TYPES = [
-  { value: 'info',        label: 'Info',        color: 'bg-blue-100 text-blue-700' },
-  { value: 'success',     label: 'Success',     color: 'bg-emerald-100 text-emerald-700' },
-  { value: 'warning',     label: 'Warning',     color: 'bg-amber-100 text-amber-700' },
-  { value: 'achievement', label: 'Achievement', color: 'bg-violet-100 text-violet-700' },
-  { value: 'assignment',  label: 'Assignment',  color: 'bg-orange-100 text-orange-700' },
+  { value: 'info',        label: 'Info',        color: 'bg-blue-500/15 text-blue-300' },
+  { value: 'success',     label: 'Success',     color: 'bg-emerald-500/15 text-emerald-300' },
+  { value: 'warning',     label: 'Warning',     color: 'bg-amber-500/15 text-amber-300' },
+  { value: 'achievement', label: 'Achievement', color: 'bg-violet-500/15 text-violet-300' },
+  { value: 'assignment',  label: 'Assignment',  color: 'bg-orange-500/15 text-orange-300' },
 ];
 
 function NotifCard({ notif }) {
@@ -50,11 +55,12 @@ export default function AdminPushNotifications() {
     expires_in_days: '',
   });
   const [selectedStudent, setSelectedStudent] = useState(null);
-  const [channels, setChannels] = useState({ inapp: true, push: true, whatsapp: false });
+  const [channels, setChannels] = useState({ inapp: true, push: true, whatsapp: false, email: false });
   const [sending,   setSending]   = useState(false);
   const [sent,      setSent]      = useState(false);
   const [pushResult, setPushResult] = useState(null);
   const [waResult,   setWaResult]   = useState(null);
+  const [emailResult, setEmailResult] = useState(null);
   const [err,       setErr]       = useState('');
   const [history,   setHistory]   = useState([]);
   const [loadingH,  setLoadingH]  = useState(true);
@@ -73,7 +79,7 @@ export default function AdminPushNotifications() {
   async function handleSend() {
     if (!form.title.trim() || !form.body.trim()) { setErr('Title and message are required'); return; }
     if (form.target === 'user' && !form.user_id.trim()) { setErr('Firebase UID is required for targeted send'); return; }
-    setSending(true); setErr(''); setSent(false); setWaResult(null);
+    setSending(true); setErr(''); setSent(false); setWaResult(null); setEmailResult(null);
     try {
       const { error } = await supabase.rpc('admin_send_notification', {
         p_caller:          callerUid,
@@ -144,10 +150,35 @@ export default function AdminPushNotifications() {
         }
       }
 
+      // Email via Resend (send-email edge function) — single target sends
+      // directly to that user; "All Students" uses the function's own
+      // broadcast mode (server-side fan-out via Resend's batch endpoint)
+      // rather than looping individual sends from here.
+      if (channels.email) {
+        try {
+          const emailUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`;
+          const emailRes = await fetch(emailUrl, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+            body: JSON.stringify({
+              caller_uid: callerUid,
+              template:   'admin_broadcast',
+              data:       { title: form.title.trim(), body: form.body.trim(), url: form.url.trim() || '' },
+              ...(form.target === 'user'
+                ? { user_id: form.user_id.trim() }
+                : { broadcast: true }),
+            }),
+          });
+          setEmailResult(await emailRes.json());
+        } catch {
+          setEmailResult({ error: 'send-email unreachable' });
+        }
+      }
+
       setSent(true);
       setForm(f => ({ ...f, title: '', body: '', user_id: '' }));
       setSelectedStudent(null);
-      setTimeout(() => { setSent(false); setPushResult(null); }, 6000);
+      setTimeout(() => { setSent(false); setPushResult(null); setEmailResult(null); }, 6000);
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -246,6 +277,7 @@ export default function AdminPushNotifications() {
                 { key: 'inapp',    icon: Bell,          label: 'In-App',   locked: true  },
                 { key: 'push',     icon: Smartphone,    label: 'Device Push'             },
                 { key: 'whatsapp', icon: MessageCircle, label: 'WhatsApp'                },
+                { key: 'email',    icon: Mail,           label: 'Email'                   },
               ].map(({ key, icon: Icon, label, locked }) => {
                 const on = channels[key];
                 return (
@@ -267,6 +299,11 @@ export default function AdminPushNotifications() {
             {channels.whatsapp && (
               <p className="text-[10px] text-amber-400 mt-1.5">
                 WhatsApp only reaches students who saved their number in Profile → Notifications.
+              </p>
+            )}
+            {channels.email && (
+              <p className="text-[10px] text-amber-400 mt-1.5">
+                Email skips students with no email on file and anyone who turned off email notifications.
               </p>
             )}
           </div>
@@ -304,6 +341,25 @@ export default function AdminPushNotifications() {
                       : waResult.sent > 0
                         ? `WhatsApp: sent to ${waResult.sent}${waResult.total ? `/${waResult.total}` : ''} users`
                         : (waResult.message ?? 'WhatsApp: no opted-in users found')}
+                  </div>
+                )}
+                {emailResult && (
+                  <div className={`flex items-center gap-2 rounded-xl px-3 py-2 border text-xs font-semibold ${
+                    emailResult.error ? 'bg-red-500/10 border-red-500/20 text-red-400'
+                    : emailResult.skipped ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                    : (emailResult.sent > 0 || emailResult.sent === true) ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                    : 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                  }`}>
+                    <Mail size={13} className="shrink-0" />
+                    {emailResult.error
+                      ? `Email error: ${emailResult.error}`
+                      : emailResult.skipped
+                        ? `Email skipped: ${emailResult.reason === 'no_email_on_file' ? 'no email on file' : 'user unsubscribed'}`
+                        : emailResult.sent === true
+                          ? 'Email: sent'
+                          : typeof emailResult.sent === 'number'
+                            ? `Email: sent to ${emailResult.sent}${emailResult.total ? `/${emailResult.total}` : ''} users`
+                            : (emailResult.message ?? 'Email: no eligible recipients')}
                   </div>
                 )}
               </motion.div>

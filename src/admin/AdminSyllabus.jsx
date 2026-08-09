@@ -48,11 +48,15 @@ function getDbExamType(examTab, classLevel) {
 
 /* ── Auto-fill sources: scan uploaded content, or ask AI ──────── */
 
-// Distinct chapter names already tagged on uploaded PYQs for this exam+subject —
-// lets an admin bulk-add chapters that already have content instead of typing
-// every chapter name by hand.
-async function fetchChaptersFromContent(examTab, dbExamType, subject) {
+// Distinct chapter names already tagged on uploaded PYQs OR Study Notes for
+// this exam+subject — lets an admin bulk-add chapters that already have
+// content instead of typing every chapter name by hand. Study Notes carry
+// the same subject/exam_type/chapter tagging as PYQs (set at upload time in
+// AdminStudyNotes.jsx), so it's a second real source, not just PYQ-tagged
+// content.
+async function fetchChaptersFromContent(examTab, dbExamType, subject, callerUid) {
   const examCandidates = [...new Set([examTab, dbExamType])];
+
   const { data, error } = await supabase
     .from('pyq_questions')
     .select('chapter')
@@ -60,7 +64,17 @@ async function fetchChaptersFromContent(examTab, dbExamType, subject) {
     .in('exam_type', examCandidates)
     .not('chapter', 'is', null);
   if (error) throw new Error(error.message);
-  return (data ?? []).map((r) => r.chapter?.trim()).filter(Boolean);
+  const pyqChapters = (data ?? []).map((r) => r.chapter?.trim()).filter(Boolean);
+
+  let noteChapters = [];
+  try {
+    const { data: notesData } = await supabase.rpc('admin_list_study_notes', { p_caller: callerUid });
+    noteChapters = (notesData ?? [])
+      .filter((n) => n.subject === subject && examCandidates.includes(n.exam_type) && n.chapter)
+      .map((n) => n.chapter.trim());
+  } catch { /* non-fatal — PYQ results alone are still useful */ }
+
+  return [...new Set([...pyqChapters, ...noteChapters])];
 }
 
 // Asks AI for the standard textbook/exam chapter list — same idea as the
@@ -299,7 +313,7 @@ function ChapterPanel({ open, exam, subject, classLevel, existing, onSave, onClo
 
 /* ── Auto-fill review modal (fetch-from-content OR AI-generate) ─ */
 
-function ChapterSuggestModal({ open, mode, exam, dbExamType, classLevel, subject, existingNames, onClose, onInserted }) {
+function ChapterSuggestModal({ open, mode, exam, dbExamType, classLevel, subject, existingNames, onClose, onInserted, callerUid }) {
   const [loading,   setLoading]   = useState(false);
   const [inserting, setInserting] = useState(false);
   const [candidates,setCandidates]= useState([]); // [{ name, checked }]
@@ -312,7 +326,7 @@ function ChapterSuggestModal({ open, mode, exam, dbExamType, classLevel, subject
     (async () => {
       try {
         const names = mode === 'content'
-          ? await fetchChaptersFromContent(exam, dbExamType, subject)
+          ? await fetchChaptersFromContent(exam, dbExamType, subject, callerUid)
           : await fetchChaptersFromAI(dbExamType, subject);
         const existing = new Set(existingNames.map((n) => n.toLowerCase()));
         const fresh = [...new Set(names)].filter((n) => n && !existing.has(n.toLowerCase()));
@@ -320,7 +334,7 @@ function ChapterSuggestModal({ open, mode, exam, dbExamType, classLevel, subject
         setCandidates(fresh.map((name) => ({ name, checked: true })));
         if (!fresh.length) {
           setError(mode === 'content'
-            ? 'No new chapter names found in uploaded PYQs for this subject — they may not be tagged with a chapter yet.'
+            ? 'No new chapter names found in uploaded PYQs or Study Notes for this subject — they may not be tagged with a chapter yet.'
             : 'AI did not return any usable chapters. Try again.');
         }
       } catch (e) {
@@ -330,7 +344,7 @@ function ChapterSuggestModal({ open, mode, exam, dbExamType, classLevel, subject
       }
     })();
     return () => { cancelled = true; };
-  }, [open, mode, exam, dbExamType, subject]);
+  }, [open, mode, exam, dbExamType, subject, callerUid]);
 
   function toggle(i) {
     setCandidates((cs) => cs.map((c, idx) => idx === i ? { ...c, checked: !c.checked } : c));
@@ -482,11 +496,14 @@ function ChapterRow({ chapter, index, onEdit, onDelete }) {
           </div>
         )}
       </div>
-      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-        <button onClick={() => onEdit(chapter)} className="p-1.5 hover:bg-primary-900/50 text-primary-400 rounded-lg transition-colors" title="Edit">
+      {/* Was opacity-0 group-hover:opacity-100 — undiscoverable until you
+          happened to hover the exact row, same inconsistency as the subject
+          header's actions above. */}
+      <div className="flex gap-1 shrink-0">
+        <button onClick={() => onEdit(chapter)} className="p-1.5 text-slate-600 hover:bg-primary-900/50 hover:text-primary-400 rounded-lg transition-colors" title="Edit">
           <Pencil size={12} />
         </button>
-        <button onClick={() => onDelete(chapter)} className="p-1.5 hover:bg-red-900/50 text-red-400 rounded-lg transition-colors" title="Delete">
+        <button onClick={() => onDelete(chapter)} className="p-1.5 text-slate-600 hover:bg-red-900/50 hover:text-red-400 rounded-lg transition-colors" title="Delete">
           <Trash2 size={12} />
         </button>
       </div>
@@ -539,24 +556,31 @@ function SubjectSection({
             {chapters.length}
           </span>
         </button>
+        {/* Two distinct action groups (manage this subject vs. populate its
+            chapters), previously five buttons in one undifferentiated row,
+            mixing hover-only icon buttons with always-visible labelled
+            pills — inconsistent, and rename/delete were undiscoverable
+            until you happened to hover the row. Both groups are always
+            visible now, separated by a divider. */}
         <div className="flex items-center gap-1 shrink-0">
           <button
             onClick={(e) => { e.stopPropagation(); setNameDraft(subject); setRenaming(true); }}
             title="Rename subject"
-            className="p-1.5 rounded-lg text-slate-500 hover:text-primary-400 hover:bg-primary-900/30 opacity-0 group-hover/subj:opacity-100 transition-all"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-primary-400 hover:bg-primary-900/30 transition-colors"
           >
             <Pencil size={12} />
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); onDeleteSubject(subject); }}
             title="Delete subject"
-            className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/30 opacity-0 group-hover/subj:opacity-100 transition-all"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/30 transition-colors"
           >
             <Trash2 size={12} />
           </button>
+          <span className="w-px h-4 bg-white/10 mx-1" aria-hidden="true" />
           <button
             onClick={(e) => { e.stopPropagation(); onFetchContent(subject); }}
-            title="Fetch chapters from uploaded content"
+            title="Fetch chapters from uploaded PYQs and Study Notes"
             className="flex items-center gap-1 text-xs text-slate-400 hover:text-primary-300 font-semibold px-2 py-1 rounded-lg hover:bg-primary-900/30 transition-colors"
           >
             <Database size={12} /> Fetch
@@ -728,8 +752,22 @@ export default function AdminSyllabus() {
       map[r.subject].push(r);
     }
     for (const s of Object.keys(map)) map[s].sort((a, b) => a.sort_order - b.sort_order);
+
+    // Categories (Admin > Platform > Categories) already declares which
+    // subjects this board+class covers — surface those as ready-to-fill
+    // sections (0 chapters, Fetch/AI/Add already available on them) instead
+    // of an empty screen that made "Add Subject" (re-typing a name Categories
+    // already has) look like the only way to start. Skipped during an active
+    // search — injecting empty subjects into filtered results would just be
+    // confusing, not helpful.
+    if (!src) {
+      const categorySubjects = CATEGORIES[dbExamType]?.subjects ?? [];
+      for (const s of categorySubjects) {
+        if (!map[s]) map[s] = [];
+      }
+    }
     return map;
-  }, [rows, searchQ]);
+  }, [rows, searchQ, dbExamType]);
 
   const totalSubjects  = Object.keys(subjectMap).length;
   const totalChapters  = Object.values(subjectMap).reduce((s, ch) => s + ch.length, 0);
@@ -1131,6 +1169,7 @@ export default function AdminSyllabus() {
         existingNames={rows.filter((r) => r.subject === suggestFor?.subject).map((c) => c.chapter_name)}
         onClose={() => setSuggestFor(null)}
         onInserted={handleSuggestInserted}
+        callerUid={callerUid}
       />
 
       {/* Chapter slide panel */}

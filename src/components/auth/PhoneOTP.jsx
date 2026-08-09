@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Phone, ArrowRight, RefreshCw, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { mapAuthError } from '../../lib/authErrors';
 import Button from '../ui/Button';
 
 const COUNTRY_CODES = [
@@ -9,7 +10,7 @@ const COUNTRY_CODES = [
   { code: '+44', label: '🇬🇧 +44', country: 'UK'    },
 ];
 
-export default function PhoneOTP({ onError, onStepChange }) {
+export default function PhoneOTP({ onError, onStepChange, onSuccess }) {
   const { sendOTP, verifyOTP } = useAuth();
   const [step,        setStep]        = useState('phone');  // 'phone' | 'otp'
   const [countryCode, setCountryCode] = useState('+91');
@@ -42,7 +43,8 @@ export default function PhoneOTP({ onError, onStepChange }) {
       onStepChange?.(true);
       startCountdown();
     } catch (err) {
-      onError?.(err.message || 'Could not send OTP. Check the number and try again.');
+      const msg = mapAuthError(err);
+      if (msg) onError?.(msg);
     } finally {
       setLoading(false);
     }
@@ -68,8 +70,10 @@ export default function PhoneOTP({ onError, onStepChange }) {
     setLoading(true);
     try {
       await verifyOTP(code);
+      onSuccess?.();
     } catch (err) {
-      onError?.(err.message || 'Incorrect OTP. Please try again.');
+      const msg = mapAuthError(err);
+      if (msg) onError?.(msg);
       setOtp(['', '', '', '', '', '']);
       otpRefs.current[0]?.focus();
     } finally {

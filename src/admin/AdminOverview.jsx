@@ -78,7 +78,7 @@ export default function AdminOverview() {
       supabase.rpc('admin_get_coaching_centre_count', { p_caller: getCallerUid() }),
       supabase.from('daily_usage_quota').select('user_id', { count: 'exact' }).eq('usage_date', today),
       supabase.from('subscriptions').select('user_id', { count: 'exact' }).eq('status', 'active'),
-      supabase.from('published_tests').select('id', { count: 'exact' }),
+      supabase.rpc('admin_list_published_tests', { p_caller: getCallerUid() }).then((r) => ({ count: (r.data ?? []).length })),
       // "Papers Loaded" (question_papers) and "KB Chunks" (knowledge_base) are
       // legacy tables the current Content Intake pipeline doesn't primarily
       // write to anymore — real uploaded content lands in pyq_questions

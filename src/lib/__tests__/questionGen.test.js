@@ -26,7 +26,7 @@ vi.mock('../syllabus', () => ({
   getChapters: vi.fn().mockResolvedValue([]),
 }));
 
-import { PAPER_PATTERNS } from '../questionGen';
+import { PAPER_PATTERNS, toEngineFormat } from '../questionGen';
 import { getExamPattern } from '../examPattern';
 
 // questionGen.js and examPattern.js import from each other (examPattern reads
@@ -61,4 +61,42 @@ describe('PAPER_PATTERNS internal consistency', () => {
       expect(mSum).toBe(pattern.totalMarks);
     });
   }
+});
+
+/* ── Diagram / figure passthrough ───────────────────────────────
+ * Physics ray diagrams, Chemistry bonding structures and Maths graphs all
+ * arrive as either an attached `image_url` (admin-uploaded or DALL-E
+ * generated) or an AI-written `diagram_description`. toEngineFormat is the
+ * single boundary every generated question crosses on its way to the exam
+ * engine and to published_tests, so if it drops these fields the figure is
+ * gone everywhere downstream with no error.
+ */
+describe('toEngineFormat — figures', () => {
+  const base = { question: 'Identify the part labelled A.', options: ['A. x', 'B. y', 'C. z', 'D. w'], answer: 'A' };
+
+  it('preserves an attached image_url', () => {
+    const [q] = toEngineFormat([{ ...base, image_url: 'https://cdn.example/fig1.png' }], 'Physics', 'NEET');
+    expect(q.image_url).toBe('https://cdn.example/fig1.png');
+  });
+
+  it('preserves diagram_description when no image is attached', () => {
+    const [q] = toEngineFormat([{ ...base, diagram_description: 'Ray diagram of a convex lens' }], 'Physics', 'NEET');
+    expect(q.image_url).toBeNull();
+    expect(q.diagram_description).toBe('Ray diagram of a convex lens');
+  });
+
+  it('nulls both when the question has no figure', () => {
+    const [q] = toEngineFormat([base], 'Chemistry', 'NEET');
+    expect(q.image_url).toBeNull();
+    expect(q.diagram_description).toBeNull();
+  });
+
+  it('keeps figures on descriptive questions too (not just MCQs)', () => {
+    const [q] = toEngineFormat(
+      [{ question: 'Draw and explain.', type: 'Long Answer', image_url: 'https://cdn.example/bond.png' }],
+      'Chemistry', 'CBSE Class 12',
+    );
+    expect(q.image_url).toBe('https://cdn.example/bond.png');
+    expect(q.options).toBeNull();
+  });
 });

@@ -520,7 +520,7 @@ export default function StudyPlanPage() {
   };
 
   return (
-    <div className="space-y-5 p-4 lg:p-0 max-w-2xl mx-auto lg:mx-0">
+    <div className="space-y-5 p-4 lg:p-0 max-w-2xl mx-auto">
       <HubPageHeader icon={Brain} title="Study Plan" subtitle="AI-personalised schedule for your exam" />
 
       <AnimatePresence>

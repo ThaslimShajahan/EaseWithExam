@@ -79,6 +79,16 @@
     100% { transform: translateX(100%); }
   }
 
+  /* --- Brand loading indicator (EweSpinner) — slow breathing pulse rather
+     than a spin, since the logo isn't rotationally symmetric. --- */
+  .ewe-spinner-pulse {
+    animation: ewe-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes ewe-pulse {
+    0%, 100% { opacity: 0.45; transform: scale(0.92); }
+    50%      { opacity: 1;    transform: scale(1); }
+  }
+
   /* --- Touch target helper --- */
   .touch-target {
     @apply min-h-[48px] min-w-[48px] flex items-center justify-center;
@@ -123,6 +133,9 @@
 @layer utilities {
   .scrollbar-hide::-webkit-scrollbar { display: none; }
   .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
   .no-tap-highlight { -webkit-tap-highlight-color: transparent; }
 }

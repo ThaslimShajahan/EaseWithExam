@@ -189,7 +189,7 @@ serve(async (req) => {
   let reqBody: { caller_uid: string; title: string; body: string; user_id?: string; url?: string; icon?: string };
   try { reqBody = await req.json(); } catch { return json(400, { error: 'Invalid JSON' }); }
 
-  const { caller_uid, title, body: msgBody, user_id, url = '/dashboard', icon = '/pwa-192x192.png' } = reqBody;
+  const { caller_uid, title, body: msgBody, user_id, url = '/dashboard', icon = '/icon-192.png' } = reqBody;
   if (!caller_uid || !title || !msgBody) return json(400, { error: 'Missing required fields' });
 
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);

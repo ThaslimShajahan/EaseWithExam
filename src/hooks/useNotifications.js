@@ -5,6 +5,7 @@ import {
   markNotificationRead,
   markAllNotificationsRead,
   deleteNotification,
+  deleteAllNotifications,
 } from '../lib/notifications';
 
 export function useNotifications(firebaseUid) {
@@ -65,5 +66,10 @@ export function useNotifications(firebaseUid) {
     await deleteNotification(id);
   }, []);
 
-  return { notifications, unreadCount, loading, markRead, markAllRead, remove, refresh };
+  const clearAll = useCallback(async () => {
+    setNotifications([]);
+    await deleteAllNotifications(firebaseUid);
+  }, [firebaseUid]);
+
+  return { notifications, unreadCount, loading, markRead, markAllRead, remove, clearAll, refresh };
 }

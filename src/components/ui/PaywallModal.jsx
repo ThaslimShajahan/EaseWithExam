@@ -40,7 +40,7 @@ export default function PaywallModal({ onClose, feature, firebaseUid, email, nam
         onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       >
         <motion.div
-          className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+          className="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto"
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -93,6 +93,9 @@ export default function PaywallModal({ onClose, feature, firebaseUid, email, nam
                     </div>
                     <div className="text-right">
                       <p className="font-bold text-slate-900 text-sm">{plan.priceLabel}</p>
+                      {plan.priceSuffix && (
+                        <p className="text-[10px] text-slate-400">{plan.priceSuffix}</p>
+                      )}
                     </div>
                   </div>
 

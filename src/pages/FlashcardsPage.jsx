@@ -8,12 +8,13 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getAllChapters } from '../lib/syllabus';
-import { buildExamType } from '../lib/categories';
+import { buildExamType, getExamLabel } from '../lib/categories';
 import { generateFlashcards, getFlashcards, getFlashcardSummary, reviewFlashcard } from '../lib/flashcards';
 import { checkQuota, incrementQuota } from '../lib/quota';
 import { createNotification } from '../lib/notifications';
 import RingChart from '../components/ui/RingChart';
 import PaywallModal from '../components/ui/PaywallModal';
+import EweSpinner from '../components/ui/EweSpinner';
 
 // generateFlashcards() always produces a fixed-size batch (see FLASHCARDS_PER_CHAPTER
 // in lib/flashcards.js) — checkQuota needs to know this upfront to block BEFORE a
@@ -220,7 +221,7 @@ function ChapterList({ uid, examType, classLevel, onSelectChapter }) {
   if (loadingSyl) {
     return (
       <div className="flex justify-center py-12">
-        <Loader2 size={22} className="animate-spin text-primary-400" />
+        <EweSpinner size="sm" />
       </div>
     );
   }
@@ -425,7 +426,7 @@ export default function FlashcardsPage() {
             <Layers size={20} className="text-primary-500" />
             {mode === 'list' ? 'Flashcards' : activeChapter?.name}
           </h1>
-          <p className="text-xs text-slate-500 mt-0.5">{examType} · AI-generated from NCERT</p>
+          <p className="text-xs text-slate-500 mt-0.5">{getExamLabel(examType)} · AI-generated from NCERT</p>
         </div>
         {!isPremium && (
           <Link to="/pricing"
@@ -499,7 +500,7 @@ export default function FlashcardsPage() {
       {mode === 'study' && activeChapter && (
         cardsLoading ? (
           <div className="flex items-center justify-center py-16">
-            <Loader2 size={24} className="animate-spin text-primary-400" />
+            <EweSpinner size="sm" />
           </div>
         ) : cards.length === 0 ? (
           <div className="card text-center py-8 space-y-3">

@@ -1,9 +1,32 @@
-import * as pdfjsLib from 'pdfjs-dist';
 import { chatComplete } from './aiProxy';
 
-// CDN worker avoids MIME-type / .mjs serving issues on any host
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  'https://cdn.jsdelivr.net/npm/pdfjs-dist@6.0.227/build/pdf.worker.min.mjs';
+// Lazy-load pdfjs to avoid bundling it into the initial app bundle. This
+// keeps the large `pdfjs-dist` code in a separate chunk that's only fetched
+// when a PDF is actually processed.
+const PDFJS_VERSION = '6.0.227';
+const PDFJS_CDN     = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VERSION}/build`;
+
+let pdfjsLib = null;
+async function ensurePdfjs() {
+  if (pdfjsLib) return pdfjsLib;
+
+  // pdfjs-dist v6 ships ESM only — the build is `pdf.min.mjs`. Pointing at
+  // `pdf.min.js` 404s on that version, which meant EVERY browser-side PDF read
+  // (the whole Content Intake screen) failed at the loader before it ever
+  // reached extraction. The worker URL below was already correct, which is what
+  // made the mismatch easy to miss.
+  try {
+    pdfjsLib = await import(/* @vite-ignore */ `${PDFJS_CDN}/pdf.min.mjs`);
+  } catch {
+    // pdfjs-dist is a real dependency, so a CDN outage (or an offline dev
+    // machine) doesn't have to take PDF ingestion down with it. Vite serves
+    // this from node_modules; it costs a lazy chunk instead of a CDN hit.
+    pdfjsLib = await import('pdfjs-dist/build/pdf.min.mjs');
+  }
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}/pdf.worker.min.mjs`;
+  return pdfjsLib;
+}
 
 /* ── Download strategy: Edge Fn → direct → proxy chain ─── */
 
@@ -45,16 +68,16 @@ export async function fetchPdfBuffer(pdfUrl) {
   /* 1. Edge Function — most reliable (server-side, bypasses hotlink protection) */
   try {
     const edgeEndpoint = `${EDGE_URL}?url=${encodeURIComponent(pdfUrl)}`;
-    console.log(`[pdf] Edge Function → ${fname}`);
+    if (import.meta.env.DEV) console.log(`[pdf] Edge Function → ${fname}`);
     const r = await tryFetch(edgeEndpoint, { headers: EDGE_HEADERS });
-    console.log(`[pdf] Edge Function ✓ (${r.headers.get('Content-Type')})`);
+    if (import.meta.env.DEV) console.log(`[pdf] Edge Function ✓ (${r.headers.get('Content-Type')})`);
     const buf = await r.arrayBuffer();
     assertIsPdf(buf);
     return buf;
   } catch (e) {
     // 404 = file genuinely doesn't exist — skip all fallbacks
     if (e.status === 404) throw new Error(`File not found (404): ${fname}`);
-    console.warn(`[pdf] Edge Function failed: ${e.message}`);
+    if (import.meta.env.DEV) console.warn(`[pdf] Edge Function failed: ${e.message}`);
   }
 
   /* 2. Direct fetch */
@@ -125,7 +148,8 @@ export function preFilterUrl(pdfUrl) {
  * through a chat completion.
  */
 export async function extractPdfPages(arrayBuffer) {
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const lib = await ensurePdfjs();
+  const pdf = await lib.getDocument({ data: arrayBuffer }).promise;
   // No page cap — a whole textbook unit (or a full past-paper compilation) must
   // be read in full regardless of how many pages it runs to. This used to be
   // capped (first 20, then 60) to bound how much text a single downstream AI

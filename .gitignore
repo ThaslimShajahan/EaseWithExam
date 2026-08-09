@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dev-dist/
 .env
 .env.local
 .env.*.local
@@ -8,11 +9,9 @@ dist/
 .claude/
 .qodo/
 
-# Large binaries not obviously source — excluded from the first commit so they
-# don't bloat repo history permanently; remove these lines if you want them tracked.
-dist.zip
+# Build/deploy artifacts and large binaries — not source.
+*.zip
 IMG_4429.MOV
-EWE logo only.zip
 data.txt
 supabase/.temp/
 
@@ -20,3 +19,11 @@ supabase/.temp/
 # app source, ~1.6GB, never meant to be committed.
 easy with exam/
 scripts/.ncert-ingest-checkpoint.json
+
+# Raw screenshots captured by scripts/landing-shots.mjs. Only the cropped
+# results in public/landing/ are committed; these are the large intermediates.
+.landing-shots/
+
+# Credentials — never commit.
+*firebase-adminsdk*.json
+secrets/

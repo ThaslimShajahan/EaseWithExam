@@ -8,7 +8,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { createNotification } from '../lib/notifications';
 import { getAllChapters } from '../lib/syllabus';
-import { buildExamType } from '../lib/categories';
+import { buildExamType, getSchoolExamType, getExamLabel } from '../lib/categories';
 import {
   getChapterProgress, upsertChapter, initChapterProgress, computeProgress,
 } from '../lib/syllabusTracker';
@@ -115,9 +115,13 @@ export default function SyllabusTrackerPage() {
   const { currentUser, userProfile } = useAuth();
   const navigate = useNavigate();
 
-  // userProfile.target_exam is the raw onboarding enum (e.g. 'CLASS_10', 'JEE_MAIN') —
-  // must be normalized to the key syllabus_nodes actually uses (e.g. 'CBSE Class 10').
-  const examType = buildExamType(userProfile?.target_exam, userProfile?.syllabus, userProfile?.class_level);
+  // School context, not the competitive target: this page tracks chapter-level
+  // progress against syllabus_nodes, which are tagged by board+class
+  // ('CBSE Class 10'). A Class 12 NEET student still works through their board
+  // syllabus here — buildExamType() would hand back 'NEET' and show an empty
+  // tracker. Falls back to the legacy resolver if board/class can't resolve.
+  const examType = getSchoolExamType(userProfile)
+    ?? buildExamType(userProfile?.target_exam, userProfile?.syllabus, userProfile?.class_level);
 
   const [syllabus, setSyllabus] = useState({});
   const [subjects, setSubjects] = useState([]);
@@ -206,7 +210,7 @@ export default function SyllabusTrackerPage() {
   const activeChs = (syllabus[activeSubject] || []).map(c => ({ ...c, subject: activeSubject }));
 
   return (
-    <div className="space-y-5 p-4 lg:p-0 max-w-2xl">
+    <div className="space-y-5 p-4 lg:p-0 max-w-2xl mx-auto">
       {/* Header */}
       <div className="flex items-center gap-3">
         <button onClick={() => navigate('/dashboard')}
@@ -217,7 +221,7 @@ export default function SyllabusTrackerPage() {
           <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <BarChart2 size={20} className="text-primary-500" /> Syllabus Tracker
           </h1>
-          <p className="text-xs text-slate-500 mt-0.5">{examType} · {totalChaps} chapters</p>
+          <p className="text-xs text-slate-500 mt-0.5">{getExamLabel(examType)} · {totalChaps} chapters</p>
         </div>
         <div className="text-right">
           <p className="text-2xl font-bold text-primary-600">{overallPct}%</p>
@@ -260,6 +264,17 @@ export default function SyllabusTrackerPage() {
       ) : loading ? (
         <div className="space-y-2">
           {[1,2,3].map(i => <div key={i} className="h-16 bg-slate-50 rounded-2xl animate-pulse" />)}
+        </div>
+      ) : subjects.length === 0 ? (
+        // Every other board+class combo starts with an empty syllabus_nodes
+        // table, and this page previously just rendered `subjects.map()` over
+        // nothing — a blank screen under the stats header with no explanation.
+        <div className="rounded-card bg-slate-50 border border-slate-100 p-8 text-center">
+          <BookMarked size={26} className="text-slate-300 mx-auto" />
+          <p className="text-sm font-semibold text-slate-700 mt-3">No syllabus yet for {getExamLabel(examType)}</p>
+          <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
+            Chapters are added by your admin. Once they're in, your progress tracker will fill in here automatically.
+          </p>
         </div>
       ) : (
         <>

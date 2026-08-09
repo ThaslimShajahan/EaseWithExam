@@ -1,3 +1,5 @@
+import EweSpinner from './EweSpinner';
+
 function Bone({ className = '' }) {
   return <div className={`skeleton ${className}`} style={{ minHeight: 16 }} />;
 }
@@ -40,20 +42,7 @@ function DashboardSkeleton() {
 function PageSkeleton() {
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-      <div className="flex flex-col items-center gap-4">
-        <div className="h-12 w-12 rounded-2xl bg-primary-600 animate-pulse" />
-        <div className="flex gap-1">
-          {[0, 1, 2].map((i) => (
-            <span
-              key={i}
-              className="h-2 w-2 rounded-full bg-primary-400"
-              style={{
-                animation: `bounce 1s ease-in-out ${i * 0.15}s infinite`,
-              }}
-            />
-          ))}
-        </div>
-      </div>
+      <EweSpinner size="lg" />
     </div>
   );
 }

@@ -14,7 +14,7 @@ vi.mock('../featureFlags', () => ({
 
 import { supabase } from '../supabase';
 import { getFeatureFlag } from '../featureFlags';
-import { checkQuota, incrementQuota, FREE_LIMITS, FIELD_LABELS } from '../quota';
+import { checkQuota, incrementQuota, FREE_LIMITS, FIELD_LABELS, invalidateQuotaCache } from '../quota';
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
@@ -49,6 +49,7 @@ function mockFrom({ override = null, config = null, usage = null, usageRows = nu
 beforeEach(() => {
   vi.clearAllMocks();
   mockRpc('free');
+  invalidateQuotaCache(); // each test's mockFrom() sets fresh override/config/usage; don't serve a previous test's cached values
 });
 
 describe('FREE_LIMITS', () => {
@@ -224,5 +225,22 @@ describe('incrementQuota', () => {
       p_uid:   'uid_123',
       p_field: 'veda_messages_used',
     }));
+  });
+
+  // Batch 13 Part A: getQuotaSnapshot/checkQuota now cache the daily usage
+  // row (to collapse the 6-field-fetch-per-mount burst into one request) —
+  // this guards against that cache serving a stale pre-increment count to a
+  // read that happens right after a real increment (e.g. Sidebar/ProfilePage
+  // re-fetching off the 'ewe:quota-updated' event incrementQuota dispatches).
+  it('does not serve a stale cached usage count after incrementing', async () => {
+    mockFrom({ override: null, config: { ai_questions: 20 }, usage: { ai_questions_used: 5 } });
+    const before = await checkQuota('uid_123', 'ai_questions_used', false);
+    expect(before.used).toBe(5);
+
+    mockFrom({ override: null, config: { ai_questions: 20 }, usage: { ai_questions_used: 6 } });
+    await incrementQuota('uid_123', 'ai_questions_used', 1);
+
+    const after = await checkQuota('uid_123', 'ai_questions_used', false);
+    expect(after.used).toBe(6);
   });
 });

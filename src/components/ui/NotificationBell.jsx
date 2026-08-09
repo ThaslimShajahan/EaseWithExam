@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Bell, X, CheckCheck, Trash2, Calendar,
+  Bell, X, CheckCheck, Trash2, Calendar, Trash,
   Trophy, Zap, Flame, Star, BookOpen, Crown,
   CheckCircle2, Sparkles, Info, AlertTriangle, ClipboardList,
 } from 'lucide-react';
@@ -45,7 +45,7 @@ function relTime(iso) {
  * the real, full notifications experience (with an Exam Alerts tab too) is
  * the standalone /notifications page (src/pages/NotificationsPage.jsx) — the
  * footer link below jumps there. ── */
-function NotificationPanel({ anchorRect, notifications, unreadCount, onClose, markRead, markAllRead, remove, loading }) {
+function NotificationPanel({ anchorRect, notifications, unreadCount, onClose, markRead, markAllRead, remove, clearAll, loading, panelRef }) {
   const navigate = useNavigate();
   if (!anchorRect) return null;
 
@@ -64,6 +64,7 @@ function NotificationPanel({ anchorRect, notifications, unreadCount, onClose, ma
 
   return createPortal(
     <motion.div
+      ref={panelRef}
       className="fixed w-80 bg-white rounded-2xl shadow-xl border border-slate-100 z-[100] overflow-hidden flex flex-col"
       style={style}
       initial={{ opacity: 0, y: openBelow ? -8 : 8, scale: 0.97 }}
@@ -89,6 +90,15 @@ function NotificationPanel({ anchorRect, notifications, unreadCount, onClose, ma
               className="h-6 w-6 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-400 hover:text-primary-600 transition-colors"
             >
               <CheckCheck size={13} />
+            </button>
+          )}
+          {notifications.length > 0 && (
+            <button
+              onClick={() => { if (window.confirm('Clear all notifications?')) clearAll(); }}
+              title="Clear all"
+              className="h-6 w-6 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-400 hover:text-red-500 transition-colors"
+            >
+              <Trash size={13} />
             </button>
           )}
           <button onClick={onClose} className="h-6 w-6 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-400 transition-colors">
@@ -136,11 +146,15 @@ function NotificationPanel({ anchorRect, notifications, unreadCount, onClose, ma
                 <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{n.body}</p>
                 <p className="text-[10px] text-slate-400 mt-1">{relTime(n.created_at)}</p>
               </div>
+              {/* Was opacity-0 group-hover:opacity-100 — permanently
+                  unreachable on touch devices (no hover state), meaning
+                  notifications could never be individually removed on
+                  mobile. */}
               <button
                 onClick={(e) => { e.stopPropagation(); remove(n.id); }}
-                className="opacity-0 group-hover:opacity-100 h-5 w-5 flex items-center justify-center text-slate-300 hover:text-red-400 transition-all shrink-0 mt-0.5"
+                className="h-8 w-8 -mr-1.5 -mt-1 flex items-center justify-center text-slate-300 hover:text-red-400 active:text-red-500 transition-colors shrink-0"
               >
-                <Trash2 size={11} />
+                <Trash2 size={13} />
               </button>
             </div>
           );
@@ -169,13 +183,21 @@ function NotificationPanel({ anchorRect, notifications, unreadCount, onClose, ma
  * without opening a second Supabase realtime channel of the same name.
  */
 export default function NotificationBell() {
-  const { notifications, unreadCount, loading, markRead, markAllRead, remove } =
+  const { notifications, unreadCount, loading, markRead, markAllRead, remove, clearAll } =
     useNotificationsContext();
 
   const [open, setOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState(null);
   const triggerRef = useRef(null);
-  useOnClickOutside(triggerRef, () => setOpen(false));
+  // The dropdown panel below is rendered via createPortal(document.body) —
+  // not a DOM descendant of triggerRef, so it must be excluded from the
+  // outside-click check separately, or every click inside the panel
+  // (delete, mark-as-read, anything) gets misread as "outside" and closes
+  // it on mousedown, before the click can register. This was the actual
+  // cause of "delete doesn't work" — it wasn't wired to the wrong function,
+  // the panel was closing out from under the click.
+  const panelRef = useRef(null);
+  useOnClickOutside([triggerRef, panelRef], () => setOpen(false));
 
   // Recompute anchor position whenever opened (covers scroll/resize between opens).
   useEffect(() => {
@@ -188,11 +210,15 @@ export default function NotificationBell() {
     <div ref={triggerRef} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="relative h-9 w-9 flex items-center justify-center rounded-xl hover:bg-slate-100 transition-colors"
+        // 48x48 (.touch-target) is right for a thumb but leaves an 18px icon
+        // floating in a large empty box on desktop, with the badge parked out
+        // at the corner of that box rather than on the bell. Keep the full tap
+        // target on mobile, tighten it with a mouse.
+        className="relative h-12 w-12 lg:h-10 lg:w-10 flex items-center justify-center rounded-xl hover:bg-slate-100 transition-colors"
       >
         <Bell size={18} className="text-slate-600" />
         {unreadCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 h-4 min-w-[16px] px-1 bg-primary-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center leading-none">
+          <span className="absolute top-1.5 right-1.5 lg:top-1 lg:right-1 h-4 min-w-[16px] px-1 bg-primary-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center leading-none">
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
@@ -207,6 +233,8 @@ export default function NotificationBell() {
             markRead={markRead}
             markAllRead={markAllRead}
             remove={remove}
+            clearAll={clearAll}
+            panelRef={panelRef}
             onClose={() => setOpen(false)}
           />
         )}

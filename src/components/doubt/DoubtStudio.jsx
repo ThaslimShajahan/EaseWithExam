@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, X, Plus, Images } from 'lucide-react';
+import {
+  Upload, X, Plus, Images,
+  Calculator, BookOpen, Globe, Sparkles, Atom, FlaskConical, Brain, Sigma,
+} from 'lucide-react';
 import { useIsDesktop } from '../../hooks/useMediaQuery';
 import { useAuth } from '../../context/AuthContext';
 import ImageViewer from './ImageViewer';
@@ -16,33 +19,36 @@ function getSubjectChips(userProfile) {
   const isJEE   = exam === 'JEE Main' || exam === 'JEE Advanced';
   const isBoth  = userProfile?.target_exam === 'BOTH';
 
+  // Icons match SUBJECT_ICONS in PracticeGeneratorPage.jsx (the app's other
+  // subject-chip picker) so the same subject reads the same way everywhere,
+  // instead of this being the one spot still using raw emoji.
   if (isBoard) {
     return [
-      { emoji: '📐', label: 'Math & Science',  desc: 'Physics, Chemistry, Maths numericals' },
-      { emoji: '📚', label: 'English',          desc: 'Essays, comprehension, grammar' },
-      { emoji: '🌍', label: 'Social Studies',   desc: 'History, Geography, Civics, Economics' },
-      { emoji: '📝', label: 'All subjects',     desc: 'Any subject from your board curriculum' },
+      { icon: Calculator, label: 'Math & Science',  desc: 'Physics, Chemistry, Maths numericals' },
+      { icon: BookOpen,   label: 'English',          desc: 'Essays, comprehension, grammar' },
+      { icon: Globe,      label: 'Social Studies',   desc: 'History, Geography, Civics, Economics' },
+      { icon: Sparkles,   label: 'All subjects',     desc: 'Any subject from your board curriculum' },
     ];
   }
   if (isJEE) {
     return [
-      { emoji: '📐', label: 'Physics',     desc: 'Numericals, formula errors, unit mistakes' },
-      { emoji: '⚗️', label: 'Chemistry',   desc: 'Mechanisms, balancing, IUPAC naming' },
-      { emoji: '📊', label: 'Mathematics', desc: 'Calculus, algebra, coordinate geometry' },
+      { icon: Atom,         label: 'Physics',     desc: 'Numericals, formula errors, unit mistakes' },
+      { icon: FlaskConical, label: 'Chemistry',   desc: 'Mechanisms, balancing, IUPAC naming' },
+      { icon: Sigma,        label: 'Mathematics', desc: 'Calculus, algebra, coordinate geometry' },
     ];
   }
   if (isBoth) {
     return [
-      { emoji: '📐', label: 'Physics',     desc: 'Numericals, formula errors, unit mistakes' },
-      { emoji: '⚗️', label: 'Chemistry',   desc: 'Mechanisms, balancing, IUPAC naming' },
-      { emoji: '🧬', label: 'Biology',     desc: 'Diagrams, definitions, concept gaps' },
-      { emoji: '📊', label: 'Mathematics', desc: 'Calculus, algebra, coordinate geometry' },
+      { icon: Atom,         label: 'Physics',     desc: 'Numericals, formula errors, unit mistakes' },
+      { icon: FlaskConical, label: 'Chemistry',   desc: 'Mechanisms, balancing, IUPAC naming' },
+      { icon: Brain,        label: 'Biology',     desc: 'Diagrams, definitions, concept gaps' },
+      { icon: Sigma,        label: 'Mathematics', desc: 'Calculus, algebra, coordinate geometry' },
     ];
   }
   return [
-    { emoji: '📐', label: 'Physics',   desc: 'Numericals, formula errors, unit mistakes' },
-    { emoji: '⚗️', label: 'Chemistry', desc: 'Mechanisms, balancing, IUPAC naming' },
-    { emoji: '🧬', label: 'Biology',   desc: 'Diagrams, definitions, concept gaps' },
+    { icon: Atom,         label: 'Physics',   desc: 'Numericals, formula errors, unit mistakes' },
+    { icon: FlaskConical, label: 'Chemistry', desc: 'Mechanisms, balancing, IUPAC naming' },
+    { icon: Brain,        label: 'Biology',   desc: 'Diagrams, definitions, concept gaps' },
   ];
 }
 
@@ -145,9 +151,11 @@ function VedaIntro({ userProfile }) {
 
       <div className="space-y-2">
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">EWE evaluates</p>
-        {chips.map(({ emoji, label, desc }) => (
+        {chips.map(({ icon: Icon, label, desc }) => (
           <div key={label} className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50">
-            <span className="text-lg">{emoji}</span>
+            <div className="h-8 w-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center shrink-0">
+              <Icon size={15} className="text-primary-600" />
+            </div>
             <div>
               <p className="text-sm font-medium text-slate-700">{label}</p>
               <p className="text-xs text-slate-400">{desc}</p>
@@ -172,6 +180,13 @@ export default function DoubtStudio() {
   const [imageUrls,     setImageUrls]     = useState([]);
   const [previewIdx,    setPreviewIdx]    = useState(null);
   const [uploadWarning, setUploadWarning] = useState('');
+  // Mobile "add more page" button — a persistent, DOM-mounted input (matching
+  // every other upload trigger in the app), not one created on the fly with
+  // document.createElement() and .click()'d without ever attaching it to the
+  // DOM. A detached input is unreliable at surfacing the full camera+gallery
+  // picker sheet on several mobile browsers — the same class of bug as the
+  // `capture`-attribute fix elsewhere, just a different mechanism.
+  const addMoreInputRef = useRef(null);
 
   // imageUrls captured by ref so the unmount cleanup below always sees the
   // latest object URLs rather than the stale empty array from first render.
@@ -286,8 +301,15 @@ export default function DoubtStudio() {
   }
 
   /* ── Mobile: stacked ─────────────────────────────────── */
+  // Was a hardcoded `h-[calc(100vh-120px)]` — a magic number that assumed
+  // exactly TopHeader (59px) + BottomNav (65px) sat above/below this and
+  // nothing else, which broke the moment DoubtStudioPage added its own
+  // title block above this component (confirmed live: the page needed 122px
+  // more scroll than the viewport height, on a screen that should fit
+  // without any outer-page scroll at all). `h-full` inherits real, correct
+  // space from the parent's own flex-1/min-h-0 chain instead of guessing it.
   return (
-    <div className="flex flex-col h-[calc(100vh-120px)]">
+    <div className="flex flex-col h-full">
       <AnimatePresence>
         {hasImages ? (
           <motion.div
@@ -320,13 +342,16 @@ export default function DoubtStudio() {
                   </div>
                 ))}
                 {/* Add more button */}
+                <input
+                  ref={addMoreInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ''; }}
+                />
                 <button
-                  onClick={() => {
-                    const inp = document.createElement('input');
-                    inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
-                    inp.onchange = (e) => addFiles(Array.from(e.target.files || []));
-                    inp.click();
-                  }}
+                  onClick={() => addMoreInputRef.current?.click()}
                   className="h-16 w-12 rounded-lg border-2 border-dashed border-slate-300 flex items-center justify-center shrink-0 text-slate-400 hover:border-primary-400 transition-colors"
                 >
                   <Plus size={16} />

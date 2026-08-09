@@ -33,7 +33,7 @@ const PLAN_DAYS: Record<string, number> = {
 };
 
 function verifySignature(body: string, signature: string): boolean {
-  if (!WEBHOOK_SECRET) return true; // skip in dev
+  if (!WEBHOOK_SECRET) return false; // require secret in production
   const expected = createHmac('sha256', WEBHOOK_SECRET).update(body).digest('hex');
   return expected === signature;
 }
@@ -55,8 +55,12 @@ async function activateSubscription(supabase: any, firebaseUid: string, planId: 
 
   if (error) throw error;
 
-  // Award XP bonus for upgrading
-  await supabase.rpc('award_xp_atomic', { p_uid: firebaseUid, p_event: 'subscription_upgrade' }).catch(() => {});
+  // Award XP bonus for upgrading (best-effort)
+  try {
+    await supabase.rpc('award_xp_atomic', { p_uid: firebaseUid, p_event: 'subscription_upgrade' });
+  } catch (e) {
+    // ignore
+  }
 }
 
 async function cancelSubscription(supabase: any, firebaseUid: string) {

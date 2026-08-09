@@ -4,6 +4,302 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-09 (session 12) — referral rewards gated on payment, admin referrals screen, toggle UI fix
+
+### Referral payout moved to conversion
+
+Owner's call: the referral should only complete once the referred student actually pays. Session 11 granted both sides 7 premium days the instant a code was redeemed — which rewards **signups**, and signups are free. One person could create accounts, redeem their own code from each, and mint premium days indefinitely. It also spent the reward on users who may never convert.
+
+Redemption is now two-phase:
+
+| | what happens |
+|---|---|
+| `redeem_referral_code()` | records a **pending** claim. No days, no counter movement. |
+| `complete_referral()` | fires from `activate_subscription()` after Razorpay's signature is verified server-side. Grants both sides 7 days and moves the referrer's counters. |
+
+Phase 2 is not reachable from the client in any useful way: `activate_subscription` is behind the `app.subscription_secret` shared secret that only the `razorpay-verify` edge function holds, and `complete_referral` additionally refuses unless the caller genuinely holds an active, non-free, unexpired subscription row. The call is wrapped in its own exception block — the student has already paid, so nothing about a referral is worth failing the activation over.
+
+**Fixed a latent bug shipped in session 11 while doing this.** `subscriptions` has `UNIQUE (user_id)`. `referral_grant_premium_days` looked for an *active, unexpired* row and INSERTed when it found none — so any user with a **lapsed** subscription would hit `subscriptions_user_id_key` and take the whole redemption transaction down with a `unique_violation`. Now upserts, and extends from `NOW()` rather than from a past expiry date.
+
+`uses` now means *converted* referrals, so `get_or_create_referral_code` returns a fourth column, `pending` — without it a referrer whose friend has signed up but not yet paid would see a flat zero for weeks with no signal anything was in flight. The Profile card shows three numbers now (Subscribed / Joined, not yet / Days earned) and no longer reloads the page on redemption, because there is no new subscription state to pick up.
+
+Copy was corrected everywhere the promise is made — the card, the redeem confirmation and the share message all now say the days arrive **when you subscribe**, with a regression test asserting the confirmation never claims premium was "added to your account".
+
+Verified end-to-end against production in a rolled-back transaction, all 21 checks: redemption returns pending with counters untouched, conversion refused without payment, payment converts and grants (referee 30d + 7d = 37d, referrer 7d), a webhook retry is a no-op, a **lapsed-subscription** user redeems and pays cleanly into one row (365 + 7 = 372d), an **admin comp leaves the referral pending** (it goes through `admin_grant_subscription`, which deliberately does not call this path), and the referrer is notified exactly once per conversion.
+
+### Admin referrals screen
+
+There was nowhere in admin to see any of this. New `admin_list_referrals(p_caller)` RPC (superadmin/admin gated, refusal verified) plus `AdminReferrals.jsx`, added as a **Referrals** tab under **Students** alongside Subscriptions. Shows referrer, code, referred student, converted/awaiting-payment status, both dates, and per-referrer totals, with search and an all/pending/converted filter. Four counters across the top: codes created, pending, converted, premium days given away.
+
+It `LEFT JOIN`s from `referral_codes`, so a student who generated a code but never landed anyone still appears — early on that is most of them, and hiding them would make the screen look empty.
+
+Not visually verified: the screen needs a real admin session (passcode in `sessionStorage`), which the QA bypass can't produce. The RPC is verified directly, including that it returns unused codes and correct pending/converted splits.
+
+### Notification toggle UI
+
+The switches on Profile → Notifications rendered as plain coloured pills with the knob missing or hanging off the right edge. Cause: the knob was `absolute top-0.5` with **no `left`**, so it started from its static position — which sits after the `<button>`'s UA default horizontal padding, pushing the "on" position past the track. Extracted a single `Toggle` component (the markup was duplicated for push and email), laid the knob out as a flex child moved by `translate-x` instead of absolute positioning, and added `p-0`/`border-0` so UA defaults can't shift it again. Also picked up `role="switch"`, `aria-checked`, a focus-visible ring, and the busy spinner now sits inside the knob rather than floating over the track.
+
+---
+
+## 2026-08-09 (session 11) — referral system built, landing images filled, footer socials removed
+
+Three requests: fill the landing page's placeholder image slots, implement the referral system, remove the footer's social links.
+
+### Referral system
+
+**It did not exist.** What was there looked like a finished feature and wasn't: three overlapping tables (`referral_codes`, `referral_uses`, `referrals`), a "Refer & Earn" card on `ProfilePage`, and exactly one function — `get_user_referral(p_uid)`, which SELECTs from `referral_codes`. Nothing in the codebase ever INSERTed into that table, so the RPC returned zero rows for every user, the card's `{referral && ...}` guard never passed, and **no student has ever seen it**. There was also no way to enter a code, no crediting logic, and nothing that turned a referral into a reward.
+
+Decisions taken, since the schema didn't imply them:
+
+- **`referral_codes` + `referral_uses` own the feature.** `referrals` was the shape used by the deleted `src/lib/referral.js` (a different, deterministic `EWE-XXXXXX###` scheme); it was empty and unread, and dropped. Leaving a third half-schema in place is what made this confusing to begin with.
+- **A credit is a premium day.** Not invented — the Profile card already said *"earn premium days when they join"* and already labelled `credits_earned` as *"Days earned"*. The database now matches the promise the UI was already making.
+- **Both sides get 7 days.** A one-sided referral gives the new student no reason to type the code in.
+
+`20260809060000_referral_system.sql` adds `get_or_create_referral_code` (creates on first call, which is what makes the card render at all), `redeem_referral_code`, and `referral_grant_premium_days`. Both entry points check `verified_uid()` against the passed uid. Redemption returns a jsonb result rather than raising, because every rejection is a normal thing a student can do by accident and each needs its own message: `invalid_code`, `self_referral`, `already_redeemed`, `account_too_old` (30 days, so an existing user base can't refer each other in a circle after the fact). The `UNIQUE` on `referral_uses.referred_uid` is what actually closes the concurrent-double-submit race; the pre-check is only there for the friendly message.
+
+**The reward grants a real plan, not a made-up one.** `referral_grant_premium_days` extends an existing active subscription rather than inserting a second row — `get_student_effective_plan()` takes the first active row it finds, so two rows would make the effective plan depend on scan order. It grants `premium_monthly` because that is a real `plan_id` in `quota_config`; a plausible-looking `'referral_bonus'` would miss `quota_config` entirely and silently fall back to `FREE_LIMITS` in `resolveQuota()` — a reward that grants nothing.
+
+Verified end-to-end against production inside a rolled-back transaction, standing in for two signed-in users via `request.jwt.claims`. All 16 checks passed: unauthenticated call rejected, code created, second call idempotent, impersonation rejected, self-referral rejected, bad code rejected, redemption succeeds with a lower-cased and space-padded code, second redemption rejected, 400-day-old account rejected, referrer counters at `uses=1 credits_earned=7`, both parties on `premium_monthly`, one subscription row each at +7d, a second grant extending to +14d across **one** row, the referrer notified, the audit row written, and the code matching the no-`0/O/1/I/L` alphabet.
+
+Client side: new `src/lib/referral.js` (20 unit tests), the Profile card rewritten as a self-contained `ReferralCard` with share, copy and a code-entry field, and `captureReferralFromUrl()` in `main.jsx` parking a `?ref=` code in localStorage until onboarding creates the account. `applyPendingReferral` is deliberately silent — it clears the pending code on every outcome, so a stale code can never wedge a student on their first screen. `get_user_referral` was dropped; a read-only function that can only ever return zero rows is exactly the trap that made this look implemented.
+
+### Landing images
+
+All six slots are now **real screenshots of the running app**, not stock art or mocked-up UI. Captured through the DEV-only `?qa_uid=` bypass in `AuthContext.jsx` against a seeded demo account, then cropped and composited: `hero-collage` (dashboard plate with the analytics score trend and onboarding card layered in front, on transparency), `showcase` (dashboard), `feature-tutor` (the Ask EWE thread), and `step-1..3` (sign-in card, board picker, practice generator) matching the three step captions.
+
+Reproducible rather than one-off — `npm run landing:shots` and `npm run landing:assets` (`scripts/landing-*.mjs`, Playwright is already a devDependency). Raw captures land in the gitignored `.landing-shots/`; only the cropped results are committed. The demo account and its seeded rows were deleted afterwards. Retired assets from the previous design (`ewe_img.png`, `hero-illustration.png`, `why-section.png`, ~3.7MB) removed.
+
+Two framing details worth keeping: the dashboard is cropped to 1650px because the sidebar is full-height and its profile row would otherwise leak the test account's email; and `showcase.png` is near-square because that slot is `object-cover` in a roughly 1:1 box, so a wide image loses half its width to the centre crop.
+
+**Noticed while capturing, not fixed:** the dashboard hero reads *"0 days to go"*. `Dashboard.jsx` hardcodes `EXAM_DATES = { NEET: '2026-05-03', ... }`, all of which are now in the past, and the countdown clamps at zero. Every NEET/JEE student currently sees this. Needs the 2027 dates, or better, an admin-editable row — left alone because the official 2027 dates aren't published yet and guessing them would be worse than showing zero.
+
+### Footer
+
+Social icons removed from `PublicChrome.jsx` (`Facebook`/`Instagram`/`Youtube`/`Linkedin` imports dropped, grid rebalanced to `1.8fr_1fr_1fr`). Shared chrome, so About, Contact, Privacy and Terms pick it up too.
+
+---
+
+## 2026-08-09 (session 10) — landing page rebuilt from reference designs
+
+Owner supplied 11 reference screenshots of a course-platform landing page: use that structure, swap the reference orange for the brand green, **no gradients**, image slots may stay placeholders, and section content must be EWE's real concept rather than filler.
+
+**The real design problem was truthfulness, not layout.** Five of the reference's sections are pure social proof — "4.9★ 10k+ reviews" with an avatar stack, a *trusted by Google / Udemy / Khan Academy* logo row, two testimonial carousels, a "15.000+ / 500+ / 95%" stats band, and "Join 5000+ Learners". EWE has two real accounts and no partner relationships, so filling any of those means inventing reviews, logos and user counts. Agreed with the owner to keep each section's visual rhythm and substitute facts that are actually checkable: trusted-by → the syllabi genuinely supported (CBSE, Kerala State, NEET, JEE Main, JEE Advanced); stats band → "6 subjects · Classes 8-12 / 5 exam patterns / 24×7 tutor / 20 free questions a day"; testimonials → a "What makes it different" card grid (Socratic tutor, generated figures, SM-2 spacing, misconception engine); the newsletter block dropped entirely, since no subscriber backend exists and the count would be fabricated.
+
+New `src/lib/landingContent.js` holds all page copy so wording is a one-file change, and **derives the free-tier numbers from `FREE_LIMITS`** rather than restating them.
+
+**Found while sourcing the FAQ:** `HelpPage.jsx`'s FAQ claimed *"Free accounts get 15 AI questions, 20 EWE messages, and 3 mock tests per day."* All three numbers were wrong — the enforced limits are **20 questions, 15 messages, and 2 mock tests per WEEK**. Stale on a help page; on a landing page that becomes a false pricing claim. Both surfaces now read from the shared module, with the numbers interpolated from the constant the quota gate actually enforces.
+
+Page order: hero → syllabus strip → split showcase with 2×2 value grid → feature bento (the 7 real tools) → three light step cards → green facts band → differentiator cards → **all four real plans at real ₹ prices** (₹0 / ₹399 / ₹3,999 / ₹4,999, yearly highlighted) → category-rail FAQ accordion → dark closing band. `PublicChrome.jsx` also rebuilt (centred nav links, Sign Up outline + Get Started solid, Explore/Company footer columns with socials and a legal bar) — shared, so About, Contact, Privacy and Terms pick it up too.
+
+**No gradients meant real work, not a colour swap:** the old page used them in the image placeholder, the hero backdrop blobs, the highlighted plan card and the closing banner. All are flat fills now. Verified by computed style rather than by grepping class names — `getComputedStyle(el).backgroundImage` matched `gradient` on **0 elements** across `/`, `/about` and `/contact`, at 1440px and 390px, with no horizontal overflow and no console errors on any of them.
+
+`ImgOrPlaceholder` was kept and reused — it already did exactly the "real image if present, styled placeholder if not" behaviour asked for. `public/landing/README.txt` now documents the new slots (`hero-collage`, `showcase`, `feature-tutor`, `step-1..3`) and lists the retired ones as safe to delete.
+
+---
+
+## 2026-08-09 (session 9) — app icon
+
+Owner supplied `ewe_app_icon.png` (500x500). Moved it to `public/` and generated the real icon set from it via the browser's canvas (Playwright) rather than adding an image library: `icon-192`, `icon-512`, `icon-maskable-512`, `apple-touch-icon` (180) and `favicon-32`.
+
+Two things worth doing properly rather than pointing every `<link>` at one big PNG:
+
+- **Maskable needs its background bled to the edges.** The manifest previously declared `purpose: 'any maskable'` on a single transparent-corner icon, which tells Android that icon is safe to crop — so a circular or squircle mask cut into the artwork. The maskable variant now samples the artwork's own background colour (`rgb(60,142,168)`) from just inside the rounded square, fills the full square with it, and insets the wordmark into the middle 80% safe zone. `any` and `maskable` are separate manifest entries now.
+- **iOS renders `apple-touch-icon` opaque** and applies its own rounding, so that variant gets the solid background with full-bleed artwork (no inset) instead of the transparent-corner file.
+
+Also fixed the notification icons flagged in session 6: `push-handler.js`, `notifications.js`, `AdminTestData.jsx` and the `send-push` edge function all referenced `/pwa-192x192.png` and `/pwa-64x64.png`, **neither of which has ever existed** in `public/` — so every push and local notification rendered with a blank/default icon. All now point at `icon-192.png` / `favicon-32.png`.
+
+---
+
+## 2026-08-09 (session 8) — nine-item bug sweep
+
+**Quota: `upsert_usage_quota` rejected `podcasts_used`.** Its whitelist listed six fields but never podcasts, despite `FREE_LIMITS`, `FIELD_LABELS`, `quota_config` and the Sidebar usage panel all carrying it. Currently masked — `incrementQuota()` picks between this and `check_and_increment_quota()` on the `atomic_quota_rpc_enabled` flag, that flag is on, and the atomic path handles podcasts fine — but the moment anyone flips that flag to its documented "safe fallback", every podcast would silently stop counting, because `incrementQuota` swallows the error in a bare catch. Rewrote the whitelist to derive from `information_schema` (still constrained: real `%_used` columns of that table only, since the name is interpolated into dynamic SQL) so a future quota column can't drift out again. Verified all four real fields now return 204 and a bogus field still 400s. Also confirmed the TTS route works (57KB audio), so podcast generation itself was never the problem.
+
+**Admin could not review a generated paper.** `AdminPublishedTests`'s expanded row showed "First 5 questions" as 2-line-clamped text — no options, no correct answers, no figures. Replaced with a full scrollable review: every question, options with the correct one marked, answer, explanation, marks, and the rendered figure. Matters more now that questions carry generated diagrams, which are precisely the thing most likely to be wrong and most in need of a human look; an unrendered figure now shows its description in amber so a failed generation is visible rather than silent.
+
+**Paper Gen modal had no max-height.** `p-6 space-y-5` with nothing bounding it, so on a short laptop screen the modal grew past the viewport and "Start Generating" was unreachable — nothing scrolled, because the modal overflowed its fixed parent rather than scrolling internally. Now `max-h-[90dvh] flex flex-col` with a scrolling body and the CTA pinned in a footer outside the scroll area.
+
+**Subscriptions showed a raw 28-char Firebase UID** as the only identifier — unusable for deciding whose subscription you're about to downgrade. Joins `adminGetAllUsers` on, shows name + email, falls back to the UID when a user row is missing, and search/confirm dialog now match on name and email too.
+
+**Exam Center:** the filter row rendered "All | CBSE Class 12" for a Class 12 student — a filter with nothing to filter, restating what they told us at signup. Hidden whenever every visible paper shares one exam type. Separately, background generation could finish while the page was already mounted, so a new paper never appeared until a manual reload; it now refetches on tab focus/visibility and on a new `ewe:paper-ready` window event dispatched by `backgroundGeneration.js` (same decoupled pattern as `ewe:quota-updated`).
+
+**Notification bell:** `.touch-target` forces 48x48, correct for a thumb but leaving an 18px icon adrift in a large empty box on desktop with the badge parked at the corner of that box rather than on the bell. Now 48px on mobile, 40px from `lg:`, with the badge tightened to match.
+
+**Tab inconsistency:** `HubTabBar` uses an animated subtle pill (`bg-primary-50` + `layoutId`), while `PaperModePage`'s tab bar used a heavy solid `bg-primary-600` fill with no animation — two treatments for the same control. Paper Mode now uses the same animated-pill pattern.
+
+**EWE avatar is now admin-editable.** New `ewe_avatar_url` platform setting with an upload row in Platform > Settings (same flow as the logo, separate state so the two uploads can't clobber each other). `VedaAvatar` reads it and falls back to the brand logo when unset or if the image fails to load, so it applies everywhere EWE speaks — chat bubbles, Doubt Studio intro, header chip — with no code change.
+
+Follow-up after the owner reported that chemistry bonds were still wrong, labels still overlapped, and online mode couldn't be started.
+
+**Online exam was unreachable — a real dead end, fixed.** Opening `/paper-mode` locks the attempt to `paper`, and `MockTestPage` then redirects `/test` straight back. The only escape was "Start Fresh" *inside* `MockTestEngine`, which is unreachable precisely because of that redirect — so any student who merely previewed the printable paper was permanently locked out of online mode. Confirmed from `exam_attempt_mode`: the owner's account held a `paper` lock on the test. Cleared the locks and added a **"Switch to Online Mode"** action to Paper Mode's tab bar, shown only while `evalResult` is null so it can't be used to re-attempt a graded paper.
+
+**Two rounds of prompt tuning fixed layout but not chemistry.** Adding explicit layout rules (reserved 60px label margin, no text over geometry, leader lines, deliberate `text-anchor`) removed the overlaps. Adding per-subject **symbol conventions** — what a battery/resistor/ammeter/lens actually looks like — moved circuits and ray optics from unusable to genuinely good; before that the model drew a "circuit" as a grid of plain rectangles with no symbols at all. A `y = x²` graph also came out inverted, which is the dangerous failure mode: a figure that contradicts its own equation teaches the wrong thing, so the Mathematics conventions now require plotting real points and re-checking curvature against SVG's downward y-axis.
+
+**But chemical structures kept failing, and that was the signal to change tools, not prompts.** Benzene rings kept coming out with no alternating double bonds. Drawing a molecule correctly needs bond lengths, ring geometry and layout rules a language model isn't computing. What it *is* excellent at is emitting SMILES, because SMILES is text. So chemistry structures now route: model produces the SMILES string, and **smiles-drawer** (a real cheminformatics layout engine, added as a dependency, lazy-loaded as a 196KB/60KB-gzip chunk) does the geometry. New `src/lib/chemStructure.js` handles description → SMILES → rendered structure; `attachDiagrams()` tries it first for `subject === 'Chemistry'` and falls back to the SVG path when the description isn't a single molecule.
+
+Verified the routing behaves: phenol, CO₂, aspirin and acetic acid all resolved to SMILES and rendered as textbook-quality structures (aromatic rings with correct double bonds, proper substituent placement); the Daniell cell correctly returned NONE and fell through to SVG, since it's apparatus rather than a molecule.
+
+**Where it stands now**, judged against the real exam figures the owner supplied as reference:
+
+| Figure type | Path | Quality |
+|---|---|---|
+| Chemical structures | SMILES → smiles-drawer | **Exam quality** |
+| Ray optics, free-body | SVG | Good |
+| Maths geometry, graphs | SVG | Good |
+| Circuits | SVG | Usable; topology occasionally off |
+| Apparatus (galvanic cell) | SVG | Residual label overlap, salt-bridge shape wrong |
+| Biology schematics | SVG | Weakest — recognisable but not anatomical |
+
+**Still open:** apparatus and biology schematics remain the weak spots and are unlikely to be fixed by further prompt work — the same conclusion reached for molecules. The realistic answer for those is a curated figure library, which `AdminContentIntake`'s existing `has_diagram` attachment flow already supports: an admin uploads the real figure once and it is reused, rather than regenerated per paper. Also worth noting there is no automated check that a generated figure is *correct* — the inverted parabola passed every structural test (valid SVG, shapes present, labels present, nothing unsafe) and was still wrong, so admin review before publishing remains necessary.
+
+Asked whether diagram-based questions (Physics ray diagrams, Chemistry bonding, Maths geometry) actually work. They didn't, in three separate ways.
+
+**1. Paper Mode rendered no figure at all.** `QuestionView.jsx` (Online Mode) has always rendered `image_url` with a zoom overlay and fallen back to a `DiagramBox` description. `PaperModePage.jsx` — the printable paper, and the mode most likely to be used for a diagram-heavy physics paper — rendered only `q.question` and `q.options`. The `image_url` matches in that file were the *vision evaluation* payload (uploading answer-sheet photos to GPT), not question rendering. Added a `.q-figure` block plus print CSS (`page-break-inside: avoid`, 280px cap, `print-color-adjust: exact` so line diagrams survive greyscale printing). Verified the data path was already intact end to end — `toEngineFormat` and `publishPYQPaper` both carry `image_url`/`diagram_description` — so rendering was the only break. Added four `toEngineFormat` regression tests covering attached images, description-only, neither, and descriptive (non-MCQ) questions.
+
+**2. Descriptions were being printed instead of drawn.** Project owner's correction, and the right call: `[Figure: A diagram of a parallelogram with two pairs of parallel sides]` is not a usable exam paper. New `src/lib/diagrams.js` generates the actual figure. **Chose LLM-authored SVG over DALL-E deliberately** — raster image models garble text labels and get geometry subtly wrong, which is worse than no figure when a student is learning from it, whereas SVG gives exact geometry, legible labels, stays sharp in print, and is far cheaper and faster (a NEET paper wants figures on 10-15% of questions). Delivered as a `data:image/svg+xml;base64` URI rather than inline markup: an `<img>` cannot execute script, so model-generated SVG is inert without needing `dangerouslySetInnerHTML`, and every existing render site already handles `image_url` unchanged. `attachDiagrams()` runs at the end of `generateQuestionPaper()` in batches of 3, only for questions that describe a figure and have no image (an admin-uploaded scan or real PYQ figure always wins), and never throws — a failed figure keeps its description so the render sites degrade gracefully.
+
+Verified against three real generations: Mathematics (6 shapes / 4 labels), Physics ray diagram (12 / 6), Chemistry Lewis structure (8 / 3), none containing script/foreignObject/external refs. Checked the geometry rather than trusting it — parsed the parallelogram's polygon points and confirmed `AB ∥ DC` and `BC ∥ AD` with equal lengths and vertices labelled A–D. Then rendered it end-to-end in a browser through the real `/paper-mode?id=` route: figure present at 400×300 with correct labels.
+
+**3. Found while testing: every admin-published test was invisible to every student.** The render check kept showing an empty paper. Root cause was unrelated to diagrams — the *live* `can_student_view_test()` differs from what `20260807000000` contains (that migration was applied by hand and later marked applied via `migration repair` without being run, so the file was never the source of truth). It requires an active `test_assignments` row targeting the student before an admin-created test is visible. `test_assignments` has **0 rows**, and no frontend code calls `admin_upsert_test_assignment` — the RPC surface was built but the UI never was. Confirmed live: `get_published_tests_for_student()` returned 0 rows while `admin_list_published_tests()` returned 5 for the same table. So every paper produced in Admin > Publish > Paper Gen was hidden from all students, permanently, with no way to reveal it. Fixed in `20260809040000` by making assignment an **optional narrowing**: a test with no active assignments is open to everyone (what Exam Center has always assumed), and once assignments exist only targeted students see it — keeping the targeting feature intact for when its UI is built. Verified: students now see published tests again.
+
+Also confirmed a side effect of the previous session's hardening while cleaning up test data: `admin_delete_student` can no longer be called with the service-role key alone, because it requires a *verified* Firebase caller. That is correct behaviour, but it means ops scripts need a real admin ID token rather than just the service key.
+
+---
+
+## 2026-08-09 (session 5) — verified identity: Firebase tokens now proven server-side; CI fixed
+
+The structural fix flagged last session, plus CI. The per-user table lockdown is **not** done — see the end.
+
+**Firebase is now a Supabase third-party auth provider.** `[auth.third_party.firebase]` exists in `config.toml`, but `supabase config push` pushes the *entire* local config and aborted with `402 Please upgrade the project to a paid tier` on `[storage.vector]` — after it had already applied the auth section, a confusing half-applied state. Verified the auth part had NOT landed by minting a real Firebase ID token (Admin SDK custom token → `signInWithCustomToken`) and getting `PGRST301 No suitable key was found to decode the JWT`. Configured it properly through the Management API instead (`POST /config/auth/third-party-auth` with `oidc_issuer_url = https://securetoken.google.com/edutech-app-acenzos`); Supabase resolved Google's JWKS immediately (4 RS256 keys). Re-tested: the same token now yields `PGRST202 function not found` — i.e. the JWT was **accepted** and reached PostgREST as an authenticated identity. Also set `[storage.vector] enabled = false` locally so a future `config push` doesn't abort halfway again.
+
+**The client now sends that token on every request.** `createClient` takes `accessToken: currentFirebaseIdToken`. Admin and student sessions are separate Firebase app instances by design, so the resolver picks `adminAuth` on `/admin/*` routes and `auth` elsewhere, falling back the other way rather than dropping to anon. Returning null stays valid — signed-out visitors hit public reads with the anon key alone.
+
+**Authorization is now bound to a proven identity.** New `verified_uid()` (`auth.jwt() ->> 'sub'`, NULL for anon-key callers) and `assert_verified_admin(p_caller)`, which requires a verified token whose subject equals `p_caller` *and* is an active admin. Applied in two layers: a **role gate** revoking `anon`'s EXECUTE and granting `authenticated` across **81** `admin_*`/`coaching_admin_*` functions — that single change makes the whole admin surface unreachable without a real Firebase sign-in, with no function rewrites — plus **identity binding** inside the most destructive RPCs (`admin_list_users`, `admin_delete_student`), which additionally stops one signed-in user acting as another. `get_admin_record` and `admin_verify_passcode` stay anon-callable by design: they're the authentication step itself, return no secrets, and are rate limited.
+
+Verified live, five cases:
+
+```
+anon key + real admin uid        -> 401  Access denied: unverified caller
+ADMIN token + own uid            -> 200  (legitimate admin still works)
+STUDENT token + admin uid        -> 401  Access denied: caller mismatch
+ADMIN token + someone else's uid -> 401  Access denied: caller mismatch
+anon + admin_delete_student      -> 401  Access denied: unverified caller
+```
+
+Student RPCs (`get_own_user`, `get_published_tests_for_student`, `get_onboarding_options`) deliberately stay anon-executable and were re-checked at 200 — they don't match the `admin_` prefix, so the dev QA-bypass harness (which has no Firebase token) keeps working.
+
+**CI had never passed — two runs, both failed, nobody looked.** The cause was mundane: the `env:` block sat on the Build step only, so `npm test` ran without `VITE_SUPABASE_URL` and `createClient` threw `validateSupabaseUrl` at import. Moved env to job level with placeholder fallbacks so CI is a genuine clean-clone check even before repo secrets exist; bumped Node 20→22 (20 is deprecated on runners); added an explicit clean-clone build step — that is what would have caught both the outage and the `.gitignore` breakage, since a clean checkout only contains committed files; added a warning for untracked files under `src/`/`supabase/`; and added a `migration-drift` job that fails when local migrations and the linked project disagree, which has bitten this project in both directions. Confirmed locally that the suite passes under CI's exact placeholder env.
+
+**NOT done — per-user table RLS, and deliberately so.** Real RLS is now *possible* for the first time, which was the point of the above. But auditing the call sites showed naive `using (user_id = verified_uid())` policies would silently break real features: `AdminOverview`, `AdminQuota`, `AdminStudentLookup` and `AdminTestData` read `daily_usage_quota` / `user_gamification` / `subscriptions` / `test_sessions` **directly** rather than through RPCs; `broadcastNotification` inserts `user_notifications` rows for *every* user; and `ParentDashboardPage` reads another student's `parent_student_links` and sessions. Those paths need moving behind SECURITY DEFINER RPCs *before* the policies go on, or the admin panel starts returning empty results with no error — the worst failure mode. Still the same ~14 tables / 62 call sites sized last session, but now much cheaper per table, since student-side access becomes a policy instead of an RPC re-point.
+
+---
+
+## 2026-08-09 (session 4) — admin auth hardening: a verified two-request full-admin bypass, closed
+
+Triggered by the owner asking whether a client-side admin panel is sound architecture. Tested rather than reasoned about, and found a live, exploitable chain.
+
+**The exploit (verified live, then closed).** Every `admin_*` RPC takes the caller's Firebase UID as a plain `p_caller text` parameter and trusts it — the consequence of Firebase Auth not being integrated with Postgres, so `auth.uid()` is NULL and each RPC hand-rolls its own check. The only thing standing between an attacker and full admin was that UID staying secret. It wasn't: `changelog` carried an anon-readable SELECT policy and **1,041 rows with `actor_uid` plus a helpfully-labelled `actor_role: 'superadmin'`**. Two requests with the public anon key (which ships in the client bundle by design) were enough:
+
+```
+GET  /rest/v1/changelog?actor_uid=not.is.null      -> superadmin UID
+POST /rest/v1/rpc/admin_list_users {p_caller:UID}  -> every user's email, phone, name
+```
+
+A wrong UID correctly returned `Access denied`, so the check worked — it was checking the wrong thing. Separately, `get_admin_record` returned `passcode_hash` to any anon caller and `AdminGuard` compared it **in the browser**, so the second factor was both leakable (6-digit SHA-256, brute-forced offline in milliseconds) and bypassable outright via `sessionStorage.edu_admin_v1 = '1'`.
+
+**Fixed** in `20260809020000_admin_auth_hardening.sql`: dropped the anon SELECT policies on `changelog` (admin reads already go through the `admins`-checked `admin_get_activity_log` RPC; the only direct client read, `changelog.js`'s `getEntityHistory()`, had zero call sites); `get_admin_record` now returns `has_passcode boolean` instead of the hash; and new `admin_verify_passcode(uid, hash)` does the comparison server-side with a 5-attempt limit and a 15-minute lockout. `AdminGuard.jsx` reworked so the client only ever learns pass/fail, and stale sessionStorage entries still carrying `passcode_hash` are force-refetched rather than trusted.
+
+Verified after applying: changelog returns `[]` to anon; `get_admin_record` returns `has_passcode: true` with no hash; `admin_get_activity_log` still works for a real admin (no regression); and six wrong passcode attempts produced `attempts_left` 4→1 then `locked`. The test locked the superadmin out, so the lockout was cleared afterwards.
+
+**Deliberately NOT fixed — the underlying model.** `p_caller` is still an unverified parameter; this migration removed the known way to *discover* a UID, it did not make identity provable. The real fix is verifying Firebase ID tokens server-side via Supabase's third-party auth support, which makes `auth.jwt()->>'sub'` trustworthy, lets real RLS replace the SECURITY-DEFINER-everywhere pattern, and collapses 100+ hand-rolled `p_caller` checks into one enforced invariant. That is a coordinated frontend + database breaking change — every RPC signature and call site is affected — so it needs its own planning pass and a synchronised deploy, not a drive-by.
+
+**Also flagged, not active:** `CoachingPortalGuard.jsx` carries the identical client-side passcode comparison. `coaching_admins` has 0 rows and `COACHING_MODULE_ENABLED` is false, so there's no live exposure, but it needs the same treatment before that module is re-enabled.
+
+**Remaining lockdown backlog (measured, not done).** The wide-open-policy pattern still sits on ~14 per-user tables — `subscriptions`, `test_sessions`, `notification_prefs`, `user_gamification`, `daily_usage_quota`, `user_chapter_progress`, `user_daily_tasks`, `study_goals`, `user_notifications`, `parent_student_links` and others (the same follow-up first flagged in the 2026-08-06 batch-3 notes). That's **62 direct client call sites** to re-point through RPCs — genuinely the same scale as the A1/A2/A3 batches, each of which took a full session with live verification. Sized here so it can be scheduled rather than attempted piecemeal.
+
+---
+
+## 2026-08-09 (session 3) — Exam Watch was fabricating notifications: it never fetched any page
+
+Reported symptom: Admin > Ops > Exam Watch showed only two notifications, both "NEET UG 2024", on a 2026-08-08 scrape.
+
+**Root cause: `src/lib/examAlerts.js` never scraped anything.** `fetchExamAlerts()` sent GPT-4o a prompt containing only the source's *name, URL and category as text* — the URL was never requested — and asked it to "list ALL currently relevant notifications ... from this organisation". That is model recall presented as scraping. The prompt's own "no hallucinations" instruction was inert: with no source material, recall is all the model has. The `exam-scraper` edge function, which does real fetching, existed but **nothing called it** — dead code since it was written.
+
+The output was confidently wrong in a way that's easy to miss: "NEET UG 2024 Application Form Released — candidates can apply online through the official CBSE website", with a Dec-2023 application window and a 05 May 2024 exam date. **CBSE has not conducted NEET since 2019** (NTA does), and the scrape ran in August 2026. Initially misdiagnosed as an Akamai 403 on the CBSE URL (which is real — the page returns a 318-char "Access Denied" stub) before reading `examAlerts.js` and finding the fetch never happened at all.
+
+**Fix.** Rewrote `examAlerts.js` to delegate to the `exam-scraper` edge function, and hardened that function so it cannot fabricate: (1) refuses non-OK HTTP responses; (2) refuses when extracted text is under 500 chars — a redirect stub, bot-block page or nav-only chrome, never enough for a real notification; (3) refuses short pages matching an error-page signature (access denied / captcha / cloudflare / error 4xx), which catches bot-blocks served with HTTP 200; (4) rewrote the prompt to supply the page text in explicit delimiters and forbid prior knowledge, stating that an empty result is correct and expected. Also added a `caller_uid` admins-table check — the function runs with `verify_jwt: false` and spends real money on gpt-4o per call, so it was an open, unauthenticated endpoint. De-duplication moved server-side, and `last_scraped` is now stamped **only** on a genuine successful read, so a permanently blocked source keeps showing as stale instead of looking healthy.
+
+`AdminExamWatch.jsx` no longer optimistically stamps `last_scraped` on failure (it did so unconditionally, masking every failure), surfaces a per-source reason on the source card, and reports failures in the summary toast — "found 0 notifications" reads like "nothing new was published" when it actually means every source was blocked.
+
+**Verified live against the deployed function:** non-admin caller → `access_denied`; the CBSE URL → `http_error 403` with no model call and no rows written; `mcc.nic.in` → succeeded with 2,003 chars and extracted one item. The contrast is the proof — the new MCC row reads "NEET UG Counselling **2026** Round 1 registration" with **every date null** (the model declined to invent any), versus the old fabricated rows' invented 2023/2024 date range. Deleted the two fabricated CBSE rows.
+
+**Worth knowing for content ops:** of the nine preset sources, only 3 return usable content from a local network (`nta.ac.in`, `jeeadv.ac.in`, `aaccc.gov.in`); five refuse connections and `cbse.gov.in` 403s. Reachability differs by network — `mcc.nic.in` fails locally but works from Supabase's edge — so the practical test is running a scrape, not curling from a laptop. Several of these sites are also JavaScript-rendered, which plain HTML extraction can't read regardless of reachability. The existing CBSE monitored source is permanently blocked and will now correctly report as such rather than silently producing invented rows.
+
+---
+
+## 2026-08-09 (session 2) — onboarding rebuilt: board+class always, competitive exam as an add-on
+
+Reported symptom: onboarding asked for class twice — once disguised as an "Exam / Target" choice (`CLASS_8`…`CLASS_12` sitting alongside `NEET`/`JEE_MAIN`), then again as its own step — and offered NEET/JEE to Class 8 students. Investigating it surfaced a modelling error underneath and three real bugs.
+
+**The modelling error: the goal was treated as exclusive.** A Class 12 CBSE student preparing for NEET is preparing for *both*, and a single `target_exam` field can't express that — so `buildExamType()` had to pick a winner, and picked wrong. Verified live: `NEET | CBSE | 8` resolved to `"CBSE Class 8"`, meaning **8 of the 15 real users had chosen NEET and were being served CBSE Class 8 content** in paper gen, practice, daily challenge, study plan, flashcards, Veda and syllabus tracker. `buildExamType` has 14 call sites, so this was the single highest-leverage fix in the codebase.
+
+**New model.** `class_level` and `syllabus` are universal and asked first; `target_exam` becomes the optional competitive add-on (`'NONE'` when board-only — already a recognised sentinel in `formatExamLabel` and `Sidebar`). Flow is now class → board → competitive, with the competitive step gated by a new `allowed_class_levels` column and skipped entirely when nothing qualifies (classes 8–10 get a 2-step flow). Replaced the single-winner resolver with `getSchoolExamType()` / `getCompetitiveExamType()` / `getExamContexts()`; `buildExamType()` stays as a competitive-first alias so no call site broke in the same commit. Scope narrowed per product decision to classes 8–12 and CBSE + Kerala State.
+
+**Two more bugs found while tracing it.** (1) Onboarding stores `syllabus` as `KERALA_STATE` while `BOARDS` holds `"Kerala State"` — `'KERALA_STATE' !== 'KERALA STATE'`, so state-board students resolved to no combo at all. The same comparison bug existed *independently* in `isRelevantToStudent()` (`board === userProfile.syllabus`), so those students saw none of their own board content either; both now go through a shared `resolveBoard()`. (2) `EXAM_TAG_RE` hardcoded `cbse_class_`/`icse_class_`/`state_board_class_` but not `kerala_state_class_`, so Kerala State content never produced a filter pill in `AdminContentLibrary` and leaked through `PracticeGeneratorPage`'s tag-stripping filter as a fake chapter name. Replaced with `isExamTag()` derived from the live `BOARDS` list — hardcoding is precisely how Kerala State got missed, so the next board an admin adds can't silently fall out. `prettyExamTag()` derives its board cases the same way. Also fixed `normalizeExamType('CLASS_8_9')`, which mapped to `'Class 8-9'` — a key that has never existed in `CATEGORIES`.
+
+**Pricing.** Confirmed with the owner that NEET/JEE students buy the *same* plans (₹399 monthly, yearly, 3-year), so there was no entitlement gating to build — `quota_config` already grants `neet_complete` and `premium_*` identical unlimited quotas. But that plan was titled "NEET Complete — Competitive Exams" with NEET/JEE chips while being shown to *every* student including Class 8. Repositioned as the **3-Year Plan**, `examChips` dropped, features reworded to duration/value. **Plan id left as `neet_complete`** — it's what live subscriptions, `quota_config` and the edge functions' `PLAN_DAYS` all resolve on. Fixed a stale label found alongside: Admin > Students offered "NEET Complete (365 days)" when `adminGrantPremium()` has always granted 1095.
+
+**Migration written but deliberately NOT applied** (`20260809000000_onboarding_flow_class_first.sql`). Its re-seed sections rewrite the onboarding option rows, and the currently-deployed app still expects the old `needs_board`/`needs_class` branching — applying it before the code ships would leave live onboarding inconsistent. It must go out *with* the deploy. One trap avoided inside it: `admin_upsert_onboarding_option` gains a parameter, and adding a defaulted param creates a second *overload* rather than replacing the function — PostgREST can't disambiguate two overloads, which is exactly the `PGRST203` failure that silently broke every flashcard review in production (BUG-004). The migration drops the old signature first.
+
+**Content reality, flagged not fixed.** The new scope creates 12 content buckets (10 board+class + NEET + JEE Main), roughly 70+ subject-level buckets, of which exactly one is populated — everything tagged in production is `CBSE Class 8`. Recommended keeping the other combos `is_active = false` until content lands, since `AdminContentMap.jsx` already tracks the gaps. Added the missing empty state to `SyllabusTrackerPage`, which rendered `subjects.map()` over nothing — a blank screen under the stats header; Notes, Flashcards and Important Q&A already had one.
+
+Verified: build clean, **66 tests passing** (up from 53) with 13 new cases covering the full resolution matrix — competitive-goal-wins, both-contexts-present, the Kerala State regression in both `getSchoolExamType` and `isRelevantToStudent`, repeater handling, legacy `CLASS_*` compatibility, and the exam-tag fix.
+
+**Follow-up same session — migrations applied, accounts deleted, flow verified in a real browser.**
+
+Applied both migrations to production (owner confirmed they're not deploying soon, and without the migration local testing would read the *old* option rows and exercise the wrong flow). Live catalog is now exactly: classes 8-12 + Repeater, boards CBSE + Kerala State, competitive NONE/NEET/JEE_MAIN/JEE_ADVANCED/BOTH gated to `{11,12,REPEATER}`, and 10 board+class combos active. All retired rows are `is_active = false`, not deleted — the admin editor still lists them (marked "hidden") so they can be re-enabled, while `get_onboarding_options()` filters them out so students never see them.
+
+**Found `admin_delete_student` has never worked.** The first deletion attempt failed on all 15 accounts with Postgres `55000: Views containing LIMIT or OFFSET are not automatically updatable` — the function does `DELETE FROM leaderboard_alltime` and `leaderboard_weekly`, both of which are **views**, which aborts the whole function body. So no admin has been able to delete any student since `sql/0041` shipped. Fixed in `20260809010000_fix_admin_delete_student_views.sql` by dropping those two statements (the views derive from `user_gamification`/`test_sessions`, which the function already clears). All 15 accounts then deleted cleanly; both superadmin rows in `admins` preserved, since admin auth is keyed off that table rather than `users`.
+
+Deliberately did **not** run `scripts/delete-non-superadmin-firebase-users.mjs`: it preserves only `thaslimshajahans@gmail.com` and would have deleted the Firebase Auth identity for `info@acenzos.com`, the owner's other superadmin login. It's also unnecessary — deleting the Supabase row alone re-triggers onboarding, because a fresh `upsertUser` row has `onboarding_completed = false`.
+
+**Browser-verified end to end** (Playwright against the dev server + the dev-only `qa_uid` bypass): Class 8 → 2 steps with no competitive option and only CBSE/Kerala State offered; Class 12 → 3 steps with NEET/JEE present; a `Class 12 + CBSE + NEET UG` run saved `target_exam='NEET'` and resolves to competitive `NEET` **plus** school `CBSE Class 12` — the exact case that was collapsing to `CBSE Class 12` before.
+
+**Three ProfilePage bugs fixed off the back of that**, all consequences of `target_exam` now being optional: (1) a board-only student rendered a bare `Target Exam —` row, because the old `examIsClassGrouping` heuristic assumed `target_exam` always held something meaningful — the row now shows only when `getCompetitiveExamType()` returns a real target; (2) `Board / Syllabus` did a raw `replace(/_/g,' ')` and rendered `KERALA_STATE` as the shouty "KERALA STATE" — now goes through `resolveBoard()` for "Kerala State"; (3) `Class / Year` unconditionally prefixed "Class", producing "Class REPEATER" — now renders "Repeater / Dropper". Verified live for both a NEET Class 12 profile and a Kerala State repeater.
+
+---
+
+## 2026-08-09 — Paper Gen restored: abandoned refactor had gutted the exam picker and four panels
+
+Reported symptom: Admin > Publish > Paper Gen only offered NEET, with no way to generate for boards, classes, or other competitive exams. Two independent causes.
+
+**Cause 1 (code, fixed) — an unfinished refactor had removed the UI.** `AdminPaperGen.jsx` had been split into a lazy wrapper plus a new `AdminPaperGenCore.jsx`, and the split never finished — the stub still carried the tell "For brevity, export a placeholder that re-exports the default from the original file." The Core file kept `competitive`/`selBoard`/`selClass` state and the `buildExam()` helper, but **the setters were never called from anywhere and the selector JSX was never ported**, so `buildExam('NEET', null, null)` returned `'NEET'` on every render — exactly the reported symptom. `EXAM_TYPE_GROUPS`/`BOARDS`/`CLASS_LEVELS` were imported and unused. The same shape had eaten three more panels plus one piece of dead state: `ChapterPicker` (so `chapters` could only ever be reset to `[]`, never set), `PYQExtractPanel`, `PYQTemplatePreview`, and `TemplatePickerPanel`. Meanwhile the original `AdminPaperGen.jsx` had been reduced to ~1040 lines of orphaned code referencing `supabase`/`motion`/`MathText` without importing them — it only compiled because nothing in the render path referenced it and rollup tree-shook the lot (its built chunk was 1.74 kB).
+
+Fixed by restoring `AdminPaperGen.jsx` from git and deleting `AdminPaperGenCore.jsx`, rather than porting four panels into the stub — the original is the proven-working version and the Core copy had diverged only trivially. Checked before restoring that the split hadn't added anything worth keeping: the `generateQuestionPaper` call was byte-identical, and the only genuine additions were a "generation started" toast/notification and a "Prepare Publish" button whose `setPublished(false) && setPubTitle(...)` short-circuited so `setPubTitle` never ran. Carried the `createNotification` call across (generation takes 1–2 min, so an in-app notification beats watching a spinner); dropped the broken button. Built chunk back to 50.31 kB with all five panels rendering; build passes, 53 tests pass.
+
+**Cause 2 (data, not fixed — owner's call) — the live category catalog is short.** The picker reads `exam_categories`, and `loadCategories()` *replaces* the hardcoded fallback wholesale whenever the DB returns rows. Production has only 2 competitive exams (NEET, JEE Main) against the fallback's 7, and 3 boards (CBSE, ICSE, Kerala State) against 4 — `State Board`, `JEE Advanced`, `CUET`, `UPSC`, `SSC CGL` and `Olympiad` have no rows. Classes (6–12) and all 21 board+class combos are present, so those work fully now. Project owner opted to add the missing competitive exams themselves via Admin > Platform > Categories rather than have them seeded here — worth noting the same list also feeds student onboarding, which is part of why it wasn't seeded blind.
+
+---
+
+## 2026-08-08 — migration audit, anon-readable backup tables, `.gitignore` fix, dead-file cleanup
+
+Started as a narrow check of which migrations were actually applied to production. That question resolved cleanly — but the verification work surfaced two live problems that mattered more than the original question.
+
+**Migration state (the original question) — everything IS applied.** All 134 RPCs the frontend calls exist in production, every table/column from `sql/0039–0057` and the migration set exists, and `quota_config`'s free-tier row matches `FREE_LIMITS` in `quota.js` exactly (20/15/2/3/3/2, i.e. `sql/0050`'s values). No repeat of the last outage. **Caveat worth remembering: `supabase migration list` was lying** — it reported `20260807000000_published_tests_rls_assignments` as local-only when `test_assignments` and all its RPCs were demonstrably live. Migrations had been applied by hand via the SQL editor, so the remote history table never recorded them. Method note: a first pass using PostgREST's `PGRST202` `hint` field as an existence signal produced 8 false negatives and was discarded — that hint reflects *name similarity*, not existence. The authoritative answer came from the `service_role` OpenAPI catalog (`GET /rest/v1/`), which enumerates every exposed function and table.
+
+**Live PII exposure via backup tables (found, fixed).** 30 `*_backup_20260804/05` tables had RLS **disabled** while still exposed through PostgREST, so anyone with the public anon key (which ships in the client bundle by design) could read them by name. This completely defeated the Aug-6 A1/A2/A3 RLS lockdown: `users` correctly returned 0 rows to anon while `users_backup_20260804` returned all 17 (firebase_uid, email, display_name, target_exam, class_level). Worst of them, `admins_backup_20260804` exposed `passcode_hash` — a 6-digit SHA-256 that brute-forces offline in milliseconds, which combined with `AdminGuard`'s client-side passcode comparison made the admin second factor worthless. Also found three leftover `_debug_get_columns4`/`_debug_get_constraints3`/`_debug_get_policies4` RPCs, anon-callable and returning full column/constraint/RLS-policy metadata for any table — the 2026-08-06 `drop_debug_helpers` migrations had missed them, and they were what made enumerating all of the above trivial. Fixed in `20260808000000_drop_exposed_backups.sql`: all 30 tables plus the 3 debug functions dropped. Verified after: backup tables return 404 to anon, debug RPCs return PGRST202, live `users`/`admins`/`knowledge_base`/`subscriptions` intact, and all 134 called RPCs still resolve (checked specifically because `drop … cascade` can take dependent functions with it — none were).
+
+**The backups were not redundant, and were dropped anyway as a deliberate call.** Flagged before acting: the snapshots held substantially *more* than the live tables — `knowledge_base` 20,890 rows (with embeddings already generated) vs 23 live, `pyq_questions` 2,934 vs 17, `study_notes` 561 vs 4, `daily_challenges` 510 vs 206. Something wiped the content library after 2026-08-04 and these tables were the only remaining copy. Project owner confirmed twice, intending to re-ingest from the source PDFs in `easy with exam/` — so they were dropped rather than preserved. **Re-ingestion will re-incur the OpenAI embedding cost for ~21k chunks.**
+
+**`.gitignore` was ignoring the entire repository (found, fixed).** Line 23 read `* f i r e b a s e - a d m i n s d k * . j s o n` — a UTF-16 write artifact that git parsed as a bare `*`, plus a following ` secrets/` with a leading space. Confirmed via `git check-ignore -v`: every path in the project matched `.gitignore:23:*`. Tracked files were unaffected (ignore rules don't apply to them), but **every new file was silently invisible to git** — 21 of them, including 8 the running app imports (`src/lib/onboardingOptions.js`, imported by `main.jsx`; `email.js`; `authErrors.js`; `onboardingIconRegistry.js`; `AdminEmailTemplates.jsx`; `AdminOnboardingOptions.jsx`; `AdminPaperGenCore.jsx`; `EweSpinner.jsx`), three edge functions (`connect-email`, `send-email`, `unsubscribe-email` + `_shared/emailLayout.ts`), three migrations, and `sql/0055–0057`. A fresh clone would not have built. This is the same class of local/remote drift that caused the last outage, already staged for the next one. Rewrote `.gitignore`; re-verified `.env`, `supabase/.env.local`, and the Firebase service-account JSON are still correctly ignored. **Checked the full git object history — nothing sensitive was ever committed.**
+
+**Migration history repaired and `.sql` clutter removed.** 19 of the 34 local migrations were pure debug/fixture scaffolding (`debug_inspect*`, `drop_debug_helpers*`, `a3_test_fixtures*`) — verified to contain zero persistent DDL (create-then-drop temp functions only) and deleted, with their orphaned history rows marked `reverted`. The loose `sql/` directory (a parallel, tooling-invisible set of 19 hand-applied files) is gone: `0039–0054` deleted as recoverable from git history, and `0055–0057` **moved into `supabase/migrations/`** rather than deleted, since the `.gitignore` bug meant they were untracked and deletion would have been permanent. Those three were then marked `applied` via `migration repair`, since they already are. `supabase db push --dry-run` now reports **"Remote database is up to date"** — local migrations and production are genuinely in sync for the first time, so `db push` is usable again.
+
+**Dead-file cleanup.** Removed `dist/`, `dev-dist/`, `.qodo/` and three `dist*.zip` deploy artifacts (~27MB, all regenerable), plus 7 source files with zero inbound references, found by tracing the import graph from `main.jsx`: `AuthScreen.jsx` (superseded by the landing-page `AuthModal`), `TestTimer.jsx`, `ui/Chip.jsx` (`AdminCategorySettings` has its own local `ChipInput`), `ui/ExamLabel.jsx` (call sites use `formatExamLabel()` instead), `VoiceInput.jsx`, `lib/referral.js` (`ProfilePage` calls `get_user_referral` directly), and `public/firebase-messaging-sw.js` — misnamed, FCM isn't used anywhere, and it duplicated `push-handler.js`, which is the one actually wired into workbox. Build passes and all 53 tests pass after. Kept deliberately: `easy with exam/` (1.6GB, now the only re-ingestion source for the discarded corpus), `secrets/`, the logo originals, and `VideoLearningPage.jsx` (unreferenced but parked intentionally per `StudyHubPage`'s comment).
+
+**Flagged, not fixed:** both push service workers reference `/pwa-192x192.png` and `/pwa-64x64.png`, which don't exist — `public/` only has `icon-192.png`/`icon-512.png`, so notification icons are broken. The admin passcode is still verified entirely client-side. And the working tree still carries a large uncommitted change set (~70 files) that has never been deployed.
+
+---
+
 ## 2026-08-06 (batch 4) — Exam Mode full fix: over-generation root cause, background generation, mode lock
 
 Seven items, auto-run except Item 1 (called out as the priority — full diagnosis + live verification before the rest).

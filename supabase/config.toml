@@ -144,8 +144,12 @@ max_catalogs = 2
 # [storage.analytics.buckets.my-warehouse]
 
 # Store vector embeddings in S3 for large and durable datasets
+# Disabled: Vector Buckets is a Pro-plan feature, and leaving this true made
+# `supabase config push` abort with `402 Please upgrade the project to a paid
+# tier` partway through — after it had already applied the auth section, which
+# is a confusing half-applied state to debug. Keep it matching the remote.
 [storage.vector]
-enabled = true
+enabled = false
 max_buckets = 10
 max_indexes = 5
 
@@ -340,9 +344,15 @@ email_optional = false
 enabled = false
 
 # Use Firebase Auth as a third-party provider alongside Supabase Auth.
+#
+# THIS IS THE FIX for the architectural gap that made every admin_* RPC
+# trust an unverified `p_caller text` parameter: with this enabled, Supabase
+# validates incoming Firebase ID tokens against Google's public JWKS, so
+# `auth.jwt() ->> 'sub'` is a *proven* Firebase UID rather than a string the
+# caller chose. Real RLS becomes possible for the first time in this project.
 [auth.third_party.firebase]
-enabled = false
-# project_id = "my-firebase-project"
+enabled = true
+project_id = "edutech-app-acenzos"
 
 # Use Auth0 as a third-party provider alongside Supabase Auth.
 [auth.third_party.auth0]

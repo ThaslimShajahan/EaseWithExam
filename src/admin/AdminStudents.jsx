@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Users, Search, RefreshCw, Pencil, X, Save, Check, Crown, Trash2, AlertTriangle } from 'lucide-react';
 import { adminGetAllUsers, adminGetAllTestSessions, adminGetAllSubscriptions, adminUpdateUser, adminGrantPremium, adminDeleteStudent } from '../lib/supabase';
-import { EXAM_TYPE_GROUPS, BOARDS, CLASS_LEVELS } from '../lib/categories';
+import { formatExamLabel } from '../lib/categories';
+import { EXAM_OPTIONS, BOARD_OPTIONS, CLASS_OPTIONS } from '../lib/onboardingOptions';
 
 function getCallerUid() {
   try {
@@ -11,17 +12,27 @@ function getCallerUid() {
   } catch { return ''; }
 }
 
-// Live-derived from Admin > Categories, plus onboarding-only sentinel values
-// ('BOTH' = NEET+JEE combined prep, 'REPEATER' = dropper year, 'Other State'/
-// 'NA' = syllabus fallbacks) that aren't real category rows.
-const getAllExams   = () => [...EXAM_TYPE_GROUPS.flatMap((g) => g.items), 'BOTH'];
-const getAllBoards  = () => [...BOARDS, 'Other State', 'NA'];
-const getAllClasses = () => [...CLASS_LEVELS, 'REPEATER'];
+// Built from the SAME option source the student onboarding flow writes from,
+// not from categories.js. Those are different vocabularies — categories holds
+// display keys ('JEE Main', 'Class 8', 'CBSE') while a profile stores the
+// onboarding option_key ('JEE_MAIN', 'NONE', 'KERALA_STATE'). Feeding the
+// former into these selects meant a board-only student (target_exam='NONE')
+// matched no <option> at all, so the select rendered its first entry —
+// "NEET UG" — over a value that was actually NONE, and any interaction with
+// the dropdown silently retargeted the student.
+const getAllExams   = () => EXAM_OPTIONS.map((o) => o.key);
+const getAllBoards  = () => BOARD_OPTIONS.map((o) => o.key);
+const getAllClasses = () => CLASS_OPTIONS.map((o) => o.key);
 
+const OPTION_TITLE = (opts, key) => opts.find((o) => o.key === key)?.title ?? key;
+
+// Keyed on the stored option_key ('JEE_MAIN'), not the display label
+// ('JEE Main') — the old keys never matched a real target_exam value, so
+// JEE students silently fell through to the default badge colour.
 const EXAM_BADGE = {
   'NEET':         'bg-emerald-900 text-emerald-300',
-  'JEE Main':     'bg-blue-900   text-blue-300',
-  'JEE Advanced': 'bg-cyan-900   text-cyan-300',
+  'JEE_MAIN':     'bg-blue-900   text-blue-300',
+  'JEE_ADVANCED': 'bg-cyan-900   text-cyan-300',
   'BOTH':         'bg-violet-900 text-violet-300',
 };
 
@@ -30,7 +41,9 @@ const EXAM_BADGE = {
 function EditDrawer({ user, onClose, onSaved }) {
   const [form,         setForm]         = useState({
     display_name: user.display_name || '',
-    target_exam:  user.target_exam  || 'NEET',
+    // 'NONE' (board exams only), not 'NEET' — defaulting a student with no
+    // stored target to NEET is exactly how an admin could save one in by accident.
+    target_exam:  user.target_exam  || 'NONE',
     syllabus:     user.syllabus     || 'CBSE',
     class_level:  user.class_level  || '12',
   });
@@ -138,7 +151,7 @@ function EditDrawer({ user, onClose, onSaved }) {
               className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary-500"
             >
               {getAllExams().map((e) => (
-                <option key={e} value={e}>{e.replace(/_/g, ' ')}</option>
+                <option key={e} value={e}>{OPTION_TITLE(EXAM_OPTIONS, e)}</option>
               ))}
             </select>
           </Field>
@@ -150,7 +163,7 @@ function EditDrawer({ user, onClose, onSaved }) {
               className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary-500"
             >
               {getAllBoards().map((b) => (
-                <option key={b} value={b}>{b.replace(/_/g, ' ')}</option>
+                <option key={b} value={b}>{OPTION_TITLE(BOARD_OPTIONS, b)}</option>
               ))}
             </select>
           </Field>
@@ -162,7 +175,7 @@ function EditDrawer({ user, onClose, onSaved }) {
               className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary-500"
             >
               {getAllClasses().map((c) => (
-                <option key={c} value={c}>{c === 'REPEATER' ? 'Repeater / Dropper' : `Class ${c}`}</option>
+                <option key={c} value={c}>{OPTION_TITLE(CLASS_OPTIONS, c)}</option>
               ))}
             </select>
           </Field>
@@ -179,7 +192,9 @@ function EditDrawer({ user, onClose, onSaved }) {
             >
               <option value="premium_monthly">Premium Monthly (30 days)</option>
               <option value="premium_yearly">Premium Yearly (365 days)</option>
-              <option value="neet_complete">NEET Complete (365 days)</option>
+              {/* 1095, not 365 — this label was wrong. adminGrantPremium()
+                  (lib/supabase.js) has always granted 3 years for this plan. */}
+              <option value="neet_complete">3-Year Plan (1095 days)</option>
             </select>
             <button
               onClick={handleGrantPremium}
@@ -427,7 +442,7 @@ export default function AdminStudents() {
                   )}
 
                   <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${badge}`}>
-                    {u.target_exam === 'BOTH' ? 'NEET+JEE' : (u.target_exam?.replace(/_/g, ' ') || 'N/A')}
+                    {formatExamLabel(u.target_exam, 'N/A')}
                   </span>
 
                   <span className="text-xs text-slate-400 text-center">

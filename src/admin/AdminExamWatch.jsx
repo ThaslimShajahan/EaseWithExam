@@ -2,13 +2,20 @@ import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Globe, Plus, Trash2, RefreshCw, Bell, Calendar, Loader2,
-  ExternalLink, X, Zap, CheckCircle2, Clock, ChevronDown, ChevronUp,
+  ExternalLink, X, Zap, CheckCircle2, Clock, ChevronDown, ChevronUp, AlertTriangle,
 } from 'lucide-react';
 import {
   getMonitoredSources, addMonitoredSource, deleteMonitoredSource,
   getExamNotifications, clearExamNotifications, deactivateExamNotification,
 } from '../lib/supabase';
 import { fetchExamAlerts } from '../lib/examAlerts';
+
+function getCallerUid() {
+  try {
+    const key = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch { return ''; }
+}
 import Button from '../components/ui/Button';
 
 /* ── Preset sources — no manual URL typing needed ─────────── */
@@ -66,6 +73,8 @@ export default function AdminExamWatch() {
   const [filterCat,      setFilterCat]      = useState('All');
   const [toast,          setToast]          = useState(null);
   const [loadError,      setLoadError]      = useState('');
+  // sourceId -> why its last scrape produced nothing, shown on the source card
+  const [failures,       setFailures]       = useState({});
   const [form,           setForm]           = useState({ name: '', url: '', examCategory: 'Medical' });
   const autoTriggered = useRef(false);
 
@@ -155,12 +164,18 @@ export default function AdminExamWatch() {
   const scrapeSingle = async (source) => {
     setScraping((s) => new Set(s).add(source.id));
     try {
-      const count = await fetchExamAlerts(source);
+      const result = await fetchExamAlerts(source, getCallerUid());
+      if (!result.ok) {
+        // Deliberately does NOT stamp last_scraped — a source that's blocked or
+        // unreachable must keep showing as stale rather than looking healthy
+        // because we tried. The old code set it optimistically either way.
+        setFailures((f) => ({ ...f, [source.id]: result.message }));
+        showToast(`${source.name}: ${result.message}`, 'error');
+        return 0;
+      }
+      setFailures((f) => { const n = { ...f }; delete n[source.id]; return n; });
       setSources((prev) => prev.map((s) => s.id === source.id ? { ...s, last_scraped: new Date().toISOString() } : s));
-      return count;
-    } catch (err) {
-      showToast(`${source.name}: ${err.message}`, 'error');
-      return 0;
+      return result.count;
     } finally {
       setScraping((s) => { const n = new Set(s); n.delete(source.id); return n; });
     }
@@ -169,11 +184,22 @@ export default function AdminExamWatch() {
   const handleScrapeList = async (list, auto = false) => {
     if (auto) setAutoRunning(true);
     let total = 0;
-    for (const s of list) { total += await scrapeSingle(s); }
+    let failed = 0;
+    for (const s of list) {
+      const n = await scrapeSingle(s);
+      total += n;
+      if (!n) failed += 1;
+    }
     const fresh = await getExamNotifications();
     setNotifications(fresh);
     if (auto) setAutoRunning(false);
-    showToast(`${auto ? 'Auto-scraped' : 'Scraped'}: found ${total} notification(s) across ${list.length} source(s)`);
+    // Report failures explicitly — "found 0 notifications" reads like "nothing
+    // new was published" when it actually means every source was blocked.
+    showToast(
+      `${auto ? 'Auto-scraped' : 'Scraped'} ${list.length} source(s): ${total} new notification(s)` +
+      (failed ? ` · ${failed} source(s) returned nothing — see the source list` : ''),
+      failed && !total ? 'error' : 'success',
+    );
   };
 
   const handleClearAll = async () => {
@@ -393,6 +419,12 @@ export default function AdminExamWatch() {
                   className="text-[10px] text-primary-400 hover:text-primary-300 flex items-center gap-0.5 truncate mb-3">
                   <ExternalLink size={9} /> {src.url}
                 </a>
+                {failures[src.id] && (
+                  <div className="flex items-start gap-1.5 mb-3 px-2 py-1.5 rounded-lg bg-amber-950/30 border border-amber-700/30">
+                    <AlertTriangle size={10} className="text-amber-400 shrink-0 mt-0.5" />
+                    <p className="text-[10px] text-amber-300 leading-snug">{failures[src.id]}</p>
+                  </div>
+                )}
                 <div className="flex items-center justify-between">
                   <span className={`flex items-center gap-1 text-[10px] ${isStale(src.last_scraped) ? 'text-amber-400' : 'text-slate-500'}`}>
                     <Clock size={9} /> {fmtAgo(src.last_scraped)}

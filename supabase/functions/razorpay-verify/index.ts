@@ -38,7 +38,10 @@ const CORS = {
 const PLAN_DAYS: Record<string, number> = {
   premium_monthly: 30,
   premium_yearly:  365,
-  neet_complete:   365,
+  // Was 365 — the plan is now sold and displayed as "3 years access", not
+  // "Lifetime (never expires)"; this must match what the checkout page and
+  // pricing cards actually claim. See src/lib/subscription.js.
+  neet_complete:   1095,
 };
 
 function verifyPaymentSignature(orderId: string, paymentId: string, signature: string): boolean {

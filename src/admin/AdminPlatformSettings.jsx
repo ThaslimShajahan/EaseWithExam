@@ -93,12 +93,14 @@ function SettingRow({ icon: Icon, label, hint, children }) {
 export default function AdminPlatformSettings() {
   const callerUid = getCallerUid();
   const logoRef   = useRef();
+  const avatarRef = useRef();
 
   const [settings,    setSettings]    = useState({});
   const [loading,     setLoading]     = useState(true);
   const [savingKey,   setSavingKey]   = useState('');
   const [saved,       setSaved]       = useState('');
   const [err,         setErr]         = useState('');
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [localVals,   setLocalVals]   = useState({});
 
@@ -128,6 +130,28 @@ export default function AdminPlatformSettings() {
       setErr(e.message);
     } finally {
       setSavingKey('');
+    }
+  }
+
+  // Same flow as the logo, separate key/state so one upload can't clobber the
+  // other's spinner or error.
+  async function handleAvatarUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { setErr('Please select an image file'); return; }
+    if (file.size > 2 * 1024 * 1024) { setErr('Avatar file too large (max 2 MB)'); return; }
+    setUploadingAvatar(true); setErr('');
+    try {
+      const path = `platform/ewe_avatar_${Date.now()}.${file.name.split('.').pop()}`;
+      const { error: upErr } = await supabase.storage.from('platform-assets').upload(path, file, { upsert: true });
+      if (upErr) throw upErr;
+      const { data } = supabase.storage.from('platform-assets').getPublicUrl(path);
+      await saveSetting('ewe_avatar_url', data.publicUrl);
+      setLocalVals((prev) => ({ ...prev, ewe_avatar_url: data.publicUrl }));
+    } catch (e2) {
+      setErr('Upload failed: ' + e2.message);
+    } finally {
+      setUploadingAvatar(false);
     }
   }
 
@@ -218,6 +242,36 @@ export default function AdminPlatformSettings() {
                 : <><Upload size={14} /> {settings.platform_logo_url ? 'Replace Logo' : 'Upload Logo'}</>}
             </button>
             <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
+          </div>
+        </SettingRow>
+
+        <SettingRow icon={Image} label="EWE Avatar" hint="Square image · max 2 MB · shown wherever EWE speaks in chat. Leave empty to use the brand logo">
+          <div className="space-y-3">
+            {settings.ewe_avatar_url && (
+              <div className="flex items-center gap-3 p-3 bg-slate-900 rounded-xl border border-white/5">
+                <img src={settings.ewe_avatar_url} alt="EWE avatar" className="h-10 w-10 object-cover rounded-full border border-white/10" />
+                <div className="flex-1">
+                  <p className="text-xs text-slate-400 truncate">{settings.ewe_avatar_url.split('/').pop()}</p>
+                  <p className="text-[10px] text-emerald-400 mt-0.5">Active in EWE chat</p>
+                </div>
+                <button
+                  onClick={() => saveSetting('ewe_avatar_url', '')}
+                  className="text-[11px] text-slate-400 hover:text-red-400 transition-colors"
+                >
+                  Reset to logo
+                </button>
+              </div>
+            )}
+            <button
+              onClick={() => avatarRef.current?.click()}
+              disabled={uploadingAvatar}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-white/10 text-slate-300 text-sm font-semibold hover:bg-white/5 disabled:opacity-50 transition-colors"
+            >
+              {uploadingAvatar
+                ? <><Loader2 size={14} className="animate-spin" /> Uploading…</>
+                : <><Upload size={14} /> {settings.ewe_avatar_url ? 'Replace Avatar' : 'Upload Avatar'}</>}
+            </button>
+            <input ref={avatarRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
           </div>
         </SettingRow>
       </div>

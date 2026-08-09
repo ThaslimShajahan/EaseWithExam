@@ -24,7 +24,7 @@ const SCHOOL_SUBJECTS_11_12 = ['Physics', 'Chemistry', 'Biology', 'Mathematics',
 
 const FALLBACK_CATEGORIES = {
   'NEET':         { label: 'NEET UG',     type: 'competitive', group: 'Medical',      subjects: ['Physics', 'Chemistry', 'Biology'] },
-  'JEE Main':     { label: 'JEE Main',    type: 'competitive', group: 'Engineering',  subjects: ['Physics', 'Chemistry', 'Mathematics'] },
+  'JEE Main':     { label: 'JEE',         type: 'competitive', group: 'Engineering',  subjects: ['Physics', 'Chemistry', 'Mathematics'] },
   'JEE Advanced': { label: 'JEE Adv.',    type: 'competitive', group: 'Engineering',  subjects: ['Physics', 'Chemistry', 'Mathematics'] },
   'CUET':         { label: 'CUET',        type: 'competitive', group: 'University',   subjects: ['Physics', 'Chemistry', 'Biology', 'Mathematics', 'English', 'Economics', 'History', 'Political Science'] },
   'UPSC':         { label: 'UPSC CSE',    type: 'competitive', group: 'Government',   subjects: ['History', 'Geography', 'Polity', 'Economics', 'Science & Technology', 'Environment', 'Current Affairs'] },
@@ -162,10 +162,16 @@ export function getExamType(examType) {
 }
 
 // Onboarding saves underscore IDs (CLASS_10, JEE_MAIN…). Normalize to category keys.
+// The CLASS_* entries are LEGACY — onboarding no longer offers them (class is
+// its own step now) — but old profile rows still carry them, so they must keep
+// resolving to a real CATEGORIES key.
 const EXAM_ID_MAP = {
   CLASS_10:     'Class 10',
   CLASS_12:     'Class 12',
   CLASS_11:     'Class 11',
+  CLASS_9:      'Class 9',
+  // Was 'Class 8-9', which has never existed as a CATEGORIES key — it fell
+  // through to the generic subject list instead of resolving to anything.
   CLASS_8_9:    'Class 9',
   CLASS_8:      'Class 8',
   JEE_MAIN:     'JEE Main',
@@ -180,6 +186,22 @@ export function normalizeExamType(raw) {
   return EXAM_ID_MAP[raw] ?? raw;
 }
 
+// THE single, canonical way to turn a raw stored target_exam value
+// ('CLASS_8_9', 'BOTH', 'NEET', ...) into display text. Every render site
+// used to hand-roll its own `value.replace(/_/g, ' ')`, which reads fine for
+// a single-word value but produces nonsense like "CLASS 8 9" for anything
+// with a numeric suffix — that exact bug turned up independently in
+// ProfilePage, Dashboard, the Sidebar exam badge, AdminStudents (both the
+// edit-form dropdown and the list-row badge), and ParentDashboardPage before
+// this was consolidated. Route every future display site through this
+// function (or the <ExamLabel> component below for JSX call sites) instead
+// of writing a sixth copy of the same fallback logic.
+export function formatExamLabel(examValue, fallback = '—') {
+  if (!examValue || examValue === 'NONE') return fallback;
+  if (examValue === 'BOTH') return 'NEET + JEE';
+  return getExamLabel(normalizeExamType(examValue));
+}
+
 // exam_type is often class-specific (e.g. "CBSE Class 8") — a bare board/exam
 // name with no class suffix (e.g. "NEET") is competitive-exam content, not
 // board content. Shared by every screen that filters admin-published content
@@ -190,10 +212,17 @@ export function isRelevantToStudent(examType, userProfile) {
   const combo = examType.match(/^(.+?)\s+Class\s+(\d+)$/);
   if (combo) {
     const [, board, cls] = combo;
-    return board === userProfile?.syllabus && cls === String(userProfile?.class_level || '');
+    // Compare through resolveBoard(), not against the raw `syllabus` value —
+    // onboarding stores UPPER_SNAKE keys ('KERALA_STATE') while content is
+    // tagged with the display name ('Kerala State'), so a direct === here
+    // silently hid every state-board student's own content from them.
+    return board === resolveBoard(userProfile?.syllabus) &&
+           cls === String(userProfile?.class_level || '');
   }
-  // No class suffix — only relevant to students targeting a matching competitive exam.
+  // No class suffix — competitive-exam content. Relevant only to a student
+  // who actually has that competitive target ('NONE' matches nothing).
   const target = (userProfile?.target_exam || '').toUpperCase();
+  if (!target || target === 'NONE') return false;
   const normalizedExam = examType.trim().toUpperCase().replace(/\s+/g, '_');
   if (target === 'BOTH') return normalizedExam === 'NEET' || normalizedExam.startsWith('JEE');
   return normalizedExam === target;
@@ -203,31 +232,118 @@ export function isRelevantToStudent(examType, userProfile) {
 // (e.g. "cbse_class_8", "jee_main") — set at upload time in AdminContentIntake.
 // Shared here so every reader (admin library, student chapter browsers) agrees
 // on both directions of the conversion instead of drifting apart.
-export const EXAM_TAG_RE = /^(neet|jee_|cbse_class_|icse_class_|state_board_class_)/;
+// DERIVED from the live BOARDS list rather than hardcoded, because hardcoding
+// is exactly how 'Kerala State' got missed: the old literal listed
+// cbse_class_/icse_class_/state_board_class_ but not kerala_state_class_, so
+// every Kerala State tag failed this test — it never produced a filter pill in
+// AdminContentLibrary and leaked through PracticeGeneratorPage's
+// "strip the exam tags to get topics" filter as if it were a chapter name.
+// A getter (not a const) because BOARDS is reassigned in place by
+// loadCategories() at boot; capturing the value once would freeze the fallback.
+// A function, not an exported RegExp: BOARDS is reassigned in place by
+// loadCategories() at boot, so a regex built at module-evaluation time would
+// freeze whatever the fallback happened to contain.
+export function isExamTag(tag) {
+  if (!tag) return false;
+  if (/^(neet|jee_)/.test(tag)) return true;
+  return BOARDS.some((b) => tag.startsWith(`${examTypeToTag(b)}_class_`));
+}
 
 export function examTypeToTag(examType) {
   return examType ? examType.toLowerCase().replace(/\s+/g, '_') : null;
 }
 
 export function prettyExamTag(tag) {
-  return tag
+  const competitive = tag
     .replace(/^neet$/, 'NEET')
     .replace(/^jee_main$/, 'JEE Main')
-    .replace(/^jee_advanced$/, 'JEE Advanced')
-    .replace(/^cbse_class_(\d+)$/, (_, n) => `CBSE Class ${n}`)
-    .replace(/^icse_class_(\d+)$/, (_, n) => `ICSE Class ${n}`)
-    .replace(/^state_board_class_(\d+)$/, (_, n) => `State Board Class ${n}`)
-    .replace(/_/g, ' ');
+    .replace(/^jee_advanced$/, 'JEE Advanced');
+  if (competitive !== tag) return competitive;
+
+  // Board combos resolve off the same BOARDS list the tag was built from, so
+  // any board an admin adds renders correctly without another literal here.
+  for (const board of BOARDS) {
+    const m = tag.match(new RegExp(`^${examTypeToTag(board)}_class_(\\d+)$`));
+    if (m) return `${board} Class ${m[1]}`;
+  }
+  return tag.replace(/_/g, ' ');
 }
 
-// Build the best exam-type key from a student's profile fields.
-// Prefers board+class combos (e.g. "CBSE Class 10") over standalone keys.
-export function buildExamType(targetExam, syllabus, classLevel) {
-  const base = normalizeExamType(targetExam);
-  const board = BOARDS.find((b) => b.toUpperCase() === (syllabus ?? '').toUpperCase()) ?? null;
-  if (board && classLevel && /^\d+$/.test(String(classLevel))) {
-    const combo = `${board} Class ${classLevel}`;
-    if (CATEGORIES[combo]) return combo;
+/* ── Profile → exam context resolution ─────────────────────────
+ * A student has TWO exam contexts at once, not one: their school context
+ * (board + class, always present) and an optional competitive target. A
+ * Class 12 CBSE student preparing for NEET genuinely needs both — the old
+ * single-value buildExamType() forced a winner and picked the wrong one,
+ * which is why students who chose NEET were being served CBSE Class N
+ * content everywhere.
+ */
+
+// Onboarding stores UPPER_SNAKE board keys ('KERALA_STATE'); BOARDS holds the
+// display form ('Kerala State'). The old inline
+// `BOARDS.find(b => b.toUpperCase() === syllabus.toUpperCase())` compared
+// 'KERALA STATE' to 'KERALA_STATE' and never matched, so state-board students
+// resolved to no combo at all.
+const BOARD_KEY_ALIASES = {
+  KERALA_STATE: 'Kerala State',
+  NA:           null,
+};
+
+export function resolveBoard(syllabus) {
+  if (!syllabus) return null;
+  if (syllabus in BOARD_KEY_ALIASES) {
+    const alias = BOARD_KEY_ALIASES[syllabus];
+    return alias && BOARDS.includes(alias) ? alias : null;
   }
-  return base;
+  return BOARDS.find((b) => b.toUpperCase() === syllabus.toUpperCase()) ?? null;
+}
+
+// Competitive targets — everything that is NOT a board/school goal. 'NONE' is
+// the explicit "board exams only" value written by onboarding.
+const COMPETITIVE_TARGETS = new Set([
+  'NEET', 'JEE_MAIN', 'JEE_ADVANCED', 'BOTH', 'CUET', 'UPSC', 'SSC', 'OLYMPIAD',
+]);
+
+/**
+ * "CBSE Class 12" — the student's academic context.
+ * Falls back to the bare "Class 12" key when the board+class combo isn't in
+ * the catalog (e.g. a board that hasn't been added under Platform >
+ * Categories yet), so those students still get class-appropriate content
+ * instead of nothing at all. Null only when the class itself can't resolve.
+ */
+export function getSchoolExamType(profile) {
+  const cls = profile?.class_level;
+  if (!cls || !/^\d+$/.test(String(cls))) return null;   // e.g. 'REPEATER'
+  const board = resolveBoard(profile?.syllabus);
+  if (board && CATEGORIES[`${board} Class ${cls}`]) return `${board} Class ${cls}`;
+  return CATEGORIES[`Class ${cls}`] ? `Class ${cls}` : null;
+}
+
+/** "NEET" | "JEE Main" | null — the optional competitive target. */
+export function getCompetitiveExamType(profile) {
+  const target = profile?.target_exam;
+  if (!target || target === 'NONE') return null;
+  if (!COMPETITIVE_TARGETS.has(target)) return null;   // legacy CLASS_* → school goal
+  return normalizeExamType(target);
+}
+
+/**
+ * Every exam key this student's content may match, competitive first.
+ * Use for content FILTERS ("what may I see"); use the two helpers above
+ * directly when a surface is specifically school- or competitive-only.
+ */
+export function getExamContexts(profile) {
+  return [getCompetitiveExamType(profile), getSchoolExamType(profile)].filter(Boolean);
+}
+
+/**
+ * Legacy single-value resolver, kept so existing call sites keep working.
+ * Now prefers the COMPETITIVE target over the board+class combo — the
+ * reverse of the old behaviour, which discarded the student's stated goal.
+ * Prefer the explicit helpers above in new code.
+ */
+export function buildExamType(targetExam, syllabus, classLevel) {
+  const profile = { target_exam: targetExam, syllabus, class_level: classLevel };
+  return getCompetitiveExamType(profile)
+      ?? getSchoolExamType(profile)
+      ?? normalizeExamType(targetExam);
 }

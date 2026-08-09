@@ -105,7 +105,7 @@ export default function CoachingSettingsPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-6 max-w-2xl mx-auto">
       <div>
         <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
           <Settings size={20} className="text-slate-400" /> Centre Settings

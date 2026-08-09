@@ -11,6 +11,24 @@ function urlBase64ToUint8Array(b64url) {
   return Uint8Array.from(raw, c => c.charCodeAt(0));
 }
 
+const PUSH_SETUP_TIMEOUT_MS = 12000;
+
+// navigator.serviceWorker.ready never resolves if no service worker ever
+// registers (e.g. Batch 15: dev mode with vite-plugin-pwa's devOptions off),
+// and pushManager.subscribe() can in principle hang on a slow/unreachable
+// push service too — neither has a native timeout, so either one hanging
+// left requestPushPermission's caller stuck forever (NotificationSettings'
+// "Finishing setup…" state never resolving). Promise.race doesn't cancel the
+// underlying browser promise if it wins late, but that's fine here — it can
+// only resolve to a real registration/subscription with no listener left to
+// act on it, not cause any user-visible side effect.
+function withTimeout(promise, ms, message) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ]);
+}
+
 export async function requestPushPermission(firebaseUid) {
   if (!('Notification' in window))    return { granted: false, reason: 'not_supported' };
   if (!('serviceWorker' in navigator)) return { granted: false, reason: 'no_sw' };
@@ -21,11 +39,17 @@ export async function requestPushPermission(firebaseUid) {
   if (permission !== 'granted') return { granted: false, reason: 'denied' };
 
   try {
-    const registration = await navigator.serviceWorker.ready;
-    const subscription = await registration.pushManager.subscribe({
-      userVisibleOnly:      true,
-      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-    });
+    const registration = await withTimeout(
+      navigator.serviceWorker.ready, PUSH_SETUP_TIMEOUT_MS,
+      'Service worker did not become ready in time',
+    );
+    const subscription = await withTimeout(
+      registration.pushManager.subscribe({
+        userVisibleOnly:      true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      }),
+      PUSH_SETUP_TIMEOUT_MS, 'Push subscription did not complete in time',
+    );
     const { endpoint, keys } = subscription.toJSON();
     await savePushSubscription(firebaseUid, endpoint, keys.p256dh, keys.auth);
     return { granted: true, endpoint };
@@ -78,8 +102,8 @@ export function showLocalNotification(title, body, url = '/dashboard') {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   const n = new Notification(title, {
     body,
-    icon:  '/pwa-192x192.png',
-    badge: '/pwa-64x64.png',
+    icon:  '/icon-192.png',
+    badge: '/favicon-32.png',
     data:  { url },
   });
   n.onclick = () => { window.focus(); window.location.href = url; n.close(); };
@@ -209,4 +233,11 @@ export async function deleteNotification(notificationId) {
     .from('user_notifications')
     .delete()
     .eq('id', notificationId);
+}
+
+export async function deleteAllNotifications(firebaseUid) {
+  await supabase
+    .from('user_notifications')
+    .delete()
+    .eq('user_id', firebaseUid);
 }

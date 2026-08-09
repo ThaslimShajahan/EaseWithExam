@@ -190,7 +190,7 @@ async function seedNotifications() {
   if ('Notification' in window && Notification.permission === 'granted') {
     const n = new Notification('EaseWithExam — Test Data Seeded', {
       body: `${TEST_UIDS.length} dummy students ready in the dashboard.`,
-      icon: '/pwa-192x192.png',
+      icon: '/icon-192.png',
     });
     setTimeout(() => n.close(), 5000);
     return `${rows.length} notification pref rows upserted + local notification sent`;

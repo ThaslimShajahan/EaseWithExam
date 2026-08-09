@@ -32,7 +32,7 @@ const CORS = {
 // PLANS catalogue. Kept in sync manually since this function can't import client code.
 const PLAN_AMOUNTS_PAISE: Record<string, number> = {
   premium_monthly: 39900,
-  premium_yearly:  299900,
+  premium_yearly:  399900,
   neet_complete:   499900,
 };
 

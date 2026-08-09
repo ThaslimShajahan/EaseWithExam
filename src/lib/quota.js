@@ -59,6 +59,102 @@ const FIELD_TO_CONFIG = {
   paper_generations_used: 'paper_generations',
 };
 
+// Override, per-plan config, and effective-plan (coaching centre inheritance)
+// are identical for every field of a given user/plan — but getQuotaSnapshot
+// and checkQuota are called once PER FIELD (Sidebar and ProfilePage both
+// resolve all 6 FIELD_LABELS on mount), so without sharing, a single page
+// load fired 6x these 3 identical requests from each of 2 components x
+// React StrictMode's dev double-invoke = dozens of near-identical fetches
+// in one burst. Same shape as the earlier feature_flags over-fetching bug:
+// this data only changes via rare admin actions, so a short cache is safe —
+// unlike daily_usage_quota below, which is NEVER cached here (it's the one
+// thing that actually changes on every quota use, and staleness there would
+// be a real correctness bug, not just a performance one).
+const _ctxCache = new Map(); // `${uid}:${isPremium}:${plan}` -> { promise, ts }
+const CTX_TTL_MS = 15000;
+
+function getQuotaContext(firebaseUid, isPremium, plan) {
+  const key = `${firebaseUid}:${isPremium}:${plan}`;
+  const cached = _ctxCache.get(key);
+  if (cached && Date.now() - cached.ts < CTX_TTL_MS) return cached.promise;
+
+  // Wrap RPC in a try/catch because the RPC builder may not expose `.catch`
+  const planReq = (async () => {
+    try {
+      return await supabase.rpc('get_student_effective_plan', { p_uid: firebaseUid });
+    } catch (e) {
+      return { data: null };
+    }
+  })();
+
+  const promise = (async () => {
+    let effectivePlan = isPremium ? (plan && plan !== 'free' ? plan : 'premium_monthly') : 'free';
+    const [planRes, overrideRes] = await Promise.all([
+      planReq,
+      supabase.from('quota_overrides').select('*').eq('user_id', firebaseUid).maybeSingle(),
+    ]);
+    if (planRes?.data && planRes.data !== 'free') effectivePlan = planRes.data;
+    const { data: config } = await supabase.from('quota_config').select('*').eq('plan_id', effectivePlan).maybeSingle();
+    return { override: overrideRes.data, config };
+  })();
+
+  _ctxCache.set(key, { promise, ts: Date.now() });
+  return promise;
+}
+
+// Same over-fetching shape as getQuotaContext above, but for the actual usage
+// row: getQuotaSnapshot resolves all 6 FIELD_LABELS on mount, and 5 of them
+// are daily fields that all live in the SAME daily_usage_quota row — reading
+// the full row once and letting every field pull its own column out of it
+// replaces 5 separate `select(field)` requests with 1. Kept deliberately
+// short-lived (unlike the context cache) and explicitly invalidated by
+// incrementQuota below on every successful write, so a quota check made
+// right after an increment can never read a pre-increment cached count —
+// this is the one piece of quota data that's expected to change on almost
+// every action, so correctness here matters more than in getQuotaContext.
+const _usageCache = new Map();   // `${uid}:${today}`     -> { promise, ts } (full daily row)
+const _weeklyCache = new Map();  // `${uid}:${weekStart}` -> { promise, ts } (full week's rows)
+const USAGE_TTL_MS = 5000;
+
+function getDailyUsageRow(firebaseUid, today) {
+  const key = `${firebaseUid}:${today}`;
+  const cached = _usageCache.get(key);
+  if (cached && Date.now() - cached.ts < USAGE_TTL_MS) return cached.promise;
+  const promise = supabase.from('daily_usage_quota').select('*')
+    .eq('user_id', firebaseUid).eq('usage_date', today).maybeSingle()
+    .then(({ data }) => data);
+  _usageCache.set(key, { promise, ts: Date.now() });
+  return promise;
+}
+
+function getWeeklyUsageRows(firebaseUid, weekStart, today) {
+  const key = `${firebaseUid}:${weekStart}`;
+  const cached = _weeklyCache.get(key);
+  if (cached && Date.now() - cached.ts < USAGE_TTL_MS) return cached.promise;
+  const promise = supabase.from('daily_usage_quota').select('*')
+    .eq('user_id', firebaseUid).gte('usage_date', weekStart).lte('usage_date', today)
+    .then(({ data }) => data ?? []);
+  _weeklyCache.set(key, { promise, ts: Date.now() });
+  return promise;
+}
+
+// incrementQuota calls this on every successful write — override/config/plan
+// don't change from a usage increment, so only the usage rows need dropping.
+function invalidateUsageCache(uid) {
+  for (const key of _usageCache.keys())  if (key.startsWith(`${uid}:`)) _usageCache.delete(key);
+  for (const key of _weeklyCache.keys()) if (key.startsWith(`${uid}:`)) _weeklyCache.delete(key);
+}
+
+// Exposed for tests (isolating cache state between cases, where the same uid
+// is reused across cases with different mocked responses) and for any admin
+// action that changes a user's override/plan/usage mid-session and needs the
+// next quota read to reflect it immediately rather than waiting out the TTL.
+export function invalidateQuotaCache(uid) {
+  if (uid == null) { _ctxCache.clear(); _usageCache.clear(); _weeklyCache.clear(); return; }
+  for (const key of _ctxCache.keys()) if (key.startsWith(`${uid}:`)) _ctxCache.delete(key);
+  invalidateUsageCache(uid);
+}
+
 // Shared by checkQuota (gate) and getQuotaSnapshot (display-only, used by the
 // Profile page's usage panel) so the limit-resolution logic — overrides,
 // then per-plan config, then the hardcoded fallback — lives in one place.
@@ -66,29 +162,15 @@ async function resolveQuota(firebaseUid, field, isPremium, plan) {
   const today       = IST_DATE();
   const configField = FIELD_TO_CONFIG[field];
 
-  // Determine effective plan — check coaching centre inheritance via RPC
-  let effectivePlan = isPremium ? (plan && plan !== 'free' ? plan : 'premium_monthly') : 'free';
-
-  try {
-    const { data: centreplan } = await supabase.rpc('get_student_effective_plan', { p_uid: firebaseUid });
-    if (centreplan && centreplan !== 'free') effectivePlan = centreplan;
-  } catch { /* fall through to personal plan */ }
-
-  const planId = effectivePlan;
-
   const isWeekly = WEEKLY_FIELDS.has(field);
-  const usageQuery = isWeekly
-    ? supabase.from('daily_usage_quota').select(field).eq('user_id', firebaseUid).gte('usage_date', IST_WEEK_START()).lte('usage_date', today)
-    : supabase.from('daily_usage_quota').select(field).eq('user_id', firebaseUid).eq('usage_date', today).maybeSingle();
+  const usagePromise = isWeekly
+    ? getWeeklyUsageRows(firebaseUid, IST_WEEK_START(), today)
+    : getDailyUsageRow(firebaseUid, today);
 
-  const [overrideRes, configRes, usageRes] = await Promise.all([
-    supabase.from('quota_overrides').select('*').eq('user_id', firebaseUid).maybeSingle(),
-    supabase.from('quota_config').select('*').eq('plan_id', planId).maybeSingle(),
-    usageQuery,
+  const [{ override, config }, usageData] = await Promise.all([
+    getQuotaContext(firebaseUid, isPremium, plan),
+    usagePromise,
   ]);
-
-  const override = overrideRes.data;
-  const config   = configRes.data;
 
   let limit;
   const overrideVal = override?.[configField];
@@ -109,8 +191,8 @@ async function resolveQuota(firebaseUid, field, isPremium, plan) {
   // (incrementQuota always writes to TODAY's row regardless of period —
   // only the read side needs to know a field spans more than one day).
   const used = isWeekly
-    ? (usageRes.data ?? []).reduce((sum, row) => sum + (row?.[field] ?? 0), 0)
-    : (usageRes.data?.[field] ?? 0);
+    ? (usageData ?? []).reduce((sum, row) => sum + (row?.[field] ?? 0), 0)
+    : (usageData?.[field] ?? 0);
 
   return { used, limit };
 }
@@ -195,6 +277,11 @@ export async function incrementQuota(firebaseUid, field, amount = 1) {
         p_amount: amount,
       });
     }
+    // Must run before dispatching the event below — Sidebar/ProfilePage's
+    // 'ewe:quota-updated' listeners re-call getQuotaSnapshot immediately, and
+    // without invalidating first they'd get served the pre-increment row
+    // straight back out of the cache instead of the fresh count.
+    invalidateUsageCache(firebaseUid);
     // Sidebar's Usage & Limits panel (and anything else showing live quota
     // numbers) has no other way to know usage just changed — it only reads
     // on mount/when uid changes, so without this it stayed stale until a full

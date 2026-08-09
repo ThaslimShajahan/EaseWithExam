@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import {
   CreditCard, Loader2, Search, RefreshCw, TrendingUp, Users, IndianRupee, UserMinus,
 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabase, adminGetAllUsers } from '../lib/supabase';
 import { PLANS } from '../lib/subscription';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
@@ -44,7 +44,19 @@ export default function AdminSubscriptions() {
     setLoading(true);
     const { data, error } = await supabase.rpc('admin_list_subscriptions', { p_caller: callerUid });
     if (error) { console.error('Subscriptions RPC error:', error); setLoading(false); return; }
-    const rows = data ?? [];
+    // Join names/emails on. The table only stores user_id, so this screen
+    // showed a raw 28-char Firebase UID as the only identifier — unusable for
+    // deciding whose subscription you're about to downgrade.
+    let byUid = {};
+    try {
+      const users = await adminGetAllUsers(callerUid);
+      byUid = Object.fromEntries((users ?? []).map((u) => [u.firebase_uid, u]));
+    } catch { /* fall back to bare UIDs rather than failing the whole screen */ }
+    const rows = (data ?? []).map((r) => ({
+      ...r,
+      display_name: byUid[r.user_id]?.display_name ?? null,
+      email:        byUid[r.user_id]?.email ?? null,
+    }));
     setRows(rows);
     const total   = rows.length;
     const paid    = rows.filter(r => r.plan !== 'free').length;
@@ -76,6 +88,8 @@ export default function AdminSubscriptions() {
   const filtered = rows.filter(r =>
     !search ||
     r.user_id?.toLowerCase().includes(search.toLowerCase()) ||
+    r.display_name?.toLowerCase().includes(search.toLowerCase()) ||
+    r.email?.toLowerCase().includes(search.toLowerCase()) ||
     r.plan?.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -122,7 +136,7 @@ export default function AdminSubscriptions() {
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
               value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Search by UID or plan…"
+              placeholder="Search name, email or plan…"
               className="w-full bg-slate-700 border border-white/10 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-primary-500"
             />
           </div>
@@ -133,7 +147,7 @@ export default function AdminSubscriptions() {
           <table className="w-full text-sm">
             <thead className="border-b border-white/5 bg-slate-900/30">
               <tr>
-                {['User ID', 'Plan', 'Status', 'Starts', 'Expires', 'Paid', 'Payment ID', 'Actions'].map(h => (
+                {['Student', 'Plan', 'Status', 'Starts', 'Expires', 'Paid', 'Payment ID', 'Actions'].map(h => (
                   <th key={h} className="text-left px-4 py-3 text-slate-400 font-semibold text-xs whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -153,7 +167,12 @@ export default function AdminSubscriptions() {
                 </tr>
               ) : filtered.map(r => (
                 <tr key={r.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
-                  <td className="px-4 py-3 font-mono text-xs text-slate-300 max-w-[160px] truncate">{r.user_id}</td>
+                  <td className="px-4 py-3 max-w-[220px]">
+                    <p className="text-slate-200 text-xs font-medium truncate">
+                      {r.display_name || r.email || 'Unknown student'}
+                    </p>
+                    <p className="text-slate-500 text-[10px] truncate">{r.email && r.display_name ? r.email : r.user_id}</p>
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${planBadge(r.plan)}`}>
                       {PLANS?.[r.plan]?.name ?? r.plan}
@@ -204,7 +223,7 @@ export default function AdminSubscriptions() {
         open={!!confirmRow}
         onClose={() => setConfirmRow(null)}
         onConfirm={() => handleCancel(confirmRow)}
-        title={`Downgrade ${confirmRow?.user_id ?? 'this user'} to Free?`}
+        title={`Downgrade ${confirmRow?.display_name || confirmRow?.email || confirmRow?.user_id || 'this user'} to Free?`}
         description={`This immediately ends their ${confirmRow ? (PLANS?.[confirmRow.plan]?.name ?? confirmRow.plan) : ''} access — they'll drop to free-plan daily limits right away. This does not process any refund in Razorpay.`}
         confirmLabel="Downgrade to Free"
         loading={cancelling}

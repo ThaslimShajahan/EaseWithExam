@@ -43,18 +43,22 @@ export default function BottomNav() {
                 whileTap={{ scale: 0.92 }}
                 className="relative flex flex-col items-center justify-center h-full gap-0.5 pt-1"
               >
-                {isActive && (
+                <div className="flex items-center justify-center">
+                  <Icon
+                    size={20}
+                    className={isActive ? 'text-primary-600' : 'text-slate-400'}
+                    strokeWidth={isActive ? 2.2 : 1.8}
+                  />
+                </div>
+                {isActive ? (
                   <motion.div
                     layoutId="bottom-nav-active"
-                    className="absolute top-1.5 h-1 w-5 rounded-full bg-primary-600"
+                    className="h-1 w-5 rounded-full bg-primary-600 mt-1"
                     transition={{ type: 'spring', stiffness: 500, damping: 35 }}
                   />
+                ) : (
+                  <div className="h-1 w-5 mt-1 opacity-0" />
                 )}
-                <Icon
-                  size={20}
-                  className={isActive ? 'text-primary-600' : 'text-slate-400'}
-                  strokeWidth={isActive ? 2.2 : 1.8}
-                />
                 <span className={`text-[10px] font-semibold ${isActive ? 'text-primary-600' : 'text-slate-400'}`}>
                   {label}
                 </span>

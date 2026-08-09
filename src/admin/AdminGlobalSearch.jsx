@@ -34,12 +34,15 @@ const QUICK_LINKS = [
 async function runSearch(q) {
   if (!q.trim()) return [];
   const term = `%${q.trim()}%`;
+  function getCallerUid() {
+    try {
+      const key = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
+      return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+    } catch { return ''; }
+  }
 
   const [tests, notes, questions] = await Promise.all([
-    supabase.from('published_tests')
-      .select('id, title, subject, exam_type')
-      .ilike('title', term)
-      .limit(5),
+    supabase.rpc('admin_search_published_tests', { p_caller: getCallerUid(), p_query: q.trim(), p_limit: 5 }).then((r) => ({ data: r.data })),
     supabase.from('study_notes')
       .select('id, title, subject, exam_type')
       .ilike('title', term)

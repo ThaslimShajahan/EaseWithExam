@@ -22,7 +22,6 @@ const BASE_COMPARE = [
   { label: 'Score predictor',         free: false,      premium: true        },
   { label: 'Deep chapter notes',      free: false,      premium: true        },
   { label: 'Progress certificates',   free: false,      premium: true        },
-  { label: 'Referral bonuses',        free: false,      premium: true        },
   { label: 'Priority support',        free: false,      premium: true        },
 ];
 
@@ -88,6 +87,21 @@ function PlanCard({ planId, plan: planProp, highlight, onSelect, loading, isCurr
           {isFree ? <Zap size={12} /> : <Crown size={12} />}
           {plan.name}
         </div>
+        {/* Exam coverage chips — Competitive Exams plan only (see examChips
+            in lib/subscription.js). Reuses the app's existing .badge pill
+            utility rather than a one-off chip style. */}
+        {plan.examChips?.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-3">
+            {plan.examChips.map((exam) => (
+              <span
+                key={exam}
+                className={`badge ${highlight ? 'bg-white/15 text-white' : 'bg-primary-50 text-primary-700 border border-primary-100'}`}
+              >
+                {exam}
+              </span>
+            ))}
+          </div>
+        )}
         <div className="flex items-end gap-1">
           <span className={`text-3xl font-extrabold ${highlight ? 'text-white' : 'text-slate-900'}`}>
             {plan.priceLabel.split('/')[0]}
@@ -98,21 +112,32 @@ function PlanCard({ planId, plan: planProp, highlight, onSelect, loading, isCurr
             </span>
           )}
         </div>
+        {/* Secondary fine print, deliberately not competing with the price
+            number above (task requirement) — Free has no priceSuffix. */}
+        {plan.priceSuffix && (
+          <p className={`text-[11px] mt-0.5 ${highlight ? 'text-primary-200' : 'text-slate-400'}`}>
+            {plan.priceSuffix}
+          </p>
+        )}
         <p className={`text-sm mt-1 ${highlight ? 'text-primary-200' : 'text-slate-500'}`}>
           {plan.description}
         </p>
       </div>
 
-      <div className={`space-y-2 mb-6 flex-1 border-t pt-4 ${highlight ? 'border-white/20' : 'border-slate-100'}`}>
+      {/* Tighter row spacing/line-height (was space-y-2 + text-sm default
+          leading, no size step-down) — with 8-10 features per paid plan,
+          that default spacing was the main driver of card height, not the
+          outer padding. */}
+      <div className={`space-y-1.5 mb-5 flex-1 border-t pt-3.5 ${highlight ? 'border-white/20' : 'border-slate-100'}`}>
         {plan.features.map((f) => (
-          <div key={f} className="flex items-start gap-2 text-sm">
-            <Check size={14} className={`mt-0.5 shrink-0 ${highlight ? 'text-primary-200' : 'text-emerald-500'}`} />
+          <div key={f} className="flex items-start gap-1.5 text-[13px] leading-snug">
+            <Check size={12} className={`mt-0.5 shrink-0 ${highlight ? 'text-primary-200' : 'text-emerald-500'}`} />
             <span className={highlight ? 'text-primary-100' : 'text-slate-600'}>{f}</span>
           </div>
         ))}
         {plan.locked?.map((f) => (
-          <div key={f} className="flex items-start gap-2 text-sm opacity-50">
-            <X size={14} className="mt-0.5 shrink-0 text-slate-400" />
+          <div key={f} className="flex items-start gap-1.5 text-[13px] leading-snug opacity-50">
+            <X size={12} className="mt-0.5 shrink-0 text-slate-400" />
             <span className="text-slate-400 line-through">{f}</span>
           </div>
         ))}
@@ -269,7 +294,7 @@ export default function PricingPage() {
         {/* FAQ */}
         <div className="mt-12 text-center text-slate-500 text-sm">
           <p>Questions? Email us at <a href="mailto:info@acenzos.com" className="text-primary-600 hover:underline">info@acenzos.com</a></p>
-          <p className="mt-1">Payments secured by Razorpay · GST included · Refund within 7 days if unhappy.</p>
+          <p className="mt-1">Payments secured by Razorpay · Prices exclude GST · Refund within 7 days if unhappy.</p>
         </div>
       </div>
     </div>

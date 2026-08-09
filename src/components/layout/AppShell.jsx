@@ -25,8 +25,19 @@ function AppShellLayout({ children }) {
     );
   }
 
+  // `h-dvh` (not `min-h-screen`) + `overflow-hidden` is deliberate — it's what
+  // makes `<main>` an actually-bounded scroll container instead of an inert
+  // `overflow-y-auto` that never triggers because its `min-h-screen` ancestor
+  // just grows to fit content (confirmed live: main.scrollHeight ===
+  // main.clientHeight on mobile before this fix, meaning the WINDOW was
+  // scrolling instead). That's what let content get cut off/overlap sticky
+  // per-page headers below TopHeader — those stick relative to whatever
+  // ancestor actually scrolls, which was silently the window, not `<main>`.
+  // `dvh` over `vh` additionally avoids the classic mobile-Safari bug where
+  // `100vh` is sized to the browser chrome's collapsed state, taller than
+  // the viewport actually visible on load.
   return (
-    <div className="flex flex-col min-h-screen bg-slate-50">
+    <div className="flex flex-col h-dvh bg-slate-50 overflow-hidden">
       <TopHeader mobile />
       <main className="flex-1 overflow-y-auto" style={{ paddingBottom: 'calc(65px + env(safe-area-inset-bottom))' }}>
         {children}

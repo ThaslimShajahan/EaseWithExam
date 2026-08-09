@@ -22,32 +22,58 @@ const PAD = [
 ];
 
 /* ── Passcode verify (existing admins) ──────────────────────── */
-function PasscodeScreen({ passcodeHash, onSuccess }) {
+// Verification happens SERVER-SIDE via admin_verify_passcode. Previously
+// get_admin_record handed the stored hash to the browser and this component
+// compared it locally — which meant (a) the hash leaked to any anon caller,
+// and a 6-digit space brute-forces offline in milliseconds, and (b) there was
+// no attempt limit. The client now only ever learns pass/fail.
+function PasscodeScreen({ uid, onSuccess }) {
   const [digits, setDigits] = useState('');
   const [shake,  setShake]  = useState(false);
   const [wrong,  setWrong]  = useState(false);
+  const [msg,    setMsg]    = useState('');
+  const [busy,   setBusy]   = useState(false);
+
+  const fail = (message) => {
+    setShake(true); setWrong(true); setMsg(message);
+    setTimeout(() => { setDigits(''); setShake(false); setWrong(false); }, 900);
+  };
 
   const press = async (k) => {
-    if (shake) return;
+    if (shake || busy) return;
     if (k === 'del') { setDigits((d) => d.slice(0, -1)); return; }
     if (digits.length >= 6) return;
 
     const next = digits + k;
     setDigits(next);
+    if (next.length < 6) return;
 
-    if (next.length === 6) {
-      const inputHash = await sha256hex(next);
-      if (inputHash === passcodeHash) {
+    setBusy(true);
+    try {
+      const { data, error } = await supabase.rpc('admin_verify_passcode', {
+        p_uid: uid, p_hash: await sha256hex(next),
+      });
+      if (error) { fail('Could not verify — try again'); return; }
+
+      if (data?.ok) {
         sessionStorage.setItem(SESSION_KEY, '1');
         setTimeout(onSuccess, 250);
-      } else {
-        setShake(true); setWrong(true);
-        setTimeout(() => { setDigits(''); setShake(false); setWrong(false); }, 900);
+        return;
       }
+      if (data?.reason === 'locked') {
+        const mins = Math.max(1, Math.ceil((new Date(data.locked_until) - Date.now()) / 60000));
+        fail(`Too many attempts — locked for ${mins} more minute${mins === 1 ? '' : 's'}`);
+        return;
+      }
+      fail(data?.attempts_left != null
+        ? `Incorrect passcode — ${data.attempts_left} attempt${data.attempts_left === 1 ? '' : 's'} left`
+        : 'Incorrect passcode — try again');
+    } finally {
+      setBusy(false);
     }
   };
 
-  return <PinPad title="Admin Portal" subtitle="Enter your 6-digit passcode" digits={digits} shake={shake} wrong={wrong} wrongMsg="Incorrect passcode — try again" onPress={press} />;
+  return <PinPad title="Admin Portal" subtitle="Enter your 6-digit passcode" digits={digits} shake={shake} wrong={wrong} wrongMsg={msg || 'Incorrect passcode — try again'} onPress={press} saving={busy} />;
 }
 
 /* ── First-time passcode setup ──────────────────────────────── */
@@ -93,13 +119,13 @@ function SetPasscodeScreen({ uid, onSuccess, onAlreadySet }) {
         // passcode already exists (e.g. an earlier attempt succeeded but this session's
         // cached record was stale). Re-check the real record before showing a dead-end error.
         const { data: rec } = await supabase.rpc('get_admin_record', { p_uid: uid });
-        if (rec?.passcode_hash) { onAlreadySet(rec.passcode_hash); return; }
+        if (rec?.has_passcode) { onAlreadySet(); return; }
         setErr('Could not save passcode. Run the latest migration in Supabase.');
         setSaving(false);
         return;
       }
       sessionStorage.setItem(SESSION_KEY, '1');
-      onSuccess(hash);
+      onSuccess();
     } catch (e) { setErr(e.message); setSaving(false); }
   };
 
@@ -231,10 +257,10 @@ export default function AdminGuard({ children }) {
     const cached   = sessionStorage.getItem(cacheKey);
     if (cached) {
       const rec = JSON.parse(cached);
-      // Entries written before passcode_hash was cached lack the key entirely (distinct
-      // from a genuine first-time admin, whose cached value is `null`) — treat as stale
-      // and re-fetch rather than getting stuck showing first-time setup forever.
-      if ('passcode_hash' in rec) {
+      // Entries cached before the hash stopped being returned still carry the
+      // old `passcode_hash` key — treat those as stale and re-fetch, so an
+      // admin mid-session doesn't keep a leaked hash sitting in sessionStorage.
+      if ('has_passcode' in rec && !('passcode_hash' in rec)) {
         sessionStorage.setItem(ROLE_KEY, rec.role);
         setAdminRecord(rec);
         setChecking(false);
@@ -246,7 +272,7 @@ export default function AdminGuard({ children }) {
     supabase.rpc('get_admin_record', { p_uid: currentUser.uid })
       .then(({ data }) => {
         if (data) {
-          const rec = { uid: data.uid, role: data.role, name: data.name, passcode_hash: data.passcode_hash };
+          const rec = { uid: data.uid, role: data.role, name: data.name, has_passcode: !!data.has_passcode };
           sessionStorage.setItem(cacheKey, JSON.stringify(rec));
           sessionStorage.setItem(ROLE_KEY, rec.role);
           setAdminRecord(rec);
@@ -270,26 +296,27 @@ export default function AdminGuard({ children }) {
   if (!adminRecord) return <Navigate to="/admin/login" replace />;
 
   // First-time: no passcode set yet → setup screen
-  if (!adminRecord.passcode_hash) {
-    const applyHash = (hash) => {
-      const rec = { ...adminRecord, passcode_hash: hash };
+  if (!adminRecord.has_passcode) {
+    const markSet = () => {
+      const rec = { ...adminRecord, has_passcode: true };
       sessionStorage.setItem(`edu_admin_rec_${adminRecord.uid}`, JSON.stringify(rec));
       setAdminRecord(rec);
     };
     return (
       <SetPasscodeScreen
         uid={adminRecord.uid}
-        onSuccess={applyHash}
-        onAlreadySet={applyHash}
+        onSuccess={markSet}
+        onAlreadySet={markSet}
       />
     );
   }
 
-  // Passcode verify
+  // Passcode verify — the entered code is checked server-side; this component
+  // never sees the stored hash.
   if (!authed) {
     return (
       <PasscodeScreen
-        passcodeHash={adminRecord.passcode_hash}
+        uid={adminRecord.uid}
         onSuccess={() => setAuthed(true)}
       />
     );

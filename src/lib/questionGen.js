@@ -3,6 +3,7 @@ import { getTopicFrequency } from './supabase';
 import { chatComplete, embedText } from './aiProxy';
 import { getFeatureFlag, FLAGS } from './featureFlags';
 import { getChapters } from './syllabus';
+import { attachDiagrams } from './diagrams';
 // getExamPattern() checks admin-uploaded paper_templates overrides before
 // falling back to PAPER_PATTERNS below (see examPattern.js) — this IS a
 // circular import (examPattern.js imports PAPER_PATTERNS back from this
@@ -1040,6 +1041,17 @@ MATCH THE FOLLOWING — mandatory shape, options must NEVER be null for this typ
     }
   }
 
+  // Turn every "diagram_description" into an actual figure. Physics ray
+  // diagrams, Chemistry bonding structures and Maths geometry questions are
+  // unanswerable without one, and printing the description as literal text
+  // ("[Figure: a parallelogram with two pairs of parallel sides]") is not a
+  // usable paper. Never throws and never blocks the result — a question whose
+  // figure fails keeps its description, and the render sites fall back to it.
+  let diagramCount = 0;
+  try {
+    diagramCount = await attachDiagrams(allQuestions, { signal });
+  } catch { /* figures are enrichment, not a reason to lose the paper */ }
+
   return {
     questions:           allQuestions,
     blueprint_match_pct: blueprintMatchPct,
@@ -1048,6 +1060,7 @@ MATCH THE FOLLOWING — mandatory shape, options must NEVER be null for this typ
       pyqCount:            pyqExamples.length,
       studyNotesCount:     studyNotes.length,
       verbatimPassageCount: verbatimPassages.length,
+      diagramCount,
     },
   };
 }

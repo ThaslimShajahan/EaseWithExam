@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { mapAuthError } from '../../lib/authErrors';
 import Button from '../ui/Button';
 
 export default function GoogleSignIn({ onError }) {
@@ -11,7 +12,8 @@ export default function GoogleSignIn({ onError }) {
     try {
       await signInWithGoogle();
     } catch (err) {
-      onError?.(err.message || 'Google sign-in failed. Please try again.');
+      const msg = mapAuthError(err);
+      if (msg) onError?.(msg);
     } finally {
       setLoading(false);
     }

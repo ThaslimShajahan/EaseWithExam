@@ -28,7 +28,7 @@ export default function TopHeader({ mobile = false }) {
   };
 
   return (
-    <header className="sticky top-0 z-40">
+    <header className="sticky top-0 z-40 bg-white" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
       <div className="h-[3px] bg-gradient-to-r from-primary-500 via-violet-500 to-primary-500" />
       <div className={`bg-gradient-to-r from-primary-50/50 via-white/90 to-violet-50/50 backdrop-blur-xl border-b border-primary-100/50 shadow-header flex items-center gap-3 px-4 lg:px-6 ${mobile ? 'h-14' : 'h-16'}`}>
 
@@ -70,7 +70,7 @@ export default function TopHeader({ mobile = false }) {
           <div ref={menuRef} className="relative">
             <button
               onClick={() => setMenuOpen((v) => !v)}
-              className="flex items-center gap-2 h-9 px-2 rounded-xl hover:bg-slate-100 transition-colors"
+              className="flex items-center gap-2 h-11 px-2 rounded-xl hover:bg-slate-100 transition-colors"
             >
               {avatar ? (
                 <img src={avatar} alt={name} className="h-7 w-7 rounded-full object-cover" />

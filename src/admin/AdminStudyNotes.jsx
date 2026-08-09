@@ -518,6 +518,28 @@ export default function AdminStudyNotes() {
     setNotes(ns => ns.map(n => n.id === note.id ? { ...n, is_published: !n.is_published } : n));
   }
 
+  // Applies to whatever the current search/board/class/subject filters
+  // resolve to (`filtered`) — with 668+ notes, requiring the admin to
+  // individually toggle each one to make a batch visible was the actual
+  // reported problem; this covers a filtered-down batch of any size in one
+  // request instead of N.
+  const [bulkUpdating, setBulkUpdating] = useState(false);
+  async function bulkSetPublished(published) {
+    const ids = filtered.map(n => n.id);
+    if (!ids.length) return;
+    setBulkUpdating(true);
+    const { data, error } = await supabase.rpc('admin_bulk_set_study_notes_published', {
+      p_caller: callerUid, p_ids: ids, p_published: published,
+    });
+    setBulkUpdating(false);
+    if (error) return;
+    logChange(ENTITY.STUDY_NOTE, 'bulk', ACTION.UPDATE,
+      { after: { is_published: published, count: ids.length } },
+      `Admin bulk ${published ? 'published' : 'unpublished'} ${ids.length} study notes`);
+    const idSet = new Set(ids);
+    setNotes(ns => ns.map(n => idSet.has(n.id) ? { ...n, is_published: published } : n));
+  }
+
   async function handleDelete(note) {
     setDeleting(true);
     setConfirmNote(null);
@@ -645,6 +667,22 @@ export default function AdminStudyNotes() {
           ))}
         </div>
       </div>
+
+      {!loading && filtered.length > 0 && (
+        <div className="flex items-center gap-2 bg-slate-900/60 rounded-xl border border-white/8 px-3 py-2">
+          <p className="text-xs text-slate-400 mr-auto">
+            <span className="text-white font-bold">{filtered.length}</span> note{filtered.length === 1 ? '' : 's'} match{filtered.length === 1 ? 'es' : ''} this filter
+          </p>
+          <button onClick={() => bulkSetPublished(true)} disabled={bulkUpdating}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-emerald-400 hover:bg-emerald-900/20 disabled:opacity-50 transition-colors">
+            {bulkUpdating ? <Loader2 size={12} className="animate-spin" /> : <Eye size={12} />} Make All Visible
+          </button>
+          <button onClick={() => bulkSetPublished(false)} disabled={bulkUpdating}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:bg-white/5 disabled:opacity-50 transition-colors">
+            {bulkUpdating ? <Loader2 size={12} className="animate-spin" /> : <EyeOff size={12} />} Hide All
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="bg-slate-900/60 rounded-2xl border border-white/8 p-8 flex justify-center"><Loader2 size={20} className="animate-spin text-primary-500" /></div>

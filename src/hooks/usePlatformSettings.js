@@ -5,6 +5,9 @@ const DEFAULTS = {
   platform_name:          'EaseWithExam',
   platform_tagline:       'AI-powered prep for NEET, JEE, CBSE, Class 8–12, UPSC & more — mock tests, EWE doubt clearing, and deep analytics.',
   platform_logo_url:      '',
+  // Optional face for the EWE persona in chat. Empty = fall back to the brand
+  // logo (see components/ui/VedaAvatar.jsx).
+  ewe_avatar_url:         '',
   cookie_banner_enabled:  'false',
   cookie_banner_text:     'We use cookies to improve your experience. By continuing, you agree to our use of cookies.',
 };

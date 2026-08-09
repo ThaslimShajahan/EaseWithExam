@@ -325,7 +325,7 @@ export default function ErrorNotebookPage() {
   }
 
   return (
-    <div className="space-y-5 p-4 lg:p-0 max-w-2xl">
+    <div className="space-y-5 p-4 lg:p-0 max-w-2xl mx-auto">
       <HubPageHeader
         icon={BookMarked}
         title="Error Notebook"

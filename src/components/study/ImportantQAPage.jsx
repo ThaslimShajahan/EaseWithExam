@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Star, Sparkles, Calendar, ChevronRight, ChevronLeft, ChevronDown, Loader2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { buildExamType } from '../../lib/categories';
+import { buildExamType, getSchoolExamType } from '../../lib/categories';
 import { useSyllabusSubjects } from '../../hooks/useSyllabusSubjects';
 import { getStudyChapters } from '../../lib/syllabus';
 import { getCachedImportantQA, generateImportantQA } from '../../lib/questionGen';
@@ -137,7 +137,10 @@ function ChapterList({ examType, subject, classLevel, onSelect }) {
  */
 export default function ImportantQAPage() {
   const { currentUser, userProfile, isPremium, subscription } = useAuth();
-  const examType   = buildExamType(userProfile?.target_exam, userProfile?.syllabus, userProfile?.class_level);
+  // School context — chapter-level Q&A is board/class content, so a Class 12
+  // NEET student should still get their board chapters here rather than 'NEET'.
+  const examType   = getSchoolExamType(userProfile)
+    ?? buildExamType(userProfile?.target_exam, userProfile?.syllabus, userProfile?.class_level);
   const classLevel = userProfile?.class_level;
   const subjects   = useSyllabusSubjects(examType, classLevel);
 

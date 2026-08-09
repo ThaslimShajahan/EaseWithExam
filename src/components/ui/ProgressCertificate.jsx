@@ -113,9 +113,12 @@ export default function ProgressCertificate({ sessions, studentName, examLabel }
           <Award size={16} className="text-slate-400" />
           <h3 className="font-semibold text-slate-900">Progress Certificates</h3>
         </div>
-        <div className="text-center py-6 text-slate-400 text-sm">
-          <Award size={28} className="mx-auto mb-2 opacity-30" />
-          Complete your first mock test to earn a certificate
+        <div className="text-center py-8">
+          <div className="h-14 w-14 rounded-2xl bg-slate-50 border border-slate-100 flex items-center justify-center mx-auto mb-3">
+            <Award size={24} className="text-slate-300" />
+          </div>
+          <p className="text-sm font-medium text-slate-600">No certificates yet</p>
+          <p className="text-xs text-slate-400 mt-1">Complete your first mock test to earn one — {MILESTONES.length} to unlock in total</p>
         </div>
       </motion.div>
     );
@@ -149,10 +152,16 @@ export default function ProgressCertificate({ sessions, studentName, examLabel }
       initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
     >
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-semibold text-slate-900 flex items-center gap-2">
-          <Award size={16} className="text-amber-500" /> Certificates Earned
-        </h3>
-        <span className="text-xs text-emerald-600 font-semibold bg-emerald-50 px-2 py-0.5 rounded-full">
+        <div className="flex items-center gap-2.5">
+          <div className="h-9 w-9 rounded-xl bg-amber-50 flex items-center justify-center shrink-0">
+            <Award size={16} className="text-amber-500" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-slate-900 leading-tight">Certificates Earned</h3>
+            <p className="text-[11px] text-slate-400">{milestones.length} of {MILESTONES.length} unlocked</p>
+          </div>
+        </div>
+        <span className="text-xs text-emerald-700 font-semibold bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-full shrink-0">
           {milestones.length} earned
         </span>
       </div>
@@ -164,9 +173,9 @@ export default function ProgressCertificate({ sessions, studentName, examLabel }
             key={m.id}
             onClick={() => setSelected(m)}
             className={[
-              'flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border-2 transition-all',
+              'flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border-2 transition-all',
               selected?.id === m.id
-                ? 'border-primary-400 bg-primary-50 text-primary-700'
+                ? 'border-primary-400 bg-primary-50 text-primary-700 shadow-sm'
                 : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
             ].join(' ')}
           >
@@ -178,16 +187,30 @@ export default function ProgressCertificate({ sessions, studentName, examLabel }
       {/* Preview card */}
       {selected && (
         <div
-          className="relative rounded-2xl p-5 text-center overflow-hidden mb-4"
+          className="relative rounded-2xl p-6 text-center overflow-hidden mb-4"
           style={{ background: `linear-gradient(135deg, ${selected.color}18 0%, ${selected.color}08 100%)`,
                    border: `2px solid ${selected.color}30` }}
         >
-          <p className="text-4xl mb-2">{selected.icon}</p>
-          <p className="font-bold text-slate-900 text-base">{selected.label}</p>
+          {/* Faint oversized icon watermark, echoing the actual downloadable
+              certificate's own watermark treatment — gives this preview
+              some of the same "this is a real certificate" weight instead
+              of reading as a plain info box. */}
+          <p aria-hidden className="absolute -top-3 -right-2 text-7xl opacity-[0.08] rotate-12 pointer-events-none select-none">
+            {selected.icon}
+          </p>
+
+          <div
+            className="h-16 w-16 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-sm"
+            style={{ background: `${selected.color}1f`, border: `2px solid ${selected.color}40` }}
+          >
+            <p className="text-3xl leading-none">{selected.icon}</p>
+          </div>
+          <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: selected.color }}>Certificate Earned</p>
+          <p className="font-bold text-slate-900 text-lg mt-1">{selected.label}</p>
           <p className="text-xs text-slate-500 mt-1">EaseWithExam · {new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}</p>
-          <div className="flex items-center justify-center gap-1 mt-2">
+          <div className="flex items-center justify-center gap-1 mt-3">
             {[...Array(5)].map((_, i) => (
-              <Star key={i} size={10} className="fill-amber-400 text-amber-400" />
+              <Star key={i} size={11} className="fill-amber-400 text-amber-400" />
             ))}
           </div>
         </div>

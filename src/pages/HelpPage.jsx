@@ -7,6 +7,7 @@ import {
   ArrowRight, CheckCircle2, Play, MessageCircle, Users,
   Sparkles, HelpCircle, ExternalLink,
 } from 'lucide-react';
+import { FAQ_FLAT } from '../lib/landingContent';
 
 /* ─── Data ──────────────────────────────────────────────────────────── */
 const FEATURES = [
@@ -91,43 +92,12 @@ const XP_TABLE = [
   { action: 'Flashcard study session',  xp: 3,  icon: Layers },
 ];
 
-const FAQ = [
-  {
-    q: 'How does the daily quota work?',
-    a: 'Free accounts get 15 AI questions, 20 EWE messages, and 3 mock tests per day. Premium accounts have no limits. Your usage resets at midnight IST. Admins can also set per-student custom limits.',
-    tag: 'Quota',
-  },
-  {
-    q: 'What is XP and how do I earn it?',
-    a: 'XP (Experience Points) is your progress score. Earn XP for correct answers, mock tests, daily challenges, EWE sessions, and flashcard study. Higher XP unlocks higher levels.',
-    tag: 'XP',
-  },
-  {
-    q: 'How does spaced repetition work in flashcards?',
-    a: 'Cards you know well appear less often; cards you struggle with come back sooner. EaseWithExam uses the SM-2 algorithm (the same as Anki) to maximise retention while minimising study time.',
-    tag: 'Flashcards',
-  },
-  {
-    q: 'How do I track my weak topics?',
-    a: 'Every question you answer is logged. Topics where your accuracy drops below 60% are flagged as weak. They appear in the Weak Topics widget on your dashboard and in Analytics.',
-    tag: 'Analytics',
-  },
-  {
-    q: 'Can my parents monitor my progress?',
-    a: 'Yes — go to Profile and share your Parent Link. Parents can view your streak, recent scores, and weekly progress without logging in. Your detailed answers and notes remain private.',
-    tag: 'Parents',
-  },
-  {
-    q: 'How is my score predicted?',
-    a: 'The Score Predictor uses your historical accuracy, weak topic list, and remaining days to estimate your likely score range. It improves as you take more tests.',
-    tag: 'Analytics',
-  },
-  {
-    q: 'What happens if I miss a day?',
-    a: 'Your streak resets to 0 if you have no activity that day. However, your XP, level, and all historical data stay untouched. Streaks refresh at midnight IST.',
-    tag: 'Streak',
-  },
-];
+// FAQ now comes from src/lib/landingContent.js, shared with the public landing
+// page. The copy that used to live here claimed "15 AI questions, 20 EWE
+// messages, and 3 mock tests per day" — all three numbers were wrong (real:
+// 20, 15, and 2 mock tests per WEEK) and had drifted from FREE_LIMITS. The
+// shared version interpolates them from that constant so it cannot drift again.
+const FAQ = FAQ_FLAT;
 
 const QUICK_ACTIONS = [
   { icon: Brain,       label: 'Ask EWE',         desc: 'AI doubt solver',      route: '/doubt',            color: 'from-violet-500 to-purple-600' },
@@ -246,7 +216,7 @@ export default function HelpPage() {
   }, [faqQuery]);
 
   return (
-    <div className="space-y-8 p-4 lg:p-0 max-w-3xl">
+    <div className="space-y-8 p-4 lg:p-0 max-w-3xl mx-auto">
 
       {/* ── Hero header ── */}
       <div className="bg-gradient-to-br from-primary-500 to-primary-800 rounded-3xl p-6 text-white space-y-4">

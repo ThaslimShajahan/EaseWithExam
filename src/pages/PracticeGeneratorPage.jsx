@@ -16,7 +16,7 @@ import { awardXP } from '../lib/gamification';
 import { createNotification } from '../lib/notifications';
 import MathText from '../components/ui/MathText';
 import PaywallModal from '../components/ui/PaywallModal';
-import { getSubjectsForExam, normalizeExamType, buildExamType, EXAM_TYPE_GROUPS, BOARDS, CLASS_LEVELS, EXAM_TAG_RE, examTypeToTag } from '../lib/categories';
+import { getSubjectsForExam, normalizeExamType, buildExamType, getExamLabel, EXAM_TYPE_GROUPS, BOARDS, CLASS_LEVELS, isExamTag, examTypeToTag } from '../lib/categories';
 import { useSyllabusSubjects } from '../hooks/useSyllabusSubjects';
 import { getFeatureFlag, FLAGS } from '../lib/featureFlags';
 import { saveWrongAnswers, saveCorrectAnswers } from '../lib/errorNotebook';
@@ -106,7 +106,7 @@ function ChapterBrowser({ examType, classLevel, subject, onSelect }) {
       // tags mix real topic tags with exam/class classification tags (e.g.
       // "cbse_class_8") and the bare subject name — exclude both, keep topics only.
       const fromKB = (kb.data ?? []).flatMap((r) => r.tags ?? []).filter(
-        (t) => t && t !== subject && !EXAM_TAG_RE.test(t)
+        (t) => t && t !== subject && !isExamTag(t)
       );
       const all = [...new Set([...fromSyllabus, ...fromPYQ, ...fromKB])].sort();
       setChapters(all);
@@ -131,7 +131,7 @@ function ChapterBrowser({ examType, classLevel, subject, onSelect }) {
               </span>
             )}
             {!loading && chapters.length === 0 && (
-              <span className="text-xs text-slate-400">No chapters found for {examType} {subject} yet.</span>
+              <span className="text-xs text-slate-400">No chapters found for {getExamLabel(examType)} {subject} yet.</span>
             )}
             {!loading && chapters.map((ch) => (
               <button key={ch} onClick={() => { onSelect(ch); setOpen(false); }}
@@ -196,7 +196,7 @@ function ConfigForm({ subject, setSubject, examType, setExamType, topic, setTopi
           <Star size={12} className="text-primary-500 shrink-0" />
           <div className="text-xs text-primary-700">
             <span className="font-semibold">Locked to your profile: </span>
-            <span className="font-bold">{examType}</span>
+            <span className="font-bold">{getExamLabel(examType)}</span>
           </div>
         </div>
       ) : (
@@ -859,7 +859,7 @@ export default function PracticeGeneratorPage({ embedded = false }) {
       skipped:        0,
       question_count: questions.length,
       exam_type:      userProfile?.target_exam || null,
-    }).catch(console.error);
+    }).catch((err) => { if (import.meta.env.DEV) console.error(err); });
     createNotification(
       currentUser.uid,
       'practice_complete',
@@ -963,7 +963,7 @@ export default function PracticeGeneratorPage({ embedded = false }) {
   const hasProfileExam = !!(userProfile?.target_exam || userProfile?.syllabus || userProfile?.class_level);
 
   return (
-    <div className={`space-y-5 ${embedded ? '' : 'p-4 lg:p-0 max-w-xl mx-auto lg:mx-0'}`}>
+    <div className={`space-y-5 ${embedded ? '' : 'p-4 lg:p-0 max-w-xl mx-auto'}`}>
       {showPaywall && (
         <PaywallModal
           onClose={() => setShowPaywall(false)}
@@ -1057,7 +1057,7 @@ export default function PracticeGeneratorPage({ embedded = false }) {
                     ? <><Loader2 size={18} className="animate-spin" /> Generating {count} questions…</>
                     : <><Sparkles size={18} /> Generate Questions</>}
                 </button>
-                <p className="text-[10px] text-slate-400 text-center">Follows real {examType} paper pattern · equations rendered in LaTeX · ~15–25 sec</p>
+                <p className="text-[10px] text-slate-400 text-center">Follows real {getExamLabel(examType)} paper pattern · equations rendered in LaTeX · ~15–25 sec</p>
               </ConfigForm>
             </motion.div>
           )}

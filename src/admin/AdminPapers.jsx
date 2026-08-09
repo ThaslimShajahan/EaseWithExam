@@ -96,13 +96,13 @@ function PaperCard({ paper, selected, onToggle }) {
         <span className="text-[10px] font-medium text-emerald-400">✓ In EWE KB</span>
         <div className="flex items-center gap-2">
           {!isManual && paper.source_url && (
-            <a href={paper.source_url} target="_blank" rel="noreferrer"
+            <a href={paper.source_url} target="_blank" rel="noopener noreferrer"
               className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 transition-colors">
               <ExternalLink size={11} /> Source
             </a>
           )}
           {pdfUrl ? (
-            <a href={pdfUrl} target="_blank" rel="noreferrer"
+            <a href={pdfUrl} target="_blank" rel="noopener noreferrer"
               className="flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-lg bg-primary-700 hover:bg-primary-600 text-white transition-colors">
               <Download size={11} /> View PDF
             </a>
@@ -145,15 +145,20 @@ export default function AdminPapers() {
   const [typeFilter,setTypeFilter]= useState('All');
   const [confirm,   setConfirm]   = useState(null); // { message, onConfirm }
 
-  const load = () => {
+  const load = async () => {
     setLoading(true);
     setSelected(new Set());
-    adminGetPapers()
-      .then((data) => { setPapers(data || []); setLoading(false); })
-      .catch((e) => { console.error('[AdminPapers] load failed:', e); setLoading(false); });
+    try {
+      const data = await adminGetPapers();
+      setPapers(data || []);
+    } catch (e) {
+      if (import.meta.env.DEV) console.error('[AdminPapers] load failed:', e);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(load, []);
+  useEffect(() => { load(); }, []);
 
   const subjects = ['All', ...new Set(papers.map((p) => p.subject).filter(Boolean))];
   const types    = ['All', ...new Set(papers.map((p) => p.paper_type).filter(Boolean))];

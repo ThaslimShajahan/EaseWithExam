@@ -138,7 +138,11 @@ async function updateWeakTopics(firebaseUid, questions, answers) {
 
   const rows = Object.values(grouped);
   if (!rows.length) return;
-  await supabase.rpc('update_weak_topics', { p_uid: firebaseUid, p_rows: rows }).catch(() => {});
+  try {
+    await supabase.rpc('update_weak_topics', { p_uid: firebaseUid, p_rows: rows });
+  } catch (e) {
+    // best-effort: ignore failures updating weak topics
+  }
 }
 
 /* ── Fetch weak topics ──────────────────────────────────────── */

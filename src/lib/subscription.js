@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { createNotification } from './notifications';
+import { sendTransactionalEmail } from './email';
 
 /* ── Plan catalogue ─────────────────────────────────────── */
 
@@ -32,13 +33,13 @@ export const PLANS = {
       'Deep chapter notes',
       'Unlimited EWE',
       'Progress certificates',
-      'Referral bonuses',
     ],
   },
   premium_monthly: {
     id: 'premium_monthly',
     name: 'Premium',
     priceLabel: '₹399/month',
+    priceSuffix: '+ GST',
     description: 'Full AI power, no limits',
     razorpayAmount: 39900,
     expiryDays: 30,
@@ -50,24 +51,31 @@ export const PLANS = {
       mock_tests_per_week: Infinity,
     },
     features: [
+      // Led with the two genuinely distinctive, verified-live differentiators
+      // (see Phase 0 audit) rather than generic claims every competing
+      // exam-prep app also makes — those are kept below, not dropped.
+      'Misconception Engine — spot your repeated wrong-answer patterns',
+      'Smart flashcards that adapt to what you remember (SM-2)',
       'Unlimited AI practice questions',
       'Unlimited mock tests',
       'Unlimited EWE chat',
       'Score predictor (premium)',
       'Deep chapter notes + derivations',
       'Progress certificates',
-      'Referral bonuses',
       'Priority support',
     ],
   },
   premium_yearly: {
     id: 'premium_yearly',
     name: 'Premium Yearly',
-    priceLabel: '₹2,999/year',
+    priceLabel: '₹3,999/year',
+    priceSuffix: '+ GST',
     description: 'Best per-month value',
-    razorpayAmount: 299900,
+    razorpayAmount: 399900,
     expiryDays: 365,
-    badge: 'Save ₹1,789',
+    // 12 × ₹399 = ₹4,788 vs ₹3,999 — recalculated to match the price change
+    // above (was 'Save ₹1,789', correct only against the old ₹2,999 price).
+    badge: 'Save ₹789',
     badgeColor: 'bg-emerald-500',
     limits: {
       ai_questions_per_day: Infinity,
@@ -75,32 +83,46 @@ export const PLANS = {
       mock_tests_per_week: Infinity,
     },
     features: [
+      'Misconception Engine — spot your repeated wrong-answer patterns',
+      'Smart flashcards that adapt to what you remember (SM-2)',
       'Everything in Premium',
       '12 months access',
       'Early access to new features',
       'Priority support',
     ],
   },
+  // Plan ID deliberately left as 'neet_complete' — it's the key live
+  // subscriptions, quota_config and the edge functions' PLAN_DAYS all resolve
+  // on. Only the presentation changed: this is shown to EVERY student
+  // (including Class 8), and NEET/JEE students buy the same plans as everyone
+  // else, so framing it as a NEET-only product was both wrong and off-putting
+  // to the board students who see it.
   neet_complete: {
     id: 'neet_complete',
-    name: 'NEET Complete',
+    name: '3-Year Plan',
     priceLabel: '₹4,999 one-time',
-    description: 'Lifetime access for NEET 2026',
+    priceSuffix: '+ GST',
+    description: 'Best value — three full years, one payment',
     razorpayAmount: 499900,
-    expiryDays: 365,
-    badge: 'NEET Aspirants',
+    // Was 365 — matched what the checkout/grant paths actually enforced even
+    // while the copy claimed "Lifetime (never expires)". Now the displayed
+    // duration and the enforced duration genuinely agree: 3 × 365.
+    expiryDays: 1095,
+    badge: 'Best Value',
     badgeColor: 'bg-rose-500',
-    limits: {
-      ai_questions_per_day: Infinity,
-      veda_messages_per_day: Infinity,
-      mock_tests_per_week: Infinity,
-    },
+    // examChips removed: this plan is offered to every student, so NEET/JEE
+    // chips made it read as a competitive-only product on a Class 8
+    // student's pricing page.
     features: [
-      'Everything in Premium',
-      'NEET-specific test series packs',
-      'Score predictor with NEET ranking estimate',
+      'Everything in Premium, for three years',
+      'Covers board exams and NEET / JEE prep alike',
+      'Misconception Engine — spot your repeated wrong-answer patterns',
+      'Smart flashcards that adapt to what you remember (SM-2)',
+      // ScorePredictor.jsx has real NEET/JEE Main/JEE Advanced marks-band
+      // configs — it estimates a performance band, not a rank/percentile.
+      'Score predictor with NEET/JEE performance band estimate',
       'Live doubt resolution via EWE',
-      'Lifetime access (never expires)',
+      'One payment — no yearly renewals',
     ],
   },
 };
@@ -161,6 +183,7 @@ async function verifyAndActivateSubscription(firebaseUid, {
     'All premium features are now unlocked. Welcome to the full EWE experience!',
     '/dashboard',
   ).catch(() => {});
+  sendTransactionalEmail(firebaseUid, 'subscription_active', { planName });
 
   return { plan };
 }

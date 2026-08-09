@@ -8,30 +8,94 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+
+    # Job-level, not step-level. These were previously set only on the Build
+    # step, so `npm test` ran without VITE_SUPABASE_URL and createClient threw
+    # `validateSupabaseUrl` at import time — every CI run since this repo was
+    # created failed there, and nobody looked.
+    #
+    # The fallbacks make CI a genuine clean-clone check even before repo
+    # secrets are configured: the build only needs these to be syntactically
+    # valid, and neither the build nor the unit tests make a network call.
+    env:
+      VITE_SUPABASE_URL:      ${{ secrets.VITE_SUPABASE_URL      || 'https://placeholder.supabase.co' }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'placeholder-anon-key' }}
+      VITE_FIREBASE_API_KEY:             ${{ secrets.VITE_FIREBASE_API_KEY             || 'placeholder' }}
+      VITE_FIREBASE_AUTH_DOMAIN:         ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN         || 'placeholder.firebaseapp.com' }}
+      VITE_FIREBASE_PROJECT_ID:          ${{ secrets.VITE_FIREBASE_PROJECT_ID          || 'placeholder' }}
+      VITE_FIREBASE_STORAGE_BUCKET:      ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET      || 'placeholder.appspot.com' }}
+      VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID || '000000000000' }}
+      VITE_FIREBASE_APP_ID:              ${{ secrets.VITE_FIREBASE_APP_ID              || '1:0:web:0' }}
+      VITE_VAPID_PUBLIC_KEY:             ${{ secrets.VITE_VAPID_PUBLIC_KEY             || '' }}
+      VITE_RAZORPAY_KEY_ID:              ${{ secrets.VITE_RAZORPAY_KEY_ID              || '' }}
+      VITE_USE_EDGE_FUNCTIONS: 'true'
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - run: npm ci
 
-      - name: Build
+      # A clean checkout contains only COMMITTED files, so this step is what
+      # catches the failure mode behind the 2026-08-08 production outage and
+      # the .gitignore breakage found later: source that exists on a
+      # developer's disk, is imported at runtime, and was never committed.
+      # `npm run build` resolves the whole import graph, so a missing module
+      # fails here instead of in production.
+      - name: Build (clean clone — fails on uncommitted source)
         run: npm run build
-        env:
-          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
-          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
-          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
-          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
-          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
-          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-          VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
-          VITE_RAZORPAY_KEY_ID: ${{ secrets.VITE_RAZORPAY_KEY_ID }}
-          VITE_USE_EDGE_FUNCTIONS: 'true'
 
       - name: Test
         run: npm test
+
+      # Untracked files under src/ or supabase/ are nearly always something
+      # that should have been committed. A warning rather than a failure, so a
+      # genuine scratch file doesn't block the build.
+      - name: Warn on untracked source files
+        if: always()
+        run: |
+          untracked=$(git ls-files --others --exclude-standard -- src supabase || true)
+          if [ -n "$untracked" ]; then
+            echo "::warning::Untracked files under src/ or supabase/ — should these be committed?"
+            echo "$untracked" | sed 's/^/  /'
+          else
+            echo "No untracked source files."
+          fi
+
+  # Fails if a local migration was never applied to the linked project, or a
+  # remote migration has no local file. This project has drifted both ways:
+  # migrations applied by hand in the SQL editor never landed in the history
+  # table, so `supabase migration list` reported applied migrations as pending.
+  # Skips automatically when the secrets aren't configured.
+  migration-drift:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Check migrations are in sync with the linked project
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD:  ${{ secrets.SUPABASE_DB_PASSWORD }}
+          PROJECT_REF:           ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$PROJECT_REF" ]; then
+            echo "Supabase secrets not configured — skipping drift check."
+            exit 0
+          fi
+          supabase link --project-ref "$PROJECT_REF"
+          if supabase db push --dry-run 2>&1 | tee /tmp/push.log | grep -q "Remote database is up to date"; then
+            echo "Migrations in sync."
+          else
+            echo "::error::Local migrations are out of sync with the remote database."
+            cat /tmp/push.log
+            exit 1
+          fi

@@ -6,9 +6,15 @@ import {
   RefreshCw, FileText, X,
 } from 'lucide-react';
 import { supabase, publishPYQPaper } from '../lib/supabase';
+function getCallerUid() {
+  try {
+    const key = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch { return ''; }
+}
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { useAdminFilter } from './hooks/useAdminFilter';
-import { BOARDS, CLASS_LEVELS, EXAM_TAG_RE, prettyExamTag, examTypeToTag } from '../lib/categories';
+import { BOARDS, CLASS_LEVELS, isExamTag, prettyExamTag, examTypeToTag } from '../lib/categories';
 
 /* ── Helpers ─────────────────────────────────────────────── */
 async function fetchPYQs({ examType, subject, search } = {}) {
@@ -174,7 +180,7 @@ function PYQBank() {
     const dur      = Math.ceil(displayed.length * 2); // 2 min per question
     setPublishing(true);
     try {
-      await publishPYQPaper({ title, examType, subject, durationMinutes: dur, pyqRows: displayed });
+      await publishPYQPaper({ title, examType, subject, durationMinutes: dur, pyqRows: displayed, callerUid: getCallerUid() });
       setPublishMsg(`✓ Published "${title}" as a test — find it in Exam Center`);
     } catch (e) {
       setPublishMsg(`Error: ${e.message}`);
@@ -432,7 +438,7 @@ function KnowledgeBaseViewer() {
       });
       setSubjectOptions(['All', ...[...subjByKey.values()].sort()]);
       setExamTagOptions(['All', ...sortExamTypes(new Set(
-        (data ?? []).flatMap((c) => (c.tags ?? []).filter((t) => EXAM_TAG_RE.test(t)))
+        (data ?? []).flatMap((c) => (c.tags ?? []).filter((t) => isExamTag(t)))
       ))]);
     });
   }, []);

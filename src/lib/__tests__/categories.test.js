@@ -6,6 +6,15 @@ import {
   CLASS_LEVELS,
   getSubjectsForExam,
   getAllExamTypes,
+  resolveBoard,
+  getSchoolExamType,
+  getCompetitiveExamType,
+  getExamContexts,
+  buildExamType,
+  isRelevantToStudent,
+  isExamTag,
+  prettyExamTag,
+  normalizeExamType,
 } from '../categories';
 
 describe('CATEGORIES', () => {
@@ -100,5 +109,109 @@ describe('EXAM_TYPE_GROUPS', () => {
       expect(g.icon).toBeTruthy();
       expect(Array.isArray(g.items)).toBe(true);
     });
+  });
+});
+
+/* ── Profile → exam context resolution ─────────────────────────
+ * Regression cover for the three bugs this flow rebuild fixed:
+ *   1. buildExamType() preferred the board+class combo over the student's
+ *      stated competitive goal, so 8 of 15 live users who picked NEET were
+ *      being served "CBSE Class 8" content everywhere.
+ *   2. 'KERALA_STATE' never matched BOARDS' 'Kerala State' (underscore vs
+ *      space), so state-board students resolved to no combo at all — in
+ *      buildExamType AND, separately, in isRelevantToStudent.
+ *   3. Kerala State tags failed the exam-tag test, so they never produced a
+ *      content filter and leaked through as fake chapter names.
+ */
+describe('exam context resolution', () => {
+  const neetStudent   = { target_exam: 'NEET', syllabus: 'CBSE',         class_level: '12' };
+  const boardStudent  = { target_exam: 'NONE', syllabus: 'CBSE',         class_level: '10' };
+  const keralaStudent = { target_exam: 'NONE', syllabus: 'KERALA_STATE', class_level: '10' };
+  const repeater      = { target_exam: 'NEET', syllabus: 'CBSE',         class_level: 'REPEATER' };
+
+  it('resolveBoard maps the onboarding key to the BOARDS display name', () => {
+    expect(resolveBoard('CBSE')).toBe('CBSE');
+    expect(resolveBoard('KERALA_STATE')).toBe('Kerala State');
+    expect(resolveBoard('NA')).toBeNull();
+    expect(resolveBoard(undefined)).toBeNull();
+  });
+
+  it('keeps BOTH contexts for a competitive student', () => {
+    expect(getCompetitiveExamType(neetStudent)).toBe('NEET');
+    expect(getSchoolExamType(neetStudent)).toBe('CBSE Class 12');
+    expect(getExamContexts(neetStudent)).toEqual(['NEET', 'CBSE Class 12']);
+  });
+
+  it('buildExamType prefers the competitive goal over board+class', () => {
+    // Was 'CBSE Class 12' — the stated NEET goal was silently discarded.
+    expect(buildExamType('NEET', 'CBSE', '12')).toBe('NEET');
+  });
+
+  it('board-only students resolve to their board+class combo', () => {
+    expect(getCompetitiveExamType(boardStudent)).toBeNull();
+    expect(getSchoolExamType(boardStudent)).toBe('CBSE Class 10');
+    expect(buildExamType('NONE', 'CBSE', '10')).toBe('CBSE Class 10');
+  });
+
+  it('resolves Kerala State despite the underscore key', () => {
+    expect(getSchoolExamType(keralaStudent)).toBe('Kerala State Class 10');
+    expect(buildExamType('NONE', 'KERALA_STATE', '10')).toBe('Kerala State Class 10');
+  });
+
+  it('a repeater has no school context but keeps the competitive one', () => {
+    expect(getSchoolExamType(repeater)).toBeNull();
+    expect(getCompetitiveExamType(repeater)).toBe('NEET');
+    expect(buildExamType('NEET', 'CBSE', 'REPEATER')).toBe('NEET');
+  });
+
+  it('legacy CLASS_* targets still resolve', () => {
+    expect(getCompetitiveExamType({ target_exam: 'CLASS_10' })).toBeNull();
+    expect(buildExamType('CLASS_10', 'CBSE', '10')).toBe('CBSE Class 10');
+    // 'Class 8-9' never existed as a CATEGORIES key.
+    expect(normalizeExamType('CLASS_8_9')).toBe('Class 9');
+  });
+});
+
+describe('isRelevantToStudent', () => {
+  const neetStudent   = { target_exam: 'NEET', syllabus: 'CBSE',         class_level: '12' };
+  const boardStudent  = { target_exam: 'NONE', syllabus: 'CBSE',         class_level: '10' };
+  const keralaStudent = { target_exam: 'NONE', syllabus: 'KERALA_STATE', class_level: '10' };
+
+  it('matches a competitive student on BOTH their contexts', () => {
+    expect(isRelevantToStudent('NEET', neetStudent)).toBe(true);
+    expect(isRelevantToStudent('CBSE Class 12', neetStudent)).toBe(true);
+    expect(isRelevantToStudent('CBSE Class 9', neetStudent)).toBe(false);
+  });
+
+  it('does not show competitive content to a board-only student', () => {
+    expect(isRelevantToStudent('NEET', boardStudent)).toBe(false);
+    expect(isRelevantToStudent('CBSE Class 10', boardStudent)).toBe(true);
+  });
+
+  it('matches Kerala State content to a Kerala State student', () => {
+    // Compared 'Kerala State' === 'KERALA_STATE' before, so this was false and
+    // those students saw none of their own board content.
+    expect(isRelevantToStudent('Kerala State Class 10', keralaStudent)).toBe(true);
+    expect(isRelevantToStudent('CBSE Class 10', keralaStudent)).toBe(false);
+  });
+});
+
+describe('exam tags', () => {
+  it('recognises every board in BOARDS, not just a hardcoded few', () => {
+    expect(isExamTag('cbse_class_8')).toBe(true);
+    expect(isExamTag('kerala_state_class_10')).toBe(true);  // was false
+    expect(isExamTag('neet')).toBe(true);
+    expect(isExamTag('jee_main')).toBe(true);
+  });
+
+  it('does not treat an ordinary chapter tag as an exam tag', () => {
+    expect(isExamTag('Wit and Wisdom')).toBe(false);
+    expect(isExamTag('')).toBe(false);
+  });
+
+  it('pretty-prints board tags with correct casing', () => {
+    expect(prettyExamTag('cbse_class_8')).toBe('CBSE Class 8');
+    expect(prettyExamTag('kerala_state_class_10')).toBe('Kerala State Class 10');
+    expect(prettyExamTag('neet')).toBe('NEET');
   });
 });

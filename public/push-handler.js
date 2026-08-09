@@ -8,14 +8,14 @@ self.addEventListener('push', (event) => {
       title = 'EaseWithExam',
       body  = '',
       url   = '/dashboard',
-      icon  = '/pwa-192x192.png',
+      icon  = '/icon-192.png',
     } = event.data.json();
 
     event.waitUntil(
       self.registration.showNotification(title, {
         body,
         icon,
-        badge:    '/pwa-64x64.png',
+        badge:    '/favicon-32.png',
         data:     { url },
         tag:      'ewe-notification',
         renotify: true,

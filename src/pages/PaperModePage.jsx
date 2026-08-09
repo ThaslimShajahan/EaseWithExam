@@ -5,9 +5,9 @@ import {
   Printer, Upload, ArrowLeft, CheckCircle2, XCircle,
   Loader2, AlertTriangle, Camera, FileImage, Trash2,
   ChevronDown, ChevronUp, Star, ZoomIn, X, BookOpen,
-  ScanSearch, Pencil, RefreshCw, Download,
+  ScanSearch, Pencil, RefreshCw, Download, Monitor,
 } from 'lucide-react';
-import { getPublishedTest, saveTestSession, getTestAttempt, lockExamAttemptMode } from '../lib/supabase';
+import { getPublishedTest, saveTestSession, getTestAttempt, lockExamAttemptMode, clearExamAttemptMode } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { createNotification } from '../lib/notifications';
 import MathText from '../components/ui/MathText';
@@ -92,6 +92,21 @@ function QuestionPaper({ questions, title, examType, subject }) {
             <div className="q-text">
               <MathText text={q.question} />
             </div>
+            {/* Figure. Paper Mode rendered neither the image nor the
+                description, so every diagram-based question (Physics ray
+                diagrams, Chemistry bonding structures, Maths graphs) printed
+                as unanswerable text — while Online Mode showed them fine via
+                QuestionView's QuestionImage/DiagramBox. Falls back to the
+                AI-supplied description when no figure was ever attached,
+                which is the common case for student-generated papers. */}
+            {q.image_url && (
+              <div className="q-figure">
+                <img src={q.image_url} alt="Question figure" />
+              </div>
+            )}
+            {!q.image_url && q.diagram_description && (
+              <div className="q-figure-desc">[Figure: {q.diagram_description}]</div>
+            )}
             {/* MCQ options */}
             {q.options && q.options.length > 0 && (
               <div className="options-grid">
@@ -270,8 +285,8 @@ function UploadPanel({ onEvaluate, loading }) {
   return (
     <div className="space-y-4">
       <div>
-        <p className="text-sm font-bold text-white">Upload Your Answer Sheet</p>
-        <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+        <p className="text-sm font-bold text-slate-900">Upload Your Answer Sheet</p>
+        <p className="text-xs text-slate-500 mt-1 leading-relaxed">
           Take a clear photo of each page of your handwritten answer sheet. Make sure question numbers are clearly visible.
           Multiple pages? Upload all of them.
         </p>
@@ -282,12 +297,12 @@ function UploadPanel({ onEvaluate, loading }) {
         onDrop={(e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }}
         onDragOver={(e) => e.preventDefault()}
         onClick={() => inputRef.current?.click()}
-        className="border-2 border-dashed border-slate-700 hover:border-primary-500 rounded-2xl p-8 flex flex-col items-center gap-3 cursor-pointer transition-colors bg-slate-900/40"
+        className="border-2 border-dashed border-slate-300 hover:border-primary-500 rounded-2xl p-8 flex flex-col items-center gap-3 cursor-pointer transition-colors bg-slate-50"
       >
-        <div className="h-12 w-12 rounded-2xl bg-slate-800 flex items-center justify-center">
-          <Camera size={22} className="text-primary-400" />
+        <div className="h-12 w-12 rounded-2xl bg-white border border-slate-200 flex items-center justify-center">
+          <Camera size={22} className="text-primary-600" />
         </div>
-        <p className="text-sm font-semibold text-white text-center">
+        <p className="text-sm font-semibold text-slate-900 text-center">
           Drop photos or click to browse
         </p>
         <p className="text-xs text-slate-500">JPG, PNG — upload all pages of your answer sheet</p>
@@ -299,16 +314,20 @@ function UploadPanel({ onEvaluate, loading }) {
       {images.length > 0 && (
         <div className="grid grid-cols-3 gap-2">
           {images.map((img, i) => (
-            <div key={i} className="relative rounded-xl overflow-hidden border border-slate-700 bg-slate-900 group aspect-[3/4]">
+            <div key={i} className="relative rounded-xl overflow-hidden border border-slate-200 bg-slate-100 aspect-[3/4]">
               <img src={img.url} alt={`Page ${i + 1}`} className="w-full h-full object-cover" />
-              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+              {/* Was a hover-only full-image dark overlay — invisible (and
+                  the zoom/delete controls unreachable) on touch devices with
+                  no hover. Small always-visible corner buttons instead,
+                  matching the other thumbnail pattern in this same file. */}
+              <div className="absolute top-1 right-1 flex gap-1">
                 <button onClick={(e) => { e.stopPropagation(); setZoomed(img.url); }}
-                  className="p-1.5 bg-white/20 rounded-lg hover:bg-white/30">
-                  <ZoomIn size={14} className="text-white" />
+                  className="p-1.5 bg-black/60 rounded-lg hover:bg-black/80">
+                  <ZoomIn size={13} className="text-white" />
                 </button>
                 <button onClick={(e) => { e.stopPropagation(); remove(i); }}
-                  className="p-1.5 bg-red-500/80 rounded-lg hover:bg-red-600">
-                  <Trash2 size={14} className="text-white" />
+                  className="p-1.5 bg-red-500/90 rounded-lg hover:bg-red-600">
+                  <Trash2 size={13} className="text-white" />
                 </button>
               </div>
               <div className="absolute bottom-1 left-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded">
@@ -361,16 +380,16 @@ function AnswerCard({ ans }) {
   const hasCorr    = ans.corrections && ans.corrections.trim().length > 0;
 
   const badgeCls = illegible || unattempted
-    ? 'bg-slate-700 text-slate-400'
-    : full    ? 'bg-emerald-900/60 text-emerald-300'
-    : partial ? 'bg-amber-900/60  text-amber-300'
-    :           'bg-red-900/60    text-red-300';
+    ? 'bg-slate-100 text-slate-500'
+    : full    ? 'bg-emerald-50 text-emerald-700'
+    : partial ? 'bg-amber-50   text-amber-700'
+    :           'bg-red-50     text-red-700';
 
   const feedbackCls = illegible || unattempted
     ? 'text-slate-500 italic'
-    : full    ? 'text-emerald-400'
-    : partial ? 'text-amber-300'
-    :           'text-red-300';
+    : full    ? 'text-emerald-600'
+    : partial ? 'text-amber-600'
+    :           'text-red-600';
 
   return (
     <div className="px-5 py-3 space-y-2">
@@ -390,14 +409,14 @@ function AnswerCard({ ans }) {
             <p className="text-[11px] text-slate-500 italic">Not attempted</p>
           )}
           {!illegible && !unattempted && ans.student_answer_read && (
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              <span className="text-slate-600 font-semibold">Student: </span>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              <span className="text-slate-700 font-semibold">Student: </span>
               {ans.student_answer_read}
             </p>
           )}
           <p className={`text-[11px] leading-relaxed ${feedbackCls}`}>{ans.feedback}</p>
           {ans.misconception && !full && !illegible && !unattempted && (
-            <p className="text-[10px] text-violet-400 leading-relaxed">
+            <p className="text-[10px] text-violet-600 leading-relaxed">
               <span className="font-semibold">Concept gap: </span>{ans.misconception}
             </p>
           )}
@@ -405,15 +424,15 @@ function AnswerCard({ ans }) {
         <div className="text-right shrink-0">
           <span className={`text-sm font-extrabold ${
             illegible || unattempted ? 'text-slate-500'
-            : full    ? 'text-emerald-400'
-            : partial ? 'text-amber-400'
-            :           'text-red-400'
+            : full    ? 'text-emerald-600'
+            : partial ? 'text-amber-600'
+            :           'text-red-600'
           }`}>
             {ans.marks_awarded}
           </span>
-          <span className="text-[10px] text-slate-600">/{ans.max_marks}</span>
-          {full    && <CheckCircle2 size={12} className="text-emerald-400 ml-1 inline" />}
-          {!full && ans.marks_awarded === 0 && !illegible && !unattempted && <XCircle size={12} className="text-red-400 ml-1 inline" />}
+          <span className="text-[10px] text-slate-500">/{ans.max_marks}</span>
+          {full    && <CheckCircle2 size={12} className="text-emerald-600 ml-1 inline" />}
+          {!full && ans.marks_awarded === 0 && !illegible && !unattempted && <XCircle size={12} className="text-red-600 ml-1 inline" />}
         </div>
       </div>
 
@@ -422,7 +441,7 @@ function AnswerCard({ ans }) {
         <div className="ml-8">
           <button
             onClick={() => setShowCorrection((v) => !v)}
-            className="flex items-center gap-1.5 text-[10px] font-semibold text-violet-400 hover:text-violet-300 transition-colors"
+            className="flex items-center gap-1.5 text-[10px] font-semibold text-violet-600 hover:text-violet-700 transition-colors"
           >
             <Pencil size={10} />
             {showCorrection ? 'Hide corrections' : 'Show step corrections'}
@@ -434,9 +453,9 @@ function AnswerCard({ ans }) {
                 initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
                 exit={{ opacity: 0, height: 0 }} className="overflow-hidden"
               >
-                <div className="mt-2 bg-slate-900/70 border border-violet-800/30 rounded-xl px-4 py-3">
-                  <p className="text-[10px] font-bold text-violet-400 uppercase tracking-widest mb-2">Step-by-step Correction</p>
-                  <pre className="text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap font-sans">{ans.corrections}</pre>
+                <div className="mt-2 bg-violet-50 border border-violet-200 rounded-xl px-4 py-3">
+                  <p className="text-[10px] font-bold text-violet-700 uppercase tracking-widest mb-2">Step-by-step Correction</p>
+                  <pre className="text-[11px] text-slate-700 leading-relaxed whitespace-pre-wrap font-sans">{ans.corrections}</pre>
                 </div>
               </motion.div>
             )}
@@ -451,11 +470,11 @@ function AnswerCard({ ans }) {
 function ResultsPanel({ result }) {
   const pct = result.total_possible > 0
     ? Math.round((result.total_awarded / result.total_possible) * 100) : 0;
-  const grade = pct >= 90 ? { label: 'Outstanding!', color: 'text-emerald-400', bg: 'from-emerald-900/30 to-teal-900/30' }
-    : pct >= 75 ? { label: 'Excellent!',    color: 'text-emerald-400', bg: 'from-emerald-900/20 to-slate-900' }
-    : pct >= 50 ? { label: 'Good job.',     color: 'text-amber-400',   bg: 'from-amber-900/20  to-slate-900' }
-    : pct >= 33 ? { label: 'Needs work.',   color: 'text-orange-400',  bg: 'from-orange-900/20 to-slate-900' }
-    :             { label: 'Needs revision.',color: 'text-red-400',     bg: 'from-red-900/20    to-slate-900' };
+  const grade = pct >= 90 ? { label: 'Outstanding!', color: 'text-emerald-600', bg: 'from-emerald-50 to-teal-50' }
+    : pct >= 75 ? { label: 'Excellent!',    color: 'text-emerald-600', bg: 'from-emerald-50 to-white' }
+    : pct >= 50 ? { label: 'Good job.',     color: 'text-amber-600',   bg: 'from-amber-50  to-white' }
+    : pct >= 33 ? { label: 'Needs work.',   color: 'text-orange-600',  bg: 'from-orange-50 to-white' }
+    :             { label: 'Needs revision.',color: 'text-red-600',     bg: 'from-red-50    to-white' };
 
   const corrCount = (result.answers ?? []).filter((a) => a.corrections?.trim()).length;
 
@@ -464,31 +483,31 @@ function ResultsPanel({ result }) {
       {/* Score card */}
       <motion.div
         initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}
-        className={`bg-gradient-to-br ${grade.bg} border border-white/10 rounded-2xl p-6 text-center space-y-3`}
+        className={`bg-gradient-to-br ${grade.bg} border border-slate-200 rounded-2xl p-6 text-center space-y-3 shadow-sm`}
       >
         <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">AI Evaluation Complete</p>
         <div className="flex items-center justify-center gap-2">
           <span className={`text-6xl font-extrabold tabular-nums ${grade.color}`}>{result.total_awarded}</span>
-          <span className="text-3xl text-slate-600 font-bold">/ {result.total_possible}</span>
+          <span className="text-3xl text-slate-400 font-bold">/ {result.total_possible}</span>
         </div>
         <p className={`text-base font-bold ${grade.color}`}>{pct}% — {grade.label}</p>
         {result.paper_title && (
           <p className="text-[11px] text-slate-500">{result.paper_title}</p>
         )}
         {result.overall_feedback && (
-          <p className="text-xs text-slate-400 leading-relaxed max-w-md mx-auto">{result.overall_feedback}</p>
+          <p className="text-xs text-slate-500 leading-relaxed max-w-md mx-auto">{result.overall_feedback}</p>
         )}
         {corrCount > 0 && (
-          <p className="text-[11px] text-violet-400">
+          <p className="text-[11px] text-violet-600">
             {corrCount} question{corrCount > 1 ? 's' : ''} have step-by-step corrections below ↓
           </p>
         )}
       </motion.div>
 
       {/* Per-question breakdown */}
-      <div className="bg-slate-800 border border-white/5 rounded-2xl overflow-hidden divide-y divide-white/5">
+      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 shadow-sm">
         <div className="px-5 py-3 flex items-center justify-between">
-          <p className="text-sm font-bold text-white">Question-wise Results &amp; Corrections</p>
+          <p className="text-sm font-bold text-slate-900">Question-wise Results &amp; Corrections</p>
           <span className="text-[10px] text-slate-500">{(result.answers ?? []).length} questions</span>
         </div>
         {(result.answers ?? []).map((ans, i) => (
@@ -592,27 +611,27 @@ function ImageDropZone({ label, hint, images, setImages }) {
   };
   return (
     <div className="space-y-2">
-      <p className="text-xs font-bold text-white">{label}</p>
-      <p className="text-[11px] text-slate-400">{hint}</p>
+      <p className="text-xs font-bold text-slate-900">{label}</p>
+      <p className="text-[11px] text-slate-500">{hint}</p>
       <div
         onDrop={(e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }}
         onDragOver={(e) => e.preventDefault()}
         onClick={() => ref.current?.click()}
-        className="border-2 border-dashed border-slate-700 hover:border-primary-500 rounded-xl p-5 flex flex-col items-center gap-2 cursor-pointer transition-colors"
+        className="border-2 border-dashed border-slate-300 hover:border-primary-500 rounded-xl p-5 flex flex-col items-center gap-2 cursor-pointer transition-colors bg-slate-50"
       >
-        <Camera size={18} className="text-primary-400" />
-        <p className="text-xs text-slate-400 text-center">Drop or tap to add pages</p>
+        <Camera size={18} className="text-primary-600" />
+        <p className="text-xs text-slate-500 text-center">Drop or tap to add pages</p>
         <input ref={ref} type="file" multiple accept="image/*"
           className="hidden" onChange={(e) => addFiles(e.target.files)} />
       </div>
       {images.length > 0 && (
         <div className="flex gap-2 flex-wrap">
           {images.map((img, i) => (
-            <div key={i} className="relative w-16 h-20 rounded-lg overflow-hidden border border-slate-600 group">
+            <div key={i} className="relative w-16 h-20 rounded-lg overflow-hidden border border-slate-200 group">
               <img src={img.url} alt={`p${i+1}`} className="w-full h-full object-cover" />
               <button
                 onClick={(e) => { e.stopPropagation(); setImages((p) => p.filter((_, j) => j !== i)); }}
-                className="absolute top-0.5 right-0.5 bg-red-600/80 rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                className="absolute top-0.5 right-0.5 bg-red-600/80 rounded-full p-0.5"
               >
                 <X size={8} className="text-white" />
               </button>
@@ -633,9 +652,9 @@ function SelfEvalPanel({ onEvaluate, loading }) {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start gap-2 bg-violet-900/20 border border-violet-700/30 rounded-xl px-4 py-3">
-        <ScanSearch size={13} className="text-violet-400 shrink-0 mt-0.5" />
-        <p className="text-[11px] text-violet-300 leading-relaxed">
+      <div className="flex items-start gap-2 bg-violet-50 border border-violet-200 rounded-xl px-4 py-3">
+        <ScanSearch size={13} className="text-violet-600 shrink-0 mt-0.5" />
+        <p className="text-[11px] text-violet-800 leading-relaxed">
           Upload any printed question paper + your handwritten answer sheet. AI will read both, extract every question, grade your answers, and show step-by-step corrections.
         </p>
       </div>
@@ -804,7 +823,7 @@ function AnnotatedCanvas({ imageUrl, pageAnnotations }) {
   }, [imageUrl, pageAnnotations]);
 
   return (
-    <div className="rounded-xl overflow-hidden border border-white/10 bg-slate-900">
+    <div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
       <canvas ref={ref} style={{ width: '100%', display: 'block' }} />
     </div>
   );
@@ -910,7 +929,7 @@ function EvaluatedPaperView({ result, answerImages }) {
               </div>
             ))
           ) : (
-            <div className="bg-slate-800 border border-white/5 rounded-2xl p-8 text-center text-slate-400 text-sm">
+            <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center text-slate-500 text-sm">
               Answer sheet images not available
             </div>
           )}
@@ -919,7 +938,7 @@ function EvaluatedPaperView({ result, answerImages }) {
 
       <button
         onClick={() => setShowDetail((v) => !v)}
-        className="w-full py-2.5 rounded-xl border border-white/10 text-slate-400 text-xs font-semibold hover:border-white/20 hover:text-white transition-colors flex items-center justify-center gap-2"
+        className="w-full py-2.5 rounded-xl border border-slate-200 text-slate-500 text-xs font-semibold hover:border-slate-300 hover:text-slate-900 transition-colors flex items-center justify-center gap-2"
       >
         {showDetail ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         {showDetail ? 'Hide' : 'Show'} Detailed Question-wise Corrections
@@ -960,6 +979,12 @@ const PRINT_CSS = `
 .q-num { font-weight: 700; font-size: 14px; min-width: 28px; shrink: 0; }
 .q-body { flex: 1; font-size: 14px; line-height: 1.6; }
 .q-text { margin-bottom: 6px; }
+/* Figures. Capped so a large diagram can't push a single question onto its
+   own page, and print-colour-adjust keeps line diagrams legible in browsers
+   that strip backgrounds when printing. */
+.q-figure { margin: 8px 0; page-break-inside: avoid; }
+.q-figure img { max-width: 100%; max-height: 280px; object-fit: contain; display: block; border: 1px solid #ddd; border-radius: 4px; padding: 4px; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.q-figure-desc { margin: 6px 0; font-size: 12px; font-style: italic; color: #555; border-left: 2px solid #ccc; padding-left: 8px; }
 .q-marks { font-size: 12px; font-weight: 700; color: #444; white-space: nowrap; shrink: 0; }
 .options-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 16px; margin-top: 4px; margin-left: 8px; }
 .option-item { display: flex; gap: 6px; font-size: 13px; }
@@ -997,7 +1022,7 @@ export default function PaperModePage() {
   // Inject print CSS once
   useEffect(() => {
     const style = document.createElement('style');
-    style.innerHTML = PRINT_CSS;
+    style.textContent = PRINT_CSS;
     document.head.appendChild(style);
     return () => document.head.removeChild(style);
   }, []);
@@ -1022,7 +1047,7 @@ export default function PaperModePage() {
         // so this check is mode-agnostic by construction.
         const [attempt, test] = await Promise.all([
           getTestAttempt(currentUser?.uid, testId),
-          getPublishedTest(testId),
+          getPublishedTest(testId, currentUser?.uid),
         ]);
         if (test) {
           setTitle(test.title ?? 'Question Paper');
@@ -1177,7 +1202,7 @@ export default function PaperModePage() {
 
   if (loadingTest) {
     return (
-      <div className="flex items-center justify-center min-h-[50vh] gap-2 text-slate-400 text-sm">
+      <div className="flex items-center justify-center min-h-[50vh] gap-2 text-slate-500 text-sm">
         <Loader2 size={16} className="animate-spin" /> Loading question paper…
       </div>
     );
@@ -1189,25 +1214,25 @@ export default function PaperModePage() {
       ? Math.round((priorAttempt.score / priorAttempt.total_marks) * 100) : 0;
     return (
       <div className="max-w-md mx-auto flex flex-col items-center justify-center min-h-[60vh] p-8 text-center gap-5">
-        <div className="h-20 w-20 rounded-full bg-emerald-900/40 flex items-center justify-center">
+        <div className="h-20 w-20 rounded-full bg-emerald-50 flex items-center justify-center">
           <span className="text-4xl">✅</span>
         </div>
         <div>
-          <h2 className="text-xl font-bold text-white">Already Submitted</h2>
-          <p className="text-sm text-slate-400 mt-1">{title || 'This paper'}</p>
+          <h2 className="text-xl font-bold text-slate-900">Already Submitted</h2>
+          <p className="text-sm text-slate-500 mt-1">{title || 'This paper'}</p>
         </div>
-        <div className="bg-slate-800 border border-white/10 rounded-2xl px-8 py-5 space-y-1 shadow-sm w-full">
-          <p className="text-4xl font-extrabold text-primary-400">
-            {priorAttempt.score}<span className="text-xl text-slate-500">/{priorAttempt.total_marks}</span>
+        <div className="bg-white border border-slate-200 rounded-2xl px-8 py-5 space-y-1 shadow-sm w-full">
+          <p className="text-4xl font-extrabold text-primary-600">
+            {priorAttempt.score}<span className="text-xl text-slate-400">/{priorAttempt.total_marks}</span>
           </p>
-          <p className="text-sm font-semibold text-slate-300">{pct}%</p>
+          <p className="text-sm font-semibold text-slate-700">{pct}%</p>
           <p className="text-[11px] text-slate-500 mt-1">
             Submitted {new Date(priorAttempt.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
           </p>
           {priorAttempt.correct != null && (
             <div className="flex justify-center gap-4 mt-2 text-xs">
-              <span className="text-emerald-400 font-semibold">✓ {priorAttempt.correct} correct</span>
-              <span className="text-red-400 font-semibold">✗ {priorAttempt.wrong} wrong</span>
+              <span className="text-emerald-600 font-semibold">✓ {priorAttempt.correct} correct</span>
+              <span className="text-red-600 font-semibold">✗ {priorAttempt.wrong} wrong</span>
             </div>
           )}
         </div>
@@ -1226,23 +1251,29 @@ export default function PaperModePage() {
   if (!hasQuestions && phase === 'paper') { setPhase('selfeval'); }
 
   return (
-    <div className="max-w-5xl space-y-5">
-      {/* Top bar */}
-      <div className="flex items-center gap-3 flex-wrap no-print">
-        <button onClick={() => navigate(-1)}
-          className="p-1.5 rounded-lg hover:bg-slate-700 text-slate-400 transition-colors">
-          <ArrowLeft size={18} />
-        </button>
-        <div className="flex-1">
-          <h1 className="text-xl font-bold text-white">{hasQuestions ? title : 'Grade Any Paper'}</h1>
-          <p className="text-xs text-slate-400 mt-0.5">
-            {hasQuestions
-              ? `${questions.length} questions · ${totalMarks(questions)} marks · ${examType} ${subject}`
-              : 'Upload photos of any answer sheet — AI reads and grades it instantly'}
-          </p>
+    <div className="max-w-5xl mx-auto space-y-5">
+      {/* Top bar — stacked on mobile (title row, then a horizontally-
+          scrollable tab row) instead of one flex-wrap row, which used to
+          let the tab pills wrap awkwardly against the title on narrow
+          screens. */}
+      <div className="flex flex-col gap-3 no-print">
+        <div className="flex items-center gap-3">
+          <button onClick={() => navigate(-1)}
+            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition-colors shrink-0">
+            <ArrowLeft size={18} />
+          </button>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg sm:text-xl font-bold text-slate-900 truncate">{hasQuestions ? title : 'Grade Any Paper'}</h1>
+            <p className="text-xs text-slate-500 mt-0.5 truncate">
+              {hasQuestions
+                ? `${questions.length} questions · ${totalMarks(questions)} marks · ${examType} ${subject}`
+                : 'Upload photos of any answer sheet — AI reads and grades it instantly'}
+            </p>
+          </div>
         </div>
-        {/* Phase tabs */}
-        <div className="flex gap-1 bg-slate-800 rounded-xl p-1 flex-wrap">
+        {/* Phase tabs — horizontal scroll instead of wrap so it never
+            crowds the title, and stays usable even with all 5 tabs visible. */}
+        <div className="flex gap-1 bg-slate-100 rounded-xl p-1 overflow-x-auto scrollbar-hide">
           {[
             { id: 'paper',       label: 'Question Paper',    icon: <BookOpen size={12} />,   hide: !hasQuestions },
             // Seeing the answer key mid-attempt defeats the point of taking
@@ -1260,44 +1291,80 @@ export default function PaperModePage() {
             { id: 'selfeval',    label: 'Grade Any Paper',   icon: <ScanSearch size={12} />, hide: hasQuestions },
             { id: 'selfresults', label: 'Grade Results',     icon: <RefreshCw size={12} />,  hide: hasQuestions, disabled: !selfResult },
           ].filter((t) => !t.hide).map(({ id, label, icon, disabled }) => (
+            // Active state matches HubTabBar (the app's tab pattern): an
+            // animated pill behind the label rather than a solid primary fill.
+            // These two tab bars previously used different treatments for the
+            // same control, which is what made the tabs look inconsistent.
             <button key={id}
               disabled={disabled}
               onClick={() => !disabled && setPhase(id)}
               className={[
-                'flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors',
+                'relative flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0',
                 (phase === id || (phase === 'selfevaluating' && id === 'selfeval'))
-                  ? 'bg-primary-600 text-white'
-                  : disabled ? 'text-slate-600 cursor-not-allowed'
-                  : 'text-slate-400 hover:text-white',
+                  ? 'text-primary-700'
+                  : disabled ? 'text-slate-400 cursor-not-allowed'
+                  : 'text-slate-500 hover:text-slate-900',
               ].join(' ')}
             >
-              {icon} {label}
+              {(phase === id || (phase === 'selfevaluating' && id === 'selfeval')) && (
+                <motion.div
+                  layoutId="paper-mode-tab"
+                  className="absolute inset-0 bg-white rounded-lg shadow-sm"
+                  transition={{ type: 'spring', stiffness: 500, damping: 40 }}
+                />
+              )}
+              <span className="relative flex items-center gap-1.5">{icon} {label}</span>
             </button>
           ))}
+
+          {/* Escape hatch out of the mode lock.
+              Opening this page locks the attempt to 'paper', and MockTestPage
+              then bounces /test straight back here — so a student who merely
+              looked at the printable view could never reach Online Mode again.
+              The only existing way out was "Start Fresh" inside MockTestEngine,
+              which is unreachable precisely because of the redirect. Offered
+              only before anything has been graded, so it can't be used to
+              re-attempt a finished paper. */}
+          {hasQuestions && !evalResult && (
+            <button
+              onClick={async () => {
+                await clearExamAttemptMode(currentUser?.uid, testId);
+                navigate(`/test?id=${encodeURIComponent(testId)}`, { replace: true });
+              }}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 ml-auto text-primary-600 hover:bg-primary-50 transition-colors"
+              title="Switch this attempt to the on-screen test engine"
+            >
+              <Monitor size={12} /> Switch to Online Mode
+            </button>
+          )}
         </div>
       </div>
 
       {/* ── Paper view ── */}
       {phase === 'paper' && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
-          <div className="flex items-center gap-3 flex-wrap no-print">
-            <div className="flex items-start gap-2 flex-1 bg-blue-900/20 border border-blue-700/30 rounded-xl px-4 py-3">
-              <BookOpen size={13} className="text-blue-400 shrink-0 mt-0.5" />
-              <p className="text-[11px] text-blue-300 leading-relaxed">
+          {/* flex-col on mobile — box on top, full-width buttons below, not a
+              side-by-side row that never actually wraps (the paragraph just
+              shrinks arbitrarily narrow instead), squeezing both buttons
+              into a cramped column beside a tall, narrow text block. */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 no-print">
+            <div className="flex items-start gap-2 flex-1 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
+              <BookOpen size={13} className="text-blue-600 shrink-0 mt-0.5" />
+              <p className="text-[11px] text-blue-800 leading-relaxed">
                 <strong>Paper Mode:</strong> Print the paper or view it on screen. Write each answer on <em>your own plain paper</em> — number every answer clearly (e.g. Q1: B · Q5: Chlorophyll is…). Photograph all pages under good light, then click <strong>Upload Answers</strong>. AI reads your handwriting and grades every question instantly.
               </p>
             </div>
-            <div className="flex gap-2 shrink-0">
+            <div className="flex gap-2 sm:shrink-0">
               <button
                 onClick={() => window.print()}
-                className="flex items-center gap-2 px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-sm font-semibold transition-colors no-print"
+                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-sm font-semibold transition-colors no-print"
                 title="Print question paper"
               >
                 <Printer size={14} /> Print
               </button>
               <button
                 onClick={() => window.print()}
-                className="flex items-center gap-2 px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-sm font-semibold transition-colors no-print"
+                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-sm font-semibold transition-colors no-print"
                 title="Save as PDF — select 'Save as PDF' in the print dialog"
               >
                 <Download size={14} /> Download PDF
@@ -1322,24 +1389,24 @@ export default function PaperModePage() {
       {/* ── Answer Key view — self-check against the real answers, no upload/AI needed ── */}
       {phase === 'answerkey' && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
-          <div className="flex items-center gap-3 flex-wrap no-print">
-            <div className="flex items-start gap-2 flex-1 bg-emerald-900/20 border border-emerald-700/30 rounded-xl px-4 py-3">
-              <CheckCircle2 size={13} className="text-emerald-400 shrink-0 mt-0.5" />
-              <p className="text-[11px] text-emerald-300 leading-relaxed">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 no-print">
+            <div className="flex items-start gap-2 flex-1 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
+              <CheckCircle2 size={13} className="text-emerald-600 shrink-0 mt-0.5" />
+              <p className="text-[11px] text-emerald-800 leading-relaxed">
                 <strong>Answer Key:</strong> The correct answer and explanation for every question in this paper — print it or check it after attempting the paper on your own.
               </p>
             </div>
-            <div className="flex gap-2 shrink-0">
+            <div className="flex gap-2 sm:shrink-0">
               <button
                 onClick={() => window.print()}
-                className="flex items-center gap-2 px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-sm font-semibold transition-colors no-print"
+                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-sm font-semibold transition-colors no-print"
                 title="Print answer key"
               >
                 <Printer size={14} /> Print
               </button>
               <button
                 onClick={() => window.print()}
-                className="flex items-center gap-2 px-4 py-2.5 bg-slate-700 hover:bg-slate-600 text-white rounded-xl text-sm font-semibold transition-colors no-print"
+                className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-xl text-sm font-semibold transition-colors no-print"
                 title="Save as PDF — select 'Save as PDF' in the print dialog"
               >
                 <Download size={14} /> Download PDF
@@ -1356,10 +1423,10 @@ export default function PaperModePage() {
       {/* ── Upload phase ── */}
       {(phase === 'upload' || phase === 'evaluating') && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-          className="bg-slate-800 border border-white/5 rounded-2xl p-6"
+          className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm"
         >
           {evalError && (
-            <div className="flex items-start gap-2 bg-red-900/20 border border-red-700/30 rounded-xl p-3 mb-4 text-xs text-red-300">
+            <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl p-3 mb-4 text-xs text-red-700">
               <AlertTriangle size={13} className="shrink-0 mt-0.5" /> {evalError}
             </div>
           )}
@@ -1373,7 +1440,7 @@ export default function PaperModePage() {
           <EvaluatedPaperView result={evalResult} answerImages={mainAImages} />
           <div className="flex gap-3 flex-wrap">
             <button onClick={() => setPhase('paper')}
-              className="flex-1 py-3 rounded-2xl bg-slate-700 hover:bg-slate-600 text-white font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors">
+              className="flex-1 py-3 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors">
               <BookOpen size={14} /> View Paper
             </button>
             <button onClick={() => { setPhase('upload'); setEvalResult(null); setEvalError(''); setMainAImages([]); }}
@@ -1387,10 +1454,10 @@ export default function PaperModePage() {
       {/* ── Standalone grader ── */}
       {(phase === 'selfeval' || phase === 'selfevaluating') && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-          className="bg-slate-800 border border-white/5 rounded-2xl p-6"
+          className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm"
         >
           {selfError && (
-            <div className="flex items-start gap-2 bg-red-900/20 border border-red-700/30 rounded-xl p-3 mb-4 text-xs text-red-300">
+            <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl p-3 mb-4 text-xs text-red-700">
               <AlertTriangle size={13} className="shrink-0 mt-0.5" /> {selfError}
             </div>
           )}

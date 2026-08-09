@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Loader2, AlertCircle, User, Mic, MicOff } from 'lucide-react';
+import { Send, Loader2, AlertCircle, User, Mic, MicOff, LayoutGrid, X } from 'lucide-react';
 import katex from 'katex';
 import { VedaAvatarSm } from '../ui/VedaAvatar';
 import { searchKnowledgeBase, createDoubtChat, saveDoubtMessage, getRecentDoubtChat } from '../../lib/supabase';
@@ -12,6 +12,19 @@ import { useAuth } from '../../context/AuthContext';
 import { checkQuota, incrementQuota } from '../../lib/quota';
 import PaywallModal from '../ui/PaywallModal';
 import { buildExamType } from '../../lib/categories';
+
+// historyRef accumulates every exchange for the life of a session (including
+// messages rehydrated from a previous session via getRecentDoubtChat) with
+// no cap — sent in full on every request, this grows request cost roughly
+// quadratically over a long conversation and, worse, keeps re-sending the
+// full-resolution answer-sheet image from an initial analysis on every
+// unrelated follow-up afterward. Windowed here to the most recent messages
+// only when building the actual API request; historyRef.current itself
+// stays complete for persistence/display.
+const RECENT_CONTEXT_MESSAGES = 12;
+function recentContext(history) {
+  return history.slice(-RECENT_CONTEXT_MESSAGES);
+}
 
 function buildSystemPrompt(userProfile) {
   // target_exam alone is the raw onboarding enum (e.g. 'CLASS_10', 'JEE_MAIN') —
@@ -229,6 +242,18 @@ function VedaContent({ text, streaming }) {
   );
 }
 
+// Locally-created messages use Date.now()-based ids everywhere in this file
+// (see scanId/aiId/userMsg below), so that alone is a reliable send-time
+// timestamp with no extra bookkeeping. Restored messages (from
+// getRecentDoubtChat) don't have that — their id is the DB row's real id —
+// so those carry an explicit `timestamp` field (set from the row's
+// created_at) that takes priority here instead.
+function formatMsgTime(msg) {
+  const ms = msg.timestamp ?? Number(msg.id);
+  if (!Number.isFinite(ms)) return '';
+  return new Date(ms).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' });
+}
+
 function Message({ msg }) {
   const isVeda    = msg.role === 'ai';
   const isScanned = isVeda && msg.isScanner;
@@ -241,7 +266,7 @@ function Message({ msg }) {
       >
         <div className="flex-1 h-px bg-slate-200" />
         <span className="flex items-center gap-1 bg-slate-100 border border-slate-200 rounded-full px-2.5 py-0.5 font-medium">
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><rect x="1" y="1" width="3" height="3" rx="0.5" fill="#94a3b8"/><rect x="6" y="1" width="3" height="3" rx="0.5" fill="#94a3b8"/><rect x="1" y="6" width="3" height="3" rx="0.5" fill="#94a3b8"/><rect x="6" y="6" width="3" height="3" rx="0.5" fill="#64748b"/></svg>
+          <LayoutGrid size={10} className="text-slate-400" />
           {msg.content}
         </span>
         <div className="flex-1 h-px bg-slate-200" />
@@ -266,16 +291,21 @@ function Message({ msg }) {
         </div>
       )}
 
-      <div className={[
-        'max-w-[82%] px-4 py-3 rounded-2xl',
-        isVeda
-          ? 'bg-slate-100 text-slate-800 rounded-bl-none'
-          : 'bg-primary-600 text-white rounded-br-none text-sm leading-relaxed whitespace-pre-wrap',
-      ].join(' ')}>
-        {isVeda
-          ? <VedaContent text={msg.content} streaming={msg.streaming} />
-          : <>{msg.content}{msg.streaming && <span className="inline-block ml-0.5 h-3.5 w-0.5 bg-white/70 animate-pulse align-middle" />}</>
-        }
+      <div className={`flex flex-col max-w-[82%] ${isVeda ? 'items-start' : 'items-end'}`}>
+        <div className={[
+          'px-4 py-3 rounded-2xl',
+          isVeda
+            ? 'bg-slate-100 text-slate-800 rounded-bl-none'
+            : 'bg-primary-600 text-white rounded-br-none text-sm leading-relaxed whitespace-pre-wrap',
+        ].join(' ')}>
+          {isVeda
+            ? <VedaContent text={msg.content} streaming={msg.streaming} />
+            : <>{msg.content}{msg.streaming && <span className="inline-block ml-0.5 h-3.5 w-0.5 bg-white/70 animate-pulse align-middle" />}</>
+          }
+        </div>
+        {!msg.streaming && (
+          <span className="text-[10px] text-slate-400 mt-1 px-1">{formatMsgTime(msg)}</span>
+        )}
       </div>
     </motion.div>
   );
@@ -289,7 +319,7 @@ function ErrorBanner({ message, onDismiss }) {
     >
       <AlertCircle size={13} className="shrink-0" />
       <span className="flex-1">{message}</span>
-      <button onClick={onDismiss} className="text-red-400 hover:text-red-600 font-bold">✕</button>
+      <button onClick={onDismiss} className="text-red-400 hover:text-red-600 shrink-0"><X size={13} /></button>
     </motion.div>
   );
 }
@@ -310,6 +340,14 @@ export default function ChatInterface({ imageFiles = [] }) {
   ]);
   const [input,           setInput]           = useState('');
   const [loading,         setLoading]         = useState(false);
+  // True only in the gap between "request sent" and "first token of the AI's
+  // reply arrived" — separate from `loading`, which stays true for the whole
+  // response. Needed because the AI message bubble used to get added to
+  // `messages` up front (empty, streaming:true) in the same render as
+  // setLoading(true), which meant TypingIndicator's old
+  // `messages[messages.length-1]?.role !== 'ai'` check was already false by
+  // the first render — the indicator could never actually show.
+  const [awaitingResponse, setAwaitingResponse] = useState(false);
   const [apiError,        setApiError]        = useState('');
   const [showPaywall,     setShowPaywall]     = useState(false);
   const [listening,       setListening]       = useState(false);
@@ -419,7 +457,10 @@ export default function ChatInterface({ imageFiles = [] }) {
           role:    m.role === 'ai' ? 'assistant' : m.role,
           content: m.content,
         }));
-        setMessages(msgs.map((m) => ({ id: m.id, role: m.role, content: m.content })));
+        setMessages(msgs.map((m) => ({
+          id: m.id, role: m.role, content: m.content,
+          timestamp: m.created_at ? new Date(m.created_at).getTime() : null,
+        })));
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -440,6 +481,7 @@ export default function ChatInterface({ imageFiles = [] }) {
     const ver = ++analysisVerRef.current;
     setAnalysisStarted(true);
     setLoading(true);
+    setAwaitingResponse(true);
 
     const scanId = Date.now().toString();
     const aiId   = (Date.now() + 1).toString();
@@ -451,7 +493,6 @@ export default function ChatInterface({ imageFiles = [] }) {
         isScanner: true,
         content: `Scanning ${imageFiles.length > 1 ? `${imageFiles.length} pages` : '1 page'}…`,
       },
-      { id: aiId, role: 'ai', content: '', streaming: true },
     ]);
 
     /* Convert all images to base64 */
@@ -467,6 +508,7 @@ export default function ChatInterface({ imageFiles = [] }) {
       if (analysisVerRef.current !== ver) return;
       setMessages([{ id: scanId, role: 'ai', content: "I couldn't read the image. Please try uploading again." }]);
       setLoading(false);
+      setAwaitingResponse(false);
       setAnalysisStarted(false);
       return;
     }
@@ -502,7 +544,7 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
         stream:      true,
         messages: [
           { role: 'system', content: buildSystemPrompt(userProfile) },
-          ...historyRef.current,
+          ...recentContext(historyRef.current),
         ],
       });
 
@@ -510,6 +552,8 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
       for await (const chunk of stream) {
         if (analysisVerRef.current !== ver) return;
         full += chunk.choices[0]?.delta?.content ?? '';
+        if (!full) continue; // still waiting on the first token — keep showing TypingIndicator
+        setAwaitingResponse(false);
         setMessages([
           { id: scanId, role: 'ai', isScanner: true, content: `Scanned ${imageFiles.length > 1 ? `${imageFiles.length} pages` : '1 page'}` },
           { id: aiId, role: 'ai', content: full, streaming: true },
@@ -546,7 +590,7 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
       historyRef.current = [];
       setAnalysisStarted(false);
     } finally {
-      if (analysisVerRef.current === ver) setLoading(false);
+      if (analysisVerRef.current === ver) { setLoading(false); setAwaitingResponse(false); }
     }
   };
 
@@ -569,6 +613,7 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
     const userMsg = { id: Date.now().toString(), role: 'user', content: text };
     setMessages((m) => [...m, userMsg]);
     setLoading(true);
+    setAwaitingResponse(true);
     persistMessage('user', text);
 
     // Award XP once per text-message session (images award XP in the analysis effect)
@@ -587,7 +632,6 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
     historyRef.current.push({ role: 'user', content: [{ type: 'text', text }] });
 
     const aiId = (Date.now() + 1).toString();
-    setMessages((m) => [...m, { id: aiId, role: 'ai', content: '', streaming: true }]);
 
     /* RAG: inject relevant knowledge base chunks into system prompt */
     let systemPrompt = buildSystemPrompt(userProfile);
@@ -616,16 +660,24 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
         stream:      true,
         messages: [
           { role: 'system', content: systemPrompt },
-          ...historyRef.current,
+          ...recentContext(historyRef.current),
         ],
       });
 
       let full = '';
+      let started = false;
       for await (const chunk of stream) {
         full += chunk.choices[0]?.delta?.content ?? '';
-        setMessages((m) =>
-          m.map((msg) => msg.id === aiId ? { ...msg, content: full, streaming: true } : msg),
-        );
+        if (!full) continue; // still waiting on the first token — keep showing TypingIndicator
+        if (!started) {
+          started = true;
+          setAwaitingResponse(false);
+          setMessages((m) => [...m, { id: aiId, role: 'ai', content: full, streaming: true }]);
+        } else {
+          setMessages((m) =>
+            m.map((msg) => msg.id === aiId ? { ...msg, content: full, streaming: true } : msg),
+          );
+        }
       }
 
       setMessages((m) =>
@@ -645,6 +697,7 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
       historyRef.current.pop();
     } finally {
       setLoading(false);
+      setAwaitingResponse(false);
       inputRef.current?.focus();
     }
   };
@@ -681,7 +734,7 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
         <AnimatePresence initial={false}>
           {messages.map((msg) => <Message key={msg.id} msg={msg} />)}
         </AnimatePresence>
-        {loading && messages[messages.length - 1]?.role !== 'ai' && <TypingIndicator />}
+        {awaitingResponse && <TypingIndicator />}
         <div ref={bottomRef} />
       </div>
 
@@ -703,12 +756,7 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
                          text-white text-sm font-semibold flex items-center justify-center gap-2 transition-all
                          disabled:opacity-50 shadow-sm"
             >
-              <svg width="15" height="15" viewBox="0 0 15 15" fill="none" className="shrink-0">
-                <rect x="1.5" y="1.5" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4"/>
-                <rect x="8.5" y="1.5" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4"/>
-                <rect x="1.5" y="8.5" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4"/>
-                <rect x="8.5" y="8.5" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4"/>
-              </svg>
+              <LayoutGrid size={15} className="shrink-0" />
               Analyse {imageFiles.length === 1 ? '1 page' : `${imageFiles.length} pages`}
             </button>
           </motion.div>
@@ -734,25 +782,27 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
              * suppresses it. */
             style={{ outline: 'none', boxShadow: 'none' }}
           />
-          {/* Voice input */}
+          {/* Voice input — was h-8 w-8 (32px), under the ~44px minimum
+              comfortable touch target; these are the two most-tapped
+              controls on the whole screen. */}
           <button
             onClick={toggleVoice}
             title={listening ? 'Stop listening' : 'Voice input'}
-            className={`h-8 w-8 shrink-0 rounded-xl flex items-center justify-center transition-all ${
+            className={`touch-target shrink-0 rounded-xl transition-all ${
               listening
                 ? 'bg-red-500 text-white animate-pulse'
                 : 'bg-slate-200 text-slate-500 hover:bg-slate-300'
             }`}
           >
-            {listening ? <MicOff size={14} /> : <Mic size={14} />}
+            {listening ? <MicOff size={16} /> : <Mic size={16} />}
           </button>
           <button
             onClick={sendMessage}
             disabled={!input.trim() || loading}
-            className="h-8 w-8 shrink-0 rounded-xl bg-primary-600 flex items-center justify-center
+            className="touch-target shrink-0 rounded-xl bg-primary-600
                        text-white disabled:opacity-40 transition-all hover:bg-primary-700 active:scale-95"
           >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+            {loading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
           </button>
         </div>
         <p className="text-[10px] text-center text-slate-400 mt-1.5">

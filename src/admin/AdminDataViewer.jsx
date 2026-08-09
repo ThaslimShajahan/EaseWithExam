@@ -86,7 +86,7 @@ export default function AdminDataViewer() {
       const [kb, pap, pub, sess, usr] = await Promise.all([
         getKBStats(),
         adminGetPapers(),
-        getPublishedTests(),
+        getPublishedTests(null, getCallerUid()),
         adminGetTestSessionsStats(),
         adminGetAllUsers(getCallerUid()),
       ]);

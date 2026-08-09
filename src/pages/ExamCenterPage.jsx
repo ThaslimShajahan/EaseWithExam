@@ -6,12 +6,15 @@ import {
   Target, BookOpen, X, ChevronRight, Zap, GraduationCap, Printer, ClipboardList, Bell,
 } from 'lucide-react';
 import { getExamPattern, getMarkingLabel, getSubjectQuestionCount, getTestDurationMinutes } from '../lib/examPattern';
+import { getExamLabel } from '../lib/categories';
 import { getPublishedTests, getCompletedTestIds, supabase, publishPYQPaper } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { checkQuota } from '../lib/quota';
 import { getFeatureFlag, FLAGS } from '../lib/featureFlags';
 import PaywallModal from '../components/ui/PaywallModal';
+import EweSpinner from '../components/ui/EweSpinner';
 import { startBackgroundPaperGeneration, isGenerationInFlight } from '../lib/backgroundGeneration';
+import { createNotification } from '../lib/notifications';
 
 import { useSyllabusSubjects } from '../hooks/useSyllabusSubjects';
 import { useSyllabusChapters } from '../hooks/useSyllabusChapters';
@@ -153,6 +156,10 @@ function GenerateModal({ onClose, onStarted }) {
       durationMinutes: duration,
     }).catch(() => {}); // failure already surfaced via in-app notification
 
+    // Immediate feedback: transient toast + persisted in-app notification
+    try {
+      createNotification(currentUser?.uid, 'info', 'Paper generation started', `Generating ${examType} · ${subject} in background. We'll notify you when ready.`).catch(() => {});
+    } catch (_) {}
     onStarted();
   };
 
@@ -162,10 +169,17 @@ function GenerateModal({ onClose, onStarted }) {
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
+      {/* Bounded height + scrolling body + pinned footer.
+          Previously this was a plain `p-6 space-y-5` block with no max-height,
+          so on a short laptop screen the modal grew past the viewport and the
+          "Start Generating" button at the bottom was simply unreachable —
+          there was nothing to scroll, because the modal itself overflowed its
+          fixed-position parent rather than scrolling internally. */}
       <motion.div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-5"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90dvh] flex flex-col overflow-hidden"
         initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }}
       >
+        <div className="p-6 pb-4 space-y-5 overflow-y-auto flex-1 min-h-0">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="font-bold text-slate-900 text-lg">Generate New Paper</h3>
@@ -179,7 +193,7 @@ function GenerateModal({ onClose, onStarted }) {
         {/* Locked exam badge */}
         <div className="flex items-center gap-2 bg-primary-50 border border-primary-100 rounded-xl px-3 py-2">
           <span className="text-xs text-primary-500 font-semibold uppercase tracking-wide">Exam</span>
-          <span className="ml-auto text-xs font-bold text-primary-700 bg-primary-100 px-2 py-0.5 rounded-full">{examType}</span>
+          <span className="ml-auto text-xs font-bold text-primary-700 bg-primary-100 px-2 py-0.5 rounded-full">{getExamLabel(examType)}</span>
           <span className="text-[10px] text-primary-400">· locked to your profile</span>
         </div>
 
@@ -224,13 +238,17 @@ function GenerateModal({ onClose, onStarted }) {
             {error}
           </div>
         )}
+        </div>
 
-        <button
-          onClick={handleGenerate}
-          className="w-full py-4 rounded-2xl bg-primary-600 text-white font-bold flex items-center justify-center gap-2 hover:bg-primary-700 transition-colors"
-        >
-          <Sparkles size={16} /> Start Generating
-        </button>
+        {/* Pinned outside the scroll area so it's always reachable. */}
+        <div className="p-6 pt-4 border-t border-slate-100 shrink-0">
+          <button
+            onClick={handleGenerate}
+            className="w-full py-4 rounded-2xl bg-primary-600 text-white font-bold flex items-center justify-center gap-2 hover:bg-primary-700 transition-colors"
+          >
+            <Sparkles size={16} /> Start Generating
+          </button>
+        </div>
       </motion.div>
 
       {showPaywall && (
@@ -407,6 +425,8 @@ function PYQBankSection() {
         subject:  group.subject  || 'Mixed',
         durationMinutes: dur,
         pyqRows: group.rows,
+        // student context
+        userId: currentUser?.uid,
       });
       navigate(`/test?id=${pub.id}`);
     } catch (e) {
@@ -531,7 +551,7 @@ export default function ExamCenterPage() {
     setLoading(true);
     try {
       const [data, done] = await Promise.all([
-        getPublishedTests(),
+        getPublishedTests(currentUser?.uid),
         getCompletedTestIds(currentUser?.uid),
       ]);
       setPapers(data);
@@ -544,6 +564,22 @@ export default function ExamCenterPage() {
   };
 
   useEffect(() => { loadPapers(); }, [currentUser?.uid]);
+
+  // Paper generation runs in the background and can finish while this page is
+  // already open or backgrounded, so the new paper simply never appeared until
+  // a manual reload. Refetch when the tab regains focus (covers "generate,
+  // switch away, come back") and when the generator reports completion.
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === 'visible') loadPapers(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('ewe:paper-ready', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('ewe:paper-ready', refresh);
+    };
+  }, [currentUser?.uid]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     getFeatureFlag(FLAGS.PAPER_MODE_V2).then(setPaperModeEnabled).catch(() => {});
   }, []);
@@ -554,6 +590,7 @@ export default function ExamCenterPage() {
   // at the student-facing consumer. Without it, a draft/unpublished test was
   // fully visible and launchable by students exactly like a real one.
   const gradeFiltered = papers.filter((p) => p.is_published !== false && (!p.exam_type || p.exam_type === userExam));
+  const examTypeChips = ['All', ...new Set(gradeFiltered.map((p) => p.exam_type).filter(Boolean))];
   const filtered = filter === 'All'
     ? gradeFiltered
     : gradeFiltered.filter((p) => p.exam_type === filter);
@@ -571,7 +608,7 @@ export default function ExamCenterPage() {
   };
 
   return (
-    <div className="space-y-5 p-4 lg:p-0 max-w-3xl mx-auto lg:mx-0">
+    <div className="space-y-5 p-4 lg:p-0 max-w-3xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -615,17 +652,23 @@ export default function ExamCenterPage() {
         <div className="flex-1 h-px bg-slate-100" />
       </div>
 
-      {/* Filter chips — derived from the student's visible papers so no ghost chips appear */}
-      <div className="flex flex-wrap gap-2">
-        {['All', ...new Set(gradeFiltered.map((p) => p.exam_type).filter(Boolean))].map((f) => (
-          <Chip key={f} label={f} selected={filter === f} onClick={() => setFilter(f)} />
-        ))}
-      </div>
+      {/* Filter chips — derived from the student's visible papers so no ghost
+          chips appear. Hidden entirely when every paper shares one exam type:
+          a Class 12 student saw "All | CBSE Class 12", which filters nothing
+          and just restates what they already told us at signup. */}
+      {examTypeChips.length > 1 && (
+        <div className="flex flex-wrap gap-2">
+          {examTypeChips.map((f) => (
+            <Chip key={f} label={f} selected={filter === f} onClick={() => setFilter(f)} />
+          ))}
+        </div>
+      )}
 
       {/* Content */}
       {loading ? (
-        <div className="card p-8 flex items-center justify-center gap-2 text-sm text-slate-500">
-          <Loader2 size={18} className="animate-spin" /> Loading papers…
+        <div className="card p-8 flex flex-col items-center justify-center gap-2 text-sm text-slate-500">
+          <EweSpinner size="sm" />
+          Loading papers…
         </div>
       ) : filtered.length === 0 ? (
         <EmptyState onGenerate={() => setShowModal(true)} />

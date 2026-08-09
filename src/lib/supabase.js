@@ -1,11 +1,52 @@
 import { createClient } from '@supabase/supabase-js';
+import { auth, adminAuth } from '../firebase/config';
 import { logChange, ENTITY, ACTION } from './changelog';
 import { embedText } from './aiProxy';
 
 const supabaseUrl  = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnon = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-export const supabase = createClient(supabaseUrl, supabaseAnon);
+/**
+ * Every request carries the current Firebase ID token, which Supabase
+ * validates against Google's JWKS (Firebase is registered as a third-party
+ * auth provider). That makes `auth.jwt() ->> 'sub'` a PROVEN Firebase UID in
+ * Postgres — previously it was NULL, which is why every RPC had to take an
+ * unverified `p_caller` string and why anyone with the public anon key could
+ * impersonate an admin by supplying a known UID.
+ *
+ * Admin and student sessions are deliberately separate Firebase app instances
+ * (see firebase/config.js), so the right identity depends on where we are:
+ * the admin portal authenticates via `adminAuth`, everything else via `auth`.
+ * Falling back the other way keeps a signed-in identity attached rather than
+ * dropping to anon.
+ *
+ * Returning null is normal and fine — signed-out visitors hit public reads,
+ * and the request simply carries the anon key alone.
+ */
+async function currentFirebaseIdToken() {
+  try {
+    const onAdminRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/admin');
+    const primary  = onAdminRoute ? adminAuth : auth;
+    const fallback = onAdminRoute ? auth      : adminAuth;
+    const user = primary.currentUser ?? fallback.currentUser;
+    return user ? await user.getIdToken() : null;
+  } catch {
+    return null;
+  }
+}
+
+export const supabase = createClient(supabaseUrl, supabaseAnon, {
+  accessToken: currentFirebaseIdToken,
+});
+
+function _getCallerUidFromSession() {
+  try {
+    const key = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch {
+    return '';
+  }
+}
 
 /* ── Users ──────────────────────────────────────────────── */
 
@@ -123,7 +164,11 @@ export async function getExamAttemptMode(firebaseUid, testId) {
 
 export async function clearExamAttemptMode(firebaseUid, testId) {
   if (!firebaseUid || !testId) return;
-  await supabase.rpc('clear_exam_attempt_mode', { p_uid: firebaseUid, p_test_id: testId }).catch(() => {});
+  try {
+    await supabase.rpc('clear_exam_attempt_mode', { p_uid: firebaseUid, p_test_id: testId });
+  } catch (e) {
+    // ignore
+  }
 }
 
 /* Returns a map of { testId → attempt } for the student — used by ExamCenter */
@@ -239,7 +284,7 @@ export async function adminGetAllUsers(callerUid) {
 }
 
 export async function adminGrantPremium(firebaseUid, plan = 'premium_yearly') {
-  const expiryDays = plan === 'neet_complete' ? 365 : plan === 'premium_yearly' ? 365 : 30;
+  const expiryDays = plan === 'neet_complete' ? 1095 : plan === 'premium_yearly' ? 365 : 30;
   const expires_at = new Date(Date.now() + expiryDays * 86_400_000).toISOString();
   const { error } = await supabase
     .from('subscriptions')
@@ -390,7 +435,12 @@ export async function adminClearAllData(callerUid) {
     supabase.from('knowledge_base').delete().neq('id', DUMMY),
     supabase.from('question_cache').delete().neq('id', DUMMY),
     supabase.from('pyq_questions').delete().neq('id', DUMMY),
-    supabase.from('published_tests').delete().neq('id', DUMMY),
+    (async () => {
+      try {
+        const { data } = await supabase.rpc('admin_list_published_tests', { p_caller: callerUid });
+        if (data?.length) await Promise.all(data.map((r) => supabase.rpc('admin_delete_published_test', { p_caller: callerUid, p_id: r.id })));
+      } catch {}
+    })(),
     supabase.from('topic_frequency').delete().neq('exam_type', '__never__'),
     supabase.from('question_papers').delete().neq('id', DUMMY),
     supabase.from('study_notes').delete().neq('id', DUMMY),
@@ -407,20 +457,38 @@ export async function adminClearAllData(callerUid) {
 // AdminPaperGen and the student's own Exam Center "New Paper" generator write
 // into this same table, and without this marker admin has no way to tell an
 // admin-curated paper apart from one a random student auto-generated.
-export async function publishTest({ title, subject, examType, difficulty, questions, durationMinutes, blueprintMatchPct, createdBy = 'admin' }) {
-  const insertRow = {
-    title, subject, exam_type: examType, difficulty, questions,
-    duration_minutes: durationMinutes, is_published: true,
-    question_count: Array.isArray(questions) ? questions.length : 0,
+export async function publishTest({ title, subject, examType, difficulty, questions, durationMinutes, blueprintMatchPct, createdBy = 'admin', userId = null, callerUid = null }) {
+  // Student publishing goes through a dedicated RPC
+  if (createdBy === 'student') {
+    const { data, error } = await supabase.rpc('publish_test_by_student', {
+      p_uid: userId,
+      p_title: title,
+      p_subject: subject,
+      p_exam_type: examType,
+      p_difficulty: difficulty,
+      p_questions: questions,
+      p_duration_minutes: durationMinutes,
+      p_blueprint_match_pct: blueprintMatchPct ?? null,
+    });
+    if (error) throw new Error(error.message);
+    logChange(ENTITY.PUBLISHED_TEST, data.id, ACTION.PUBLISH,
+      { title, subject, examType, difficulty, questionCount: Array.isArray(questions) ? questions.length : 0, blueprintMatchPct },
+      'Student published AI-generated test');
+    return data;
+  }
+
+  // Admin (or system) publishing uses admin_publish_test and requires a caller UID
+  const caller = callerUid ?? _getCallerUidFromSession();
+  const fields = {
+    title, subject, exam_type: examType, difficulty,
+    questions: questions ?? [],
+    duration_minutes: durationMinutes ?? null,
+    blueprint_match_pct: blueprintMatchPct ?? null,
     created_by: createdBy,
   };
-  if (blueprintMatchPct !== undefined) insertRow.blueprint_match_pct = blueprintMatchPct;
+  if (userId) fields.user_id = userId;
 
-  const { data, error } = await supabase
-    .from('published_tests')
-    .insert(insertRow)
-    .select()
-    .single();
+  const { data, error } = await supabase.rpc('admin_publish_test', { p_caller: caller, p_fields: fields });
   if (error) throw new Error(error.message);
   logChange(ENTITY.PUBLISHED_TEST, data.id, ACTION.PUBLISH,
     { title, subject, examType, difficulty, questionCount: Array.isArray(questions) ? questions.length : 0, blueprintMatchPct },
@@ -429,7 +497,7 @@ export async function publishTest({ title, subject, examType, difficulty, questi
 }
 
 /* Publish raw PYQ questions as a test (no AI generation needed) */
-export async function publishPYQPaper({ title, examType, subject, durationMinutes, pyqRows }) {
+export async function publishPYQPaper({ title, examType, subject, durationMinutes, pyqRows, userId = null, callerUid = null }) {
   const batchId = Date.now().toString(36);
   const LETTER_IDX = { A: 0, B: 1, C: 2, D: 3 };
   const DESCRIPTIVE = new Set(['Short Answer', 'Long Answer']);
@@ -472,48 +540,65 @@ export async function publishPYQPaper({ title, examType, subject, durationMinute
   const totalMarks    = pyqRows.reduce((s, q) => s + (q.marks ?? 1), 0);
   const difficultyTag = 'Mixed';
 
-  const { data, error } = await supabase
-    .from('published_tests')
-    .insert({
+  // If an admin is present in session storage, publish via admin RPC; otherwise
+  // treat this as a student action and publish via the student RPC (pyq auto
+  // papers created by students will be marked as 'student').
+  const caller = callerUid ?? _getCallerUidFromSession();
+  if (caller) {
+    const fields = {
       title,
       subject,
-      exam_type:        examType,
-      difficulty:       difficultyTag,
+      exam_type: examType,
+      difficulty: difficultyTag,
       questions,
       duration_minutes: durationMinutes,
-      is_published:     true,
-      question_count:   questions.length,
-      created_by:       'pyq_auto',
-    })
-    .select()
-    .single();
-  if (error) throw new Error(error.message);
-  logChange(ENTITY.PUBLISHED_TEST, data.id, ACTION.PUBLISH,
-    { title, examType, subject, durationMinutes, questionCount: questions.length, totalMarks },
-    'Admin published PYQ paper as test');
-  return data;
+      blueprint_match_pct: null,
+      created_by: 'pyq_auto',
+    };
+    const { data, error } = await supabase.rpc('admin_publish_test', { p_caller: caller, p_fields: fields });
+    if (error) throw new Error(error.message);
+    logChange(ENTITY.PUBLISHED_TEST, data.id, ACTION.PUBLISH,
+      { title, examType, subject, durationMinutes, questionCount: questions.length, totalMarks },
+      'Admin published PYQ paper as test');
+    return data;
+  }
+
+  // Student flow: publish via student RPC if userId provided
+  if (userId) {
+    return publishTest({ title, subject, examType, difficulty: difficultyTag, questions, durationMinutes, blueprintMatchPct: null, createdBy: 'student', userId });
+  }
+  throw new Error('publishPYQPaper: student-side PYQ publish must include userId');
 }
 
-export async function getPublishedTests() {
-  const { data } = await supabase
-    .from('published_tests')
-    .select('id, title, subject, exam_type, difficulty, duration_minutes, question_count, created_at, is_published, created_by')
-    .order('created_at', { ascending: false });
+export async function getPublishedTests(currentUserUid = null, callerUid = null) {
+  const caller = callerUid ?? _getCallerUidFromSession();
+  if (caller) {
+    const { data, error } = await supabase.rpc('admin_list_published_tests', { p_caller: caller });
+    if (error) throw new Error(error.message);
+    return data ?? [];
+  }
+  const { data, error } = await supabase.rpc('get_published_tests_for_student', { p_uid: currentUserUid });
+  if (error) throw new Error(error.message);
   return data ?? [];
 }
 
-export async function getPublishedTest(id) {
-  const { data, error } = await supabase
-    .from('published_tests')
-    .select('*')
-    .eq('id', id)
-    .single();
-  if (error) throw error;
-  return data;
+export async function getPublishedTest(id, currentUserUid = null, callerUid = null) {
+  const caller = callerUid ?? _getCallerUidFromSession();
+  if (caller) {
+    const { data, error } = await supabase.rpc('admin_get_published_test', { p_caller: caller, p_id: id });
+    if (error) throw new Error(error.message);
+    return data ?? null;
+  }
+  const { data, error } = await supabase.rpc('get_published_test_for_student', { p_id: id, p_uid: currentUserUid });
+  if (error) throw new Error(error.message);
+  return data ?? null;
 }
 
-export async function deletePublishedTest(id) {
-  await supabase.from('published_tests').delete().eq('id', id);
+export async function deletePublishedTest(id, callerUid = null) {
+  const caller = callerUid ?? _getCallerUidFromSession();
+  if (!caller) throw new Error('deletePublishedTest requires an admin caller');
+  const { error } = await supabase.rpc('admin_delete_published_test', { p_caller: caller, p_id: id });
+  if (error) throw new Error(error.message);
   logChange(ENTITY.PUBLISHED_TEST, id, ACTION.DELETE_REQUEST, null, 'Admin deleted published test');
 }
 
@@ -668,11 +753,16 @@ export async function getKBStats() {
   return { total: (data ?? []).length, bySubject };
 }
 
-export async function getPublishedTestsCount() {
-  const { count } = await supabase
-    .from('published_tests')
-    .select('*', { count: 'exact', head: true });
-  return count ?? 0;
+export async function getPublishedTestsCount(callerUid = null) {
+  const caller = callerUid ?? _getCallerUidFromSession();
+  if (caller) {
+    const { data, error } = await supabase.rpc('admin_list_published_tests', { p_caller: caller });
+    if (error) throw new Error(error.message);
+    return (data ?? []).length;
+  }
+  const { data, error } = await supabase.rpc('get_published_tests_for_student', { p_uid: null });
+  if (error) throw new Error(error.message);
+  return (data ?? []).length;
 }
 
 export async function adminGetTestSessionsStats() {

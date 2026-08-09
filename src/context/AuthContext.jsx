@@ -8,6 +8,8 @@ import {
   signInWithRedirect,
   signInWithPhoneNumber,
   linkWithPhoneNumber,
+  linkWithPopup,
+  unlink,
   signOut as firebaseSignOut,
 } from 'firebase/auth';
 import { auth } from '../firebase/config';
@@ -47,17 +49,17 @@ export function AuthProvider({ children }) {
     } catch { setSubscription(null); }
   };
 
-  const createOrFetchProfile = async (user) => {
-    const profile = await upsertUser(user.uid, {
-      auth_method:  'google',
-      display_name: user.displayName || null,
-      email:        user.email       || null,
-      photo_url:    user.photoURL    || null,
-    });
-    setUserProfile(profile);
-    setProfileError(null);
-    await loadSubscription(user.uid);
-    return profile;
+  // Derives the auth_method to upsert from Firebase's providerData rather
+  // than a hardcoded literal — needed now that a single call site (see
+  // onAuthStateChanged below) handles both Google and phone sign-in. Google
+  // always wins if present, matching the pre-existing invariant that linking
+  // a phone number to an existing Google account (the `wasLinking` path in
+  // verifyOTP) never relabels auth_method as 'phone'.
+  const deriveAuthMethod = (user) => {
+    const providers = (user.providerData || []).map((p) => p.providerId);
+    if (providers.includes('google.com')) return 'google';
+    if (providers.includes('phone'))      return 'phone';
+    return 'google';
   };
 
   // Re-runs the same profile fetch onAuthStateChanged does on mount — exposed
@@ -93,6 +95,14 @@ export function AuthProvider({ children }) {
       const qaUid = QA_BYPASS_UID;
       const fakeUser = { uid: qaUid, email: `${qaUid}@qa.local`, displayName: 'QA Tester', photoURL: null };
       setCurrentUser(fakeUser);
+      // StrictMode double-invokes effects in dev — without this guard, the
+      // first invocation's async fetch can resolve AFTER a real user action
+      // in between (e.g. completing onboarding), and its stale profile
+      // snapshot silently overwrites the fresh one. Same missing-cancellation
+      // shape as any un-guarded async effect; onAuthStateChanged below
+      // doesn't need this because it's a real subscription with its own
+      // unsub cleanup, not a plain fire-and-forget IIFE.
+      let cancelled = false;
       (async () => {
         let profile = await getUser(qaUid).catch(() => null);
         if (!profile) {
@@ -100,37 +110,71 @@ export function AuthProvider({ children }) {
           // 'google'/'phone'; this fake profile just needs to satisfy it.
           profile = await upsertUser(qaUid, { auth_method: 'google', display_name: 'QA Tester', email: fakeUser.email });
         }
+        if (cancelled) return;
         setUserProfile(profile);
         await loadSubscription(qaUid);
+        if (cancelled) return;
         setLoading(false);
       })();
-      return;
+      return () => { cancelled = true; };
     }
 
-    // Consume redirect result on mobile after Google sign-in
-    getRedirectResult(auth)
-      .then(async (result) => {
-        if (result?.user) await createOrFetchProfile(result.user);
-      })
-      .catch((err) => {
-        console.error(err);
-        // onAuthStateChanged (below) still fires independently once Firebase's
-        // own auth state resolves, and will set its own profileError/loading —
-        // this catch only covers the profile-creation half of the redirect flow.
-        setProfileError(err);
-      });
+    // Consume the pending redirect result on mobile after Google sign-in —
+    // still needs to be called to complete Firebase's redirect round-trip,
+    // but no longer does its own profile upsert: onAuthStateChanged below
+    // fires independently for this same sign-in and now owns that write
+    // exclusively (see the comment there for why this used to race it).
+    getRedirectResult(auth).catch((err) => {
+      console.error(err);
+      setProfileError(err);
+    });
 
     const unsub = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       if (user) {
         try {
-          const profile = await getUser(user.uid);
+          // Single writer for the post-auth profile row. This used to be a
+          // plain read (getUser) here, while signInWithGoogle/verifyOTP
+          // separately fired their OWN upsertUser call for the exact same
+          // sign-in event — two independent, unsequenced writers racing to
+          // set `userProfile`, and whichever's response landed last in the
+          // browser won. On a fresh sign-in, this SELECT could execute at
+          // the DB just before the other call's INSERT committed, correctly
+          // find no row yet (not an error — data is fine, no console noise),
+          // and then still "win" the race by resolving after the real
+          // upsert — permanently stuck at userProfile=null. Doing the
+          // upsert HERE instead makes this the only writer, so there's
+          // nothing left to race. Safe to call on every auth-state firing,
+          // not just first sign-in — upsert_own_user coalesces against the
+          // existing row for every field, so it never clobbers
+          // onboarding_completed/target_exam/syllabus/class_level.
+          const profile = await upsertUser(user.uid, {
+            auth_method:  deriveAuthMethod(user),
+            display_name: user.displayName || null,
+            email:        user.email       || null,
+            phone_number: user.phoneNumber || null,
+            photo_url:    user.photoURL    || null,
+          });
           setUserProfile(profile);
           setProfileError(null);
           await loadSubscription(user.uid);
         } catch (err) {
-          console.error('Profile fetch error:', err);
-          setProfileError(err);
+          // Reverse of the phone-login de-dupe check: this email is already
+          // the verified email on a DIFFERENT existing account (e.g. a
+          // phone-signup student who connected this exact email via
+          // Notification Settings — Batch 9) — users_email_unique_idx
+          // (sql/0056) rejects the write rather than silently attaching it
+          // to two accounts. Surface a clear message and drop this brand-new,
+          // otherwise-profile-less Firebase identity instead of leaving the
+          // user stuck signed in with no Supabase row behind them.
+          if (err.code === '23505' || /duplicate key.*email/i.test(err.message || '')) {
+            console.error('Profile fetch error: email already in use by another account', err);
+            setProfileError(new Error('An account already exists with this email. Please sign in with your original method instead.'));
+            await user.delete().catch(() => firebaseSignOut(auth));
+          } else {
+            console.error('Profile fetch error:', err);
+            setProfileError(err);
+          }
         }
       } else {
         setUserProfile(null);
@@ -152,7 +196,8 @@ export function AuthProvider({ children }) {
 
     try {
       const result = await signInWithPopup(auth, provider);
-      await createOrFetchProfile(result.user);
+      // Profile upsert happens exclusively in onAuthStateChanged, which
+      // fires independently for this same sign-in — see the comment there.
       return result.user;
     } catch (err) {
       // auth/popup-closed-by-user is a very common FALSE POSITIVE on mobile —
@@ -174,6 +219,50 @@ export function AuthProvider({ children }) {
         // strands the user back on the login page with no error at all.
         await signInWithRedirect(auth, provider);
         return null; // getRedirectResult() in useEffect will handle the result
+      }
+      throw err;
+    }
+  };
+
+  // Adds Google as a second sign-in credential to an already-signed-in
+  // (typically phone-signup) account — the reverse direction of the phone-
+  // linking flow below, same uid throughout. Popup-only (no redirect
+  // fallback like signInWithGoogle): this is an in-app settings action
+  // reachable only while already authenticated, not the initial sign-in
+  // gate where a blocked popup would otherwise strand a new user entirely.
+  const linkGoogleAccount = async () => {
+    if (!currentUser) throw new Error('Not authenticated');
+    const provider = new GoogleAuthProvider();
+    provider.addScope('profile');
+    provider.addScope('email');
+
+    // Errors from linkWithPopup (credential-already-in-use, popup-closed-by-
+    // user, etc.) are left as real Firebase errors with their original
+    // `.code` here — deliberately NOT re-wrapped in a custom message, so
+    // the single shared mapAuthError (lib/authErrors.js) at the UI layer is
+    // the one place that decides the copy, including which codes (like a
+    // user just closing the popup) shouldn't show an error banner at all.
+    const result = await linkWithPopup(currentUser, provider);
+
+    try {
+      const updated = await updateUser(currentUser.uid, {
+        email:      result.user.email    || undefined,
+        photo_url:  result.user.photoURL || undefined,
+      });
+      setUserProfile(updated);
+      return result.user;
+    } catch (err) {
+      // Firebase-side linking succeeded, but this Google email is already
+      // the verified email on a DIFFERENT Supabase account
+      // (users_email_unique_idx, sql/0056) — a narrow split-brain case, only
+      // reachable if that other account separately verified this exact
+      // email via connect-email. Unlink the credential we just added rather
+      // than leaving Firebase and Supabase disagreeing about who owns it —
+      // this is the user's real, established account, so the credential
+      // gets rolled back, never the account itself.
+      await unlink(currentUser, 'google.com').catch(() => {});
+      if (err.code === '23505' || /duplicate key.*email/i.test(err.message || '')) {
+        throw new Error('This email is already associated with a different account.');
       }
       throw err;
     }
@@ -205,6 +294,13 @@ export function AuthProvider({ children }) {
     if (!confirmationRef.current) throw new Error('No OTP request in progress. Please request a new code.');
     const wasLinking = !!currentUser;
 
+    // A wrong/expired code, or (when linking) this phone number already
+    // being the real Firebase credential for a DIFFERENT uid, both surface
+    // here as real Firebase errors with their original `.code` — left
+    // untranslated for the same reason as linkGoogleAccount above: the
+    // shared mapAuthError (lib/authErrors.js) is the single place that
+    // turns auth/credential-already-in-use, auth/invalid-verification-code,
+    // etc. into friendly copy.
     const result = await confirmationRef.current.confirm(code);
     confirmationRef.current = null;
 
@@ -223,30 +319,31 @@ export function AuthProvider({ children }) {
       throw new Error('An account already exists for this phone number. Please continue with Google instead.');
     }
 
-    await createOrFetchProfilePhone(result.user);
+    // Profile upsert happens in onAuthStateChanged, which fires independently
+    // for this same fresh sign-in — same reasoning as signInWithGoogle above.
     return result.user;
-  };
-
-  const createOrFetchProfilePhone = async (user) => {
-    const profile = await upsertUser(user.uid, {
-      auth_method:  'phone',
-      phone_number: user.phoneNumber || null,
-    });
-    setUserProfile(profile);
-    await loadSubscription(user.uid);
-    return profile;
   };
 
   /* ── Onboarding completion ─────────────────────────────── */
 
   const completeOnboarding = async ({ targetExam, syllabus, classLevel }) => {
     if (!currentUser) throw new Error('Not authenticated');
-    const updated = await updateUser(currentUser.uid, {
+    const fields = {
       onboarding_completed: true,
       target_exam:          targetExam,
       syllabus,
       class_level:          classLevel,
-    });
+    };
+    // update_own_user is UPDATE-only (matches every row genuinely reaching
+    // onboarding in production, since loading already gates the UI until
+    // the row exists). Falls back to upsert only for the narrow case where
+    // that assumption doesn't hold — found via the QA-bypass dev harness
+    // racing ahead of its own mount-time row creation, not a path real
+    // users can reach, but a cheap, safe guard regardless.
+    let updated = await updateUser(currentUser.uid, fields);
+    if (!updated?.firebase_uid) {
+      updated = await upsertUser(currentUser.uid, fields);
+    }
     setUserProfile(updated);
   };
 
@@ -269,7 +366,7 @@ export function AuthProvider({ children }) {
   const value = {
     currentUser, userProfile, subscription, isPremium,
     loading, profileError, retryProfile,
-    signInWithGoogle, sendOTP, verifyOTP, completeOnboarding, signOut, refreshSubscription,
+    signInWithGoogle, linkGoogleAccount, sendOTP, verifyOTP, completeOnboarding, signOut, refreshSubscription,
   };
 
   return (

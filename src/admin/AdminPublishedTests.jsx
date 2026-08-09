@@ -5,6 +5,12 @@ import {
   CheckSquare, Square, Users, Clock, BookOpen, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { getPublishedTests, deletePublishedTest, supabase } from '../lib/supabase';
+function getCallerUid() {
+  try {
+    const key = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch { return ''; }
+}
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 import { DIFFICULTY_DARK, diffBadge } from '../lib/badgeStyles';
 
@@ -119,21 +125,57 @@ function TestRow({ test, selected, onToggle, attempts, onDelete }) {
                 exit={{ opacity: 0, height: 0 }}
                 className="overflow-hidden"
               >
-                <div className="bg-slate-900 rounded-xl p-4 border border-white/5 space-y-2">
-                  <p className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider mb-2">
-                    First 5 questions
+                {/* Full paper review.
+                    This used to show "First 5 questions" as 2-line-clamped
+                    text with no options, no answers and no figures — so an
+                    admin could not actually review a paper before students
+                    sat it. That matters more now that questions carry
+                    generated diagrams, which are exactly the thing most
+                    likely to be wrong and most in need of a human look. */}
+                <div className="bg-slate-900 rounded-xl p-4 border border-white/5">
+                  <p className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider mb-3">
+                    All {(test.questions ?? []).length} questions
                   </p>
-                  {(test.questions ?? []).slice(0, 5).map((q, i) => (
-                    <div key={i} className="flex gap-2 text-xs text-slate-400">
-                      <span className="text-slate-600 shrink-0 tabular-nums">{i + 1}.</span>
-                      <span className="line-clamp-2">{q.question}</span>
-                    </div>
-                  ))}
-                  {(test.questions ?? []).length > 5 && (
-                    <p className="text-[11px] text-slate-600 italic">
-                      +{test.questions.length - 5} more questions not shown
-                    </p>
-                  )}
+                  <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+                    {(test.questions ?? []).map((q, i) => (
+                      <div key={i} className="flex gap-2 text-xs border-b border-white/5 pb-3 last:border-0">
+                        <span className="text-slate-600 shrink-0 tabular-nums pt-0.5">{i + 1}.</span>
+                        <div className="min-w-0 flex-1 space-y-2">
+                          <p className="text-slate-300 leading-relaxed">{q.question}</p>
+
+                          {q.image_url && (
+                            <img src={q.image_url} alt={`Figure for question ${i + 1}`}
+                              className="max-h-52 rounded-lg border border-white/10 bg-white p-1" />
+                          )}
+                          {!q.image_url && q.diagram_description && (
+                            <p className="text-[11px] text-amber-400/80 italic">
+                              Figure described but not generated: {q.diagram_description}
+                            </p>
+                          )}
+
+                          {Array.isArray(q.options) && q.options.length > 0 && (
+                            <div className="grid sm:grid-cols-2 gap-x-4 gap-y-1">
+                              {q.options.map((opt, oi) => (
+                                <span key={oi} className={oi === q.correctOption ? 'text-emerald-400 font-semibold' : 'text-slate-500'}>
+                                  {String.fromCharCode(65 + oi)}. {opt}
+                                  {oi === q.correctOption && ' ✓'}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {q.correctAnswer && (
+                            <p className="text-emerald-400 font-semibold">Answer: {q.correctAnswer}</p>
+                          )}
+                          {q.explanation && (
+                            <p className="text-slate-500 leading-relaxed">{q.explanation}</p>
+                          )}
+                        </div>
+                        <span className="text-slate-600 shrink-0 text-[11px]">
+                          {typeof q.marks === 'number' ? `${q.marks}M` : ''}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </motion.div>
             </td>
@@ -159,7 +201,7 @@ export default function AdminPublishedTests() {
     setSelected(new Set());
 
     const [testRows, sessionRows] = await Promise.all([
-      getPublishedTests(),
+      getPublishedTests(null, getCallerUid()),
       supabase
         .from('test_sessions')
         .select('test_id')
@@ -198,7 +240,7 @@ export default function AdminPublishedTests() {
   const doDelete = async (ids) => {
     setDeleting(true);
     setConfirm(null);
-    await Promise.all(ids.map((id) => deletePublishedTest(id)));
+    await Promise.all(ids.map((id) => deletePublishedTest(id, getCallerUid())));
     await load();
     setDeleting(false);
   };

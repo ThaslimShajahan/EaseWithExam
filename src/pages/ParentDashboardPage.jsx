@@ -10,6 +10,7 @@ import { getUserGamification, getLevelProgress, LEVEL_TITLES } from '../lib/gami
 import { getUserSubscription, PLANS } from '../lib/subscription';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
+import { formatExamLabel } from '../lib/categories';
 
 /* ── Token validation against parent_student_links ──────────── */
 async function validateParentToken(studentUid, token) {
@@ -285,7 +286,7 @@ export default function ParentDashboardPage() {
           <BookOpen size={11} /> {planName}
         </span>
         <span className="text-xs text-slate-400">
-          {profile?.target_exam?.replace(/_/g, ' ')} •{' '}
+          {formatExamLabel(profile?.target_exam, '')} •{' '}
           {profile?.class_level ? `Class ${profile.class_level}` : ''}
         </span>
       </div>

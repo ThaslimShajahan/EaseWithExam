@@ -12,6 +12,7 @@ import { supabase } from '../../lib/supabase';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { getQuotaSnapshot, FIELD_LABELS } from '../../lib/quota';
 import { useNotificationsContext } from '../../context/NotificationsContext';
+import { formatExamLabel } from '../../lib/categories';
 
 const NAV_ITEMS = [
   { to: '/dashboard', icon: LayoutDashboard,      label: 'Dashboard' },
@@ -101,7 +102,7 @@ export default function Sidebar() {
         <div className="mx-4 mt-4">
           <span className="badge bg-primary-900 text-primary-300 border border-primary-700 flex items-center gap-1.5">
             <Target size={11} />
-            {exam === 'BOTH' ? 'NEET + JEE' : exam.replace(/_/g, ' ')}
+            {formatExamLabel(exam)}
           </span>
         </div>
       )}

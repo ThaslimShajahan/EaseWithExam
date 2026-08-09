@@ -10,7 +10,7 @@ import { generateImage as proxyGenerateImage, chatComplete } from '../lib/aiProx
 import { generateQuestionPaper, toEngineFormat, extractPYQFromKB } from '../lib/questionGen';
 import { getExamPattern, getMarkingLabel, getTestDurationMinutes } from '../lib/examPattern';
 import { publishTest, getPYQCount, clearPYQQuestions, supabase } from '../lib/supabase';
-import { broadcastNotification } from '../lib/notifications';
+import { broadcastNotification, createNotification } from '../lib/notifications';
 import MathText from '../components/ui/MathText';
 import { CATEGORIES, EXAM_TYPE_GROUPS, BOARDS, CLASS_LEVELS, getSubjectsForExam } from '../lib/categories';
 import { useSyllabusSubjects } from '../hooks/useSyllabusSubjects';
@@ -1118,6 +1118,13 @@ export default function AdminPaperGen() {
 
   const handleGenerate = async () => {
     if (generating) return;
+    // Carried over from the abandoned AdminPaperGenCore split — generation can
+    // take 1-2 min, so drop an in-app notification up front rather than relying
+    // solely on the admin watching the spinner.
+    try {
+      createNotification(getCallerUid(), 'info', 'Paper generation started',
+        `Generating ${examType} ${subject} — you'll be notified when it's ready.`);
+    } catch { /* non-fatal */ }
     setGenerating(true);
     setError(null);
     setQuestions([]);
