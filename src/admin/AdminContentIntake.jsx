@@ -338,7 +338,12 @@ export default function AdminContentIntake() {
 
   // Step 2
   const [examBase,   setExamBase]   = useState('CBSE');
-  const [classLevel, setClassLevel] = useState('10');
+  // No default class. This used to be '10', and because the Class 10 chip then
+  // rendered as already-selected it read as a deliberate choice rather than an
+  // untouched default — a Class 8 upload sailed through and was stored as
+  // "CBSE Class 10". Empty means the admin must pick, and the Continue button
+  // below enforces it for board exam types.
+  const [classLevel, setClassLevel] = useState('');
   const [subject,    setSubject]    = useState('');
   const [year,       setYear]       = useState('');
   const [chapterHint, setChapterHint] = useState('');
@@ -379,7 +384,9 @@ export default function AdminContentIntake() {
 
   function changeExamBase(e) {
     setExamBase(e);
-    const next = BOARDS.includes(e) ? getDbExamType(e, classLevel || '10') : e;
+    // No `|| '10'` fallback here either — it would quietly reinstate the very
+    // default the empty initial state exists to remove.
+    const next = BOARDS.includes(e) ? getDbExamType(e, classLevel) : e;
     setSubject(getSubjectsForExam(next)[0] ?? 'General');
   }
   function changeClassLevel(cl) {
@@ -596,12 +603,18 @@ export default function AdminContentIntake() {
                 </div>
               ))}
               {isBoard && (
-                <div className="bg-slate-800/60 rounded-xl px-3 py-2.5 space-y-1.5 border border-white/5">
-                  <p className="text-[10px] text-slate-500 font-bold uppercase">Class</p>
+                <div className={`rounded-xl px-3 py-2.5 space-y-1.5 border ${classLevel ? 'bg-slate-800/60 border-white/5' : 'bg-amber-900/20 border-amber-600/40'}`}>
+                  <p className="text-[10px] font-bold uppercase text-slate-500">
+                    Class {!classLevel && <span className="text-amber-400">· required</span>}
+                  </p>
                   <div className="flex flex-wrap gap-1.5">
                     {CLASS_LEVELS.map((cl) => <Chip key={cl} label={`Class ${cl}`} active={classLevel === cl} onClick={() => changeClassLevel(cl)} />)}
                   </div>
-                  <p className="text-[10px] text-primary-400">Will be saved as <span className="font-bold">{dbExamType}</span></p>
+                  {classLevel ? (
+                    <p className="text-[10px] text-primary-400">Will be saved as <span className="font-bold">{dbExamType}</span></p>
+                  ) : (
+                    <p className="text-[10px] text-amber-300">Pick the class this material belongs to — nothing is assumed.</p>
+                  )}
                 </div>
               )}
             </div>
@@ -640,7 +653,9 @@ export default function AdminContentIntake() {
             <button onClick={goBack} className="px-4 py-2.5 rounded-xl border border-white/10 text-slate-400 hover:text-white hover:bg-white/5 text-sm font-semibold flex items-center gap-1.5 transition-colors">
               <ChevronLeft size={14} /> Back
             </button>
-            <button onClick={() => setStep('input')} disabled={!subject}
+            {/* A board exam type is meaningless without a class — blocking here
+                is what stops an untouched default becoming the stored answer. */}
+            <button onClick={() => setStep('input')} disabled={!subject || (isBoard && !classLevel)}
               className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white text-sm font-bold transition-colors">
               Continue
             </button>
@@ -727,6 +742,21 @@ export default function AdminContentIntake() {
               </div>
             </div>
           )}
+
+          {/* Restates the destination immediately above Process. The exam type
+              is chosen two steps earlier and persists across uploads, so
+              without this the only place it appears is a screen the admin has
+              already left — which is how a batch of Class 8 chapters was filed
+              under Class 10. */}
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-primary-900/20 border border-primary-600/30">
+            <Info size={14} className="text-primary-400 shrink-0" />
+            <p className="text-xs text-slate-300">
+              Saving as <span className="font-bold text-primary-300">{dbExamType}</span>
+              {subject ? <> · <span className="font-bold text-primary-300">{subject}</span></> : null}
+              {' '}—{' '}
+              <button onClick={() => setStep('classify')} className="underline hover:text-white transition-colors">change</button>
+            </p>
+          </div>
 
           {/* Vision is normally automatic — this only exists for scans the
               80-character gate can't see, e.g. a page carrying a thin layer of
