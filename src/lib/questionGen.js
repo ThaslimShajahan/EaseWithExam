@@ -523,6 +523,75 @@ function buildSectionMarksInstructions(pattern) {
   };
 }
 
+/* ── Type-preferring KB retrieval ──────────────────────────── */
+
+/**
+ * Reads knowledge_base preferring certain content_types, and is GUARANTEED to
+ * return at least as many rows as the same read without any type filter.
+ *
+ * The corpus is ~70% "prose" — the honest catch-all — so an unfiltered
+ * `.limit(12)` seeds generation with twelve arbitrary paragraphs. Preferring
+ * solved_example/exercise/formula puts the material a question can actually be
+ * built from in front instead.
+ *
+ * The fallback is arithmetic, not a judgement call, which is the point: the
+ * typed read is TOPPED UP from an unfiltered read whenever it comes back short,
+ * so a subject with a thin typed pool (Biology and Biotechnology are still
+ * ~95% prose) degrades to exactly today's behaviour rather than to an empty
+ * result. There is no threshold to tune and no way for this to return fewer
+ * rows than the old code did — the worst case is "typed rows first, then the
+ * same rows the unfiltered query would have returned".
+ */
+async function fetchChunksPreferringTypes({
+  subject, examType, chapterTerm = null, preferTypes, limit, extraCols = '',
+}) {
+  const cols = `id, content${extraCols ? `, ${extraCols}` : ''}`;
+  const base = () => {
+    let q = supabase.from('knowledge_base').select(cols);
+    if (subject && subject !== 'Mixed') q = q.eq('subject', subject);
+    if (examType) q = q.eq('exam_type', examType);
+    if (chapterTerm) {
+      const safe = chapterTerm.replace(/[%,()]/g, '');
+      q = q.or(`chapter.ilike.%${safe}%,content.ilike.%${safe}%`);
+    }
+    return q;
+  };
+
+  const { data: typed } = await base().in('content_type', preferTypes).limit(limit);
+  const rows = [...(typed ?? [])];
+
+  let toppedUp = 0;
+  if (rows.length < limit) {
+    // Deliberately unfiltered rather than "everything except preferTypes": if
+    // the typed read failed outright (error -> null), this still returns the
+    // full unfiltered set. Dedupe by id makes the overlap harmless.
+    const { data: any } = await base().limit(limit);
+    const seen = new Set(rows.map((r) => r.id));
+    for (const r of any ?? []) {
+      if (rows.length >= limit) break;
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
+      rows.push(r);
+      toppedUp++;
+    }
+  }
+
+  if (import.meta.env.DEV) {
+    console.log(`[kb] ${subject}/${examType}${chapterTerm ? `/${chapterTerm}` : ''} → ${rows.length} chunks (${rows.length - toppedUp} typed, ${toppedUp} untyped top-up)`);
+  }
+  return rows;
+}
+
+/** Content types worth building an exam question out of, best first. */
+const QUESTION_SEED_TYPES = [
+  'solved_example', 'exercise', 'derivation', 'formula', 'theorem', 'law', 'definition',
+];
+
+/** Content types that carry a chapter's explanatory core. */
+const NOTES_SEED_TYPES = [
+  'definition', 'formula', 'law', 'theorem', 'derivation', 'solved_example', 'summary',
+];
+
 /* ── Fetch KB chunks — pgvector primary, keyword fallback ─── */
 /**
  * `examType` and `contentTypes` are now pushed into the RPC rather than being
@@ -664,14 +733,20 @@ export async function analyzeTopicDistribution(subject, examType) {
   const raw    = JSON.parse(resp.choices[0].message.content);
   const topics = (raw.topics || []).slice(0, 15);
 
+  // 'estimated', explicitly. This number is the model's impression of how much
+  // space a topic takes up in ~20 textbook excerpts — it is NOT a count of
+  // anything that appeared in a past-year paper. Stamping it is what lets a
+  // future measured path (aggregated from real pyq_questions rows) coexist
+  // here without the two becoming indistinguishable once written.
   const rows = topics.map((t) => ({
     exam_type: examType, subject, topic: t.topic, frequency: t.frequency,
+    source: 'estimated',
   }));
   if (rows.length) {
     supabase.from('topic_frequency').upsert(rows, { onConflict: 'exam_type,subject,topic' }).then(() => {});
   }
 
-  return topics;
+  return topics.map((t) => ({ ...t, source: 'estimated' }));
 }
 
 /* ── Question cache helpers ──────────────────────────────── */
@@ -779,12 +854,12 @@ export async function generateQuestionPaper({ subject, topics, examType, difficu
   // text — see fetchVerbatimPassages(). Empty array for every other subject.
   const verbatimPassages = await fetchVerbatimPassages(subject, examType);
 
-  // Fetch study notes from knowledge_base for this subject+exam (board/class mapped by examTag)
-  let kbQuery = supabase.from('knowledge_base').select('content').limit(12);
-  if (subject && subject !== 'Mixed') kbQuery = kbQuery.eq('subject', subject);
-  if (examType) kbQuery = kbQuery.eq('exam_type', examType);
-  const { data: kbRows } = await kbQuery;
-  const studyNotes = kbRows ?? [];
+  // Fetch study notes from knowledge_base for this subject+exam (board/class
+  // mapped by examTag), preferring chunks a question can be built from — worked
+  // examples and unsolved exercises first, narrative prose only to top up.
+  const studyNotes = await fetchChunksPreferringTypes({
+    subject, examType, preferTypes: QUESTION_SEED_TYPES, limit: 12,
+  });
 
   // For CBSE/school exams, always include all section types regardless of qTypes selection.
   // This ensures Long Answer and Short Answer are never accidentally omitted.
@@ -1216,23 +1291,28 @@ ${batchText}`,
 export async function generateChapterNotes({ subject, chapter, examType }) {
   const pattern = getExamPattern(examType);
 
-  let q = supabase.from('knowledge_base').select('content, subject').limit(30);
-  if (subject && subject !== 'Mixed') q = q.eq('subject', subject);
+  // `chapter` is a real column, so fetchChunksPreferringTypes matches on it
+  // directly (with an ilike on content as a widener for chapters named slightly
+  // differently at upload time) and puts definitions, formulae and laws ahead
+  // of narrative when the chapter has them.
   const chapterTerm = chapter?.trim() ? chapter.split(',')[0].trim() : null;
-  if (chapterTerm) {
-    // `chapter` is a real column now, so this is an indexed match instead of
-    // array-containment against a bag of mixed strings. ilike on content stays
-    // as a widener for chapters named slightly differently at upload time.
-    const safeTerm = chapterTerm.replace(/[%,()]/g, '');
-    q = q.or(`chapter.ilike.%${safeTerm}%,content.ilike.%${safeTerm}%`);
-  }
-  const { data: chunks, error: kbErr } = await q;
-  if (kbErr) console.warn('[generateChapterNotes] KB query failed:', kbErr.message);
-  const context = ((chunks ?? []).map((c) => c.content)).join('\n---\n').slice(0, 8000);
+  const chunks = await fetchChunksPreferringTypes({
+    subject, examType, chapterTerm, preferTypes: NOTES_SEED_TYPES, limit: 30,
+  });
+  const context = chunks.map((c) => c.content).join('\n---\n').slice(0, 8000);
 
   const freqData = await getTopicFrequency(subject, examType);
   const topicRow = freqData.find((f) => f.topic?.toLowerCase().includes((chapter || '').toLowerCase()));
-  const pyqScore = topicRow ? topicRow.frequency : null;
+
+  // Only a row aggregated from real past-year questions may be described to the
+  // student as exam frequency. Rows written by analyzeTopicDistribution() are
+  // an LLM's read of textbook coverage; calling those "PYQ frequency" told
+  // students to prioritise chapters on the strength of a guess. Anything not
+  // explicitly 'measured' is treated as an estimate, so a row predating the
+  // provenance column degrades to the cautious wording rather than the
+  // confident one.
+  const freqScore    = topicRow ? topicRow.frequency : null;
+  const freqMeasured = topicRow?.source === 'measured';
 
   const isChemistry   = subject === 'Chemistry';
   const isMath        = subject === 'Mathematics';
@@ -1265,7 +1345,11 @@ FORMATTING RULES (CRITICAL — follow exactly):
       {
         role: 'user',
         content: `Generate COMPREHENSIVE, IN-DEPTH study notes for the chapter "${chapter}" — ${subject} for ${examType}.
-${pyqScore ? `PYQ frequency: ${pyqScore}/10 — this is a ${pyqScore >= 7 ? 'very high priority' : pyqScore >= 4 ? 'medium priority' : 'lower priority'} chapter.` : ''}
+${freqScore && freqMeasured
+  ? `PYQ frequency: ${freqScore}/10, measured from past-year questions for this exam — this is a ${freqScore >= 7 ? 'very high priority' : freqScore >= 4 ? 'medium priority' : 'lower priority'} chapter. You may tell the student this reflects past-paper frequency.`
+  : freqScore
+    ? `Rough emphasis hint: ${freqScore}/10. This is an ESTIMATE of how much space the topic takes up in the textbook — it is NOT measured from past-year papers. Use it only to decide ordering and depth. Do NOT tell the student this is exam frequency, do NOT call it a PYQ statistic, and do NOT state or imply how often it has been asked.`
+    : ''}
 
 ${patternNote ? `EXAM PATTERN:\n${patternNote}` : ''}
 

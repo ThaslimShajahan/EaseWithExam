@@ -4,6 +4,61 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-10 (session 16) — Phase 2 groundwork: provenance, taxonomy, type-filtered retrieval
+
+Three changes off the back of the Phase 2 audit. §3 (`chapter_pattern_stats`, `technique_frequency`) and §4b (exam-pattern blueprint scoring) are deliberately **not** built: `pyq_questions` is empty — not thin, zero rows — so both would ship as an empty table plus UI that renders nothing. Blueprint V2's 20-PYQ threshold is currently unreachable for all 11 exam+subject combinations.
+
+### 1. `topic_frequency` was presenting a guess as exam data
+
+`analyzeTopicDistribution()` asks `gpt-4o-mini` to *"estimate relative frequency (1-10)"* from ~20 `knowledge_base` excerpts, then stored the result in a column called `frequency` with nothing to mark it. It reached students as:
+
+```
+PYQ frequency: 8/10 — this is a very high priority chapter.
+```
+
+No PYQ was ever involved, and with `pyq_questions` empty none *could* be — the estimator is the only path that has ever written to that table. Students were being told which chapters to prioritise for an exam on the strength of an LLM's impression of a textbook. The full corpus load made this worse rather than better: the estimator now has 4,363 real chunks to guess from, so the output looks more credible.
+
+Added `topic_frequency.source` (`measured` | `estimated`, CHECK-constrained, defaulting to `estimated` so any write path that doesn't know about the column is labelled the safe way). Only `source === 'measured'` gets the confident wording; everything else — including rows predating the column — degrades to an explicit "this is an ESTIMATE… NOT measured from past-year papers… do NOT call it a PYQ statistic".
+
+### 2. `content_type` gained `exercise`, `activity`, `summary` — and 417 rows were re-classified
+
+79.8% of the corpus landed in `prose`. Two measurements on how much of that was real: a manual read of 48 stratified chunks put correct-`prose` at ~65%, and a heading-anchored scan of all 3,488 put the mis-bucketed floor at 14.7%. The scan is a floor because it only matches explicit headings — it can't catch "Ionization Enthalpy **is the energy required to**…" (a definition) or "Power of i — i²=−1, i³=−i…" (a formula).
+
+The bigger finding was a **taxonomy gap, not just classifier error**: NCERT spends real page area on unsolved exercise sets, practical activities and end-of-chapter summaries, and the original eight types had nowhere to put any of them. Re-classifying into the old taxonomy would have reshuffled definitions and left the rest stuck in `prose`, so the types came first.
+
+A `gpt-4o-mini` pass over the ~500 flagged rows (not all 3,488 — cost) re-classified **417 rows, 0 failures**, using stored chunk text with no re-extraction:
+
+| | before | after |
+|---|---:|---:|
+| prose | 3,488 (79.7%) | **3,071 (70.2%)** |
+| exercise | — | **186** |
+| definition | 114 | **176** |
+| summary | — | **92** |
+| activity | — | **65** |
+
+**94 of 511 candidates were correctly kept as `prose`** — the model pushed back on ~18% of what the scan flagged, which is the number that says it wasn't just relabelling whatever it was shown.
+
+The 186 `exercise` chunks matter beyond tidiness: with `pyq_questions` empty these are the only real, chapter-attributed questions in the system. Not past-year papers, but the closest thing available. The extraction prompt carries the new types too, so future uploads classify correctly at intake rather than needing another backfill.
+
+### 3. §4a: generation now retrieves by content type
+
+`match_knowledge_base` has accepted `filter_content_type`, `filter_difficulty` and `filter_techniques` since the multimodal migration, and **no caller had ever passed any of them**. Worse, question generation didn't use the RPC at all — it read `knowledge_base` with an unfiltered `.limit(12)`, so with 4,363 rows loaded it seeded itself with twelve arbitrary paragraphs, ~70% of them `prose` by base rate.
+
+New `fetchChunksPreferringTypes()` prefers the types a question can actually be built from, and **is guaranteed to return at least as many rows as the unfiltered read it replaced**. The fallback is arithmetic rather than a tuned threshold: a short typed read is topped up from a fully unfiltered read, deduped by id. The top-up is unfiltered (not "everything except the preferred types") specifically so that a typed read which errors to `null` still yields the complete old result set.
+
+Verified against thin subjects, where it matters — Class 8 Science / "How Nature Works in Harmony" has **zero** typed chunks and returns 30 rows, identical to the old behaviour.
+
+| seed | before | after |
+|---|---|---|
+| Class 11 Physics | prose 8, law 3, solved_example 1 | solved_example 6, derivation 3, exercise 2, formula 1 |
+| Class 11 Biotech | prose 12 | exercise 7, definition 2, law 2, formula 1 |
+
+Same prompt, both seeds, Class 11 Physics: before produced "What is the significance of the gravitational force…" plus a numerical with invented values; after produced the real NCERT problems (work done for `v = a·x^(3/2)`, copper block on ice, significant figures for a 7.203 m cube).
+
+**This changes which questions get asked, not whether their answers are right.** In that 3-question sample one answer was wrong (20 J stated, 50 J correct). Answer correctness lives in the generation/verification layer and is untouched here.
+
+---
+
 ## 2026-08-10 (session 15) — full corpus load: 148 files, and the four bugs it took to get there
 
 Loaded the whole local NCERT STEM corpus into `knowledge_base` (option D — STEM only, figures off, concurrency 1) and backfilled `study_notes` from it. **148/148 files, 4,458 chunks, 0 outstanding failures.** Getting there surfaced four separate defects, three of them mine from session 14.

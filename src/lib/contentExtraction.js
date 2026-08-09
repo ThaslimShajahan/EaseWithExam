@@ -198,7 +198,15 @@ CHUNK CLASSIFICATION — every chunk needs these, they drive retrieval filtering
     "solved_example" a worked problem WITH its solution
     "derivation"     a step-by-step derivation of a result
     "diagram"        content whose substance is a figure and its explanation
+    "exercise"       UNSOLVED questions set for the student — a numbered
+                     question list, "Exercises", "Questions", end-of-chapter
+                     problems with no worked solution shown
+    "activity"       a practical procedure to carry out — "Activity 6.3",
+                     an experiment, an observation task
+    "summary"        an end-of-chapter recap of points already covered
     "prose"          narrative/expository text that fits none of the above
+  "exercise" vs "solved_example": if the solution is shown it is a
+  solved_example; if the student is being asked to do it, it is an exercise.
   Use "prose" honestly when nothing else fits — do NOT inflate ordinary
   explanation into "theorem" or "law".
 - technique: array of solving techniques this chunk teaches or uses, as
@@ -296,7 +304,12 @@ ${batches[b]}`,
 // chapters becomes 3 study_notes rows sharing the same `unit`, each with its
 // own title and real page range, instead of one flattened blob.
 export const CONTENT_TYPES = new Set([
-  'theorem', 'law', 'formula', 'definition', 'solved_example', 'derivation', 'diagram', 'prose',
+  'theorem', 'law', 'formula', 'definition', 'solved_example', 'derivation', 'diagram',
+  // Added after the full corpus load: NCERT spends real page area on unsolved
+  // question sets, practical activities and end-of-chapter recaps, and with no
+  // bucket for them all three were landing in 'prose'.
+  'exercise', 'activity', 'summary',
+  'prose',
 ]);
 export const DIFFICULTIES = new Set(['easy', 'medium', 'hard']);
 

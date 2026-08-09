@@ -228,12 +228,19 @@ export async function searchKnowledgeBase(query, embedding = null, filters = {})
   try {
     // pgvector semantic search (preferred)
     if (embedding) {
+      // contentTypes / difficulty / techniques are pass-throughs to filters the
+      // RPC has always accepted but no caller had ever supplied. Omitting one
+      // sends null, which the RPC treats as "no constraint" — so callers that
+      // don't pass them behave exactly as before.
       const { data } = await supabase.rpc('match_knowledge_base', {
-        query_embedding:  embedding,
-        match_count:      5,
-        filter_subject:   filters.subject ?? null,
-        filter_exam_type: filters.examType ?? null,
-        filter_chapter:   filters.chapter ?? null,
+        query_embedding:     embedding,
+        match_count:         5,
+        filter_subject:      filters.subject ?? null,
+        filter_exam_type:    filters.examType ?? null,
+        filter_chapter:      filters.chapter ?? null,
+        filter_content_type: filters.contentTypes ?? null,
+        filter_difficulty:   filters.difficulty ?? null,
+        filter_techniques:   filters.techniques ?? null,
       });
       if (data?.length) return data;
     }
