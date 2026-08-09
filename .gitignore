@@ -27,3 +27,7 @@ scripts/.ncert-ingest-checkpoint.json
 # Credentials — never commit.
 *firebase-adminsdk*.json
 secrets/
+
+# Transient artifact of scripts/make-scanned-fixture.mjs (the fixture PDF itself IS committed).
+test-fixtures/_shell.html
+public/_pilot/

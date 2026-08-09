@@ -147,9 +147,26 @@ export function preFilterUrl(pdfUrl) {
  * copy is the one taken straight from extraction, never round-tripped
  * through a chat completion.
  */
-export async function extractPdfPages(arrayBuffer) {
+/** The loaded pdfjs module — needed for its OPS enum when inspecting a page's
+ *  operator list (see pageHasRasterImage in pdfVision.js). */
+export async function getPdfjs() {
+  return ensurePdfjs();
+}
+
+/**
+ * Opens a PDF and returns the pdfjs document handle.
+ *
+ * Exported because the vision path (src/lib/pdfVision.js) needs to both read
+ * the text layer AND rasterise pages — sharing one parsed document instead of
+ * calling getDocument twice on the same bytes.
+ */
+export async function loadPdfDocument(arrayBuffer) {
   const lib = await ensurePdfjs();
-  const pdf = await lib.getDocument({ data: arrayBuffer }).promise;
+  return lib.getDocument({ data: arrayBuffer }).promise;
+}
+
+export async function extractPdfPages(arrayBuffer) {
+  const pdf = await loadPdfDocument(arrayBuffer);
   // No page cap — a whole textbook unit (or a full past-paper compilation) must
   // be read in full regardless of how many pages it runs to. This used to be
   // capped (first 20, then 60) to bound how much text a single downstream AI
@@ -304,20 +321,6 @@ export async function analyzeText(text, filename) {
     const fromName = inferFromFilename(filename);
     return fromName || { ...fallback, skipReason: 'GPT error', summary: 'Analysis failed.' };
   }
-}
-
-/* ── Text chunker for knowledge base ────────────────────── */
-
-// examTag (optional) is the snake_case board/class tag (e.g. "cbse_class_8", "neet")
-// — without it, crawled content has no way to be scoped to a class/exam filter and
-// bleeds into every subject-matching query regardless of board/class.
-export function chunkText(text, subject, examTag = null) {
-  const chunks = [];
-  for (let i = 0; i < text.length; i += 800) {
-    const content = text.slice(i, i + 800).trim();
-    if (content.length > 50) chunks.push({ subject, content, tags: [subject, examTag].filter(Boolean) });
-  }
-  return chunks;
 }
 
 /* ── Manual file → pipeline (for drag-upload fallback) ───── */

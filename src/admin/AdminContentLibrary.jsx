@@ -14,7 +14,7 @@ function getCallerUid() {
 }
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { useAdminFilter } from './hooks/useAdminFilter';
-import { BOARDS, CLASS_LEVELS, isExamTag, prettyExamTag, examTypeToTag } from '../lib/categories';
+import { BOARDS, CLASS_LEVELS } from '../lib/categories';
 
 /* ── Helpers ─────────────────────────────────────────────── */
 async function fetchPYQs({ examType, subject, search } = {}) {
@@ -30,10 +30,12 @@ async function fetchPYQs({ examType, subject, search } = {}) {
 }
 
 // Board/class filtering happens client-side (see matchesExamSelection in
-// KnowledgeBaseViewer) since a board-only or class-only selection needs a
-// prefix/suffix match across multiple tags, which .contains() can't express.
+// KnowledgeBaseViewer) since a board-only or class-only selection is a
+// prefix/suffix match over exam_type ("CBSE Class 8"), not an equality test.
 async function fetchKB({ subject, search } = {}) {
-  let q = supabase.from('knowledge_base').select('id, subject, content, tags, created_at').order('created_at', { ascending: false }).limit(1000);
+  let q = supabase.from('knowledge_base')
+    .select('id, subject, content, exam_type, chapter, unit, content_type, difficulty, techniques, page_no, figure_url, has_equations, source_ref, created_at')
+    .order('created_at', { ascending: false }).limit(1000);
   if (subject) q = q.ilike('subject', subject); // ilike w/ no wildcards = case-insensitive equality
   if (search?.trim()) q = q.ilike('content', `%${search.trim()}%`);
   const { data } = await q;
@@ -402,11 +404,10 @@ function KnowledgeBaseViewer() {
   const [search,        setSearch]        = useState('');
   const [deleting,      setDeleting]      = useState(null);
 
-  // Board/Class/Competitive are tracked independently (not encoded into one
-  // composed tag string) — tags in the DB are always board+class together
-  // ("cbse_class_8"), never a bare board ("cbse") on its own, so picking a
-  // board alone must prefix-match across every class of that board rather
-  // than look up a single exact tag that would never exist.
+  // Board/Class/Competitive are tracked independently. exam_type is stored in
+  // display form ("CBSE Class 8", "NEET"), never a bare board on its own, so
+  // picking a board alone must prefix-match across every class of that board
+  // rather than look up a single value that would never exist.
   const [boardSel,       setBoardSel]       = useState(null);
   const [clsSel,         setClsSel]         = useState(null);
   const [competitiveSel, setCompetitiveSel] = useState(null);
@@ -428,7 +429,7 @@ function KnowledgeBaseViewer() {
   // Subject casing is inconsistent across sources ("Hindi" vs "hindi") —
   // dedupe case-insensitively so it doesn't split into two useless pills.
   useEffect(() => {
-    supabase.from('knowledge_base').select('subject, tags').limit(5000).then(({ data }) => {
+    supabase.from('knowledge_base').select('subject, exam_type').limit(5000).then(({ data }) => {
       const subjByKey = new Map();
       (data ?? []).forEach((c) => {
         if (!c.subject) return;
@@ -438,14 +439,14 @@ function KnowledgeBaseViewer() {
       });
       setSubjectOptions(['All', ...[...subjByKey.values()].sort()]);
       setExamTagOptions(['All', ...sortExamTypes(new Set(
-        (data ?? []).flatMap((c) => (c.tags ?? []).filter((t) => isExamTag(t)))
+        (data ?? []).map((c) => c.exam_type).filter(Boolean)
       ))]);
     });
   }, []);
 
   const allSubjects = subjectOptions;
   const allExamTags = examTagOptions;
-  const competitiveTags = allExamTags.filter((t) => t !== 'All' && !/_class_\d+$/.test(t));
+  const competitiveTags = allExamTags.filter((t) => t !== 'All' && !/\sClass\s\d+$/i.test(t));
 
   const pickCompetitiveTag = (t) => {
     setBoardSel(null); setClsSel(null);
@@ -456,27 +457,31 @@ function KnowledgeBaseViewer() {
   const clearExamFilter = () => { setBoardSel(null); setClsSel(null); setCompetitiveSel(null); };
 
   const hasExamFilter = !!(boardSel || clsSel || competitiveSel);
-  const examFilterLabel = competitiveSel ? prettyExamTag(competitiveSel)
-    : boardSel && clsSel ? `${boardSel} Class ${clsSel}`
+  const examFilterLabel = competitiveSel
+    || (boardSel && clsSel ? `${boardSel} Class ${clsSel}`
     : boardSel ? `${boardSel} (any class)`
     : clsSel ? `Class ${clsSel} (any board)`
-    : null;
+    : null);
 
-  function matchesExamSelection(tags) {
+  // Matches against the exam_type column directly. This previously reconstructed
+  // the same decision from a mixed tags[] array via examTypeToTag round-trips.
+  function matchesExamSelection(examType) {
     if (!hasExamFilter) return true;
-    const t = tags ?? [];
-    if (competitiveSel) return t.includes(competitiveSel);
-    if (boardSel && clsSel) return t.includes(examTypeToTag(`${boardSel} Class ${clsSel}`));
-    if (boardSel) return t.some((tag) => tag.startsWith(examTypeToTag(boardSel) + '_class_'));
-    if (clsSel) return t.some((tag) => tag.endsWith(`_class_${clsSel}`));
+    const e = examType ?? '';
+    if (competitiveSel) return e === competitiveSel;
+    if (boardSel && clsSel) return e === `${boardSel} Class ${clsSel}`;
+    if (boardSel) return e.startsWith(`${boardSel} Class `);
+    if (clsSel) return new RegExp(`\\sClass\\s${clsSel}$`, 'i').test(e);
     return true;
   }
 
   const displayed = chunks.filter((c) => {
-    const matchSearch = !search.trim() ||
-      c.content?.toLowerCase().includes(search.toLowerCase()) ||
-      (c.tags ?? []).some((t) => t.toLowerCase().includes(search.toLowerCase()));
-    return matchSearch && matchesExamSelection(c.tags);
+    const term = search.trim().toLowerCase();
+    const matchSearch = !term ||
+      c.content?.toLowerCase().includes(term) ||
+      c.chapter?.toLowerCase().includes(term) ||
+      (c.techniques ?? []).some((t) => t.toLowerCase().includes(term));
+    return matchSearch && matchesExamSelection(c.exam_type);
   });
 
   const handleDelete = async (id) => {
@@ -503,7 +508,7 @@ function KnowledgeBaseViewer() {
           <Search size={13} className="text-slate-500 shrink-0" />
           <input
             type="text"
-            placeholder="Search content or tags…"
+            placeholder="Search content, chapter or technique…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && load()}
@@ -524,9 +529,10 @@ function KnowledgeBaseViewer() {
         {competitiveTags.length > 0 && (
           <div className="space-y-2">
             <p className="text-[10px] font-bold text-slate-500 uppercase">Competitive Exam</p>
+            {/* exam_type is already display form ("NEET") — no tag prettifying needed */}
             <div className="flex flex-wrap gap-1.5">
               {competitiveTags.map((t) => (
-                <Pill key={t} label={prettyExamTag(t)} active={competitiveSel === t} onClick={() => pickCompetitiveTag(t)} />
+                <Pill key={t} label={t} active={competitiveSel === t} onClick={() => pickCompetitiveTag(t)} />
               ))}
             </div>
           </div>
@@ -582,13 +588,36 @@ function KnowledgeBaseViewer() {
                   {chunk.subject && (
                     <span className="text-[9px] font-bold text-emerald-400 bg-emerald-900/20 px-1.5 py-0.5 rounded">{chunk.subject}</span>
                   )}
-                  {(chunk.tags ?? []).filter((t) => t && !t.startsWith('src:')).map((tag) => (
-                    <span key={tag} className="text-[9px] text-slate-500 bg-slate-900 px-1.5 py-0.5 rounded">{tag}</span>
+                  {chunk.exam_type && (
+                    <span className="text-[9px] text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded">{chunk.exam_type}</span>
+                  )}
+                  {chunk.chapter && (
+                    <span className="text-[9px] text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded">{chunk.chapter}</span>
+                  )}
+                  {chunk.content_type && (
+                    <span className="text-[9px] font-bold text-violet-300 bg-violet-900/30 px-1.5 py-0.5 rounded">
+                      {chunk.content_type.replace(/_/g, ' ')}
+                    </span>
+                  )}
+                  {chunk.difficulty && (
+                    <span className="text-[9px] text-amber-300 bg-amber-900/25 px-1.5 py-0.5 rounded">{chunk.difficulty}</span>
+                  )}
+                  {chunk.has_equations && (
+                    <span className="text-[9px] text-sky-300 bg-sky-900/25 px-1.5 py-0.5 rounded">LaTeX</span>
+                  )}
+                  {chunk.figure_url && (
+                    <a href={chunk.figure_url} target="_blank" rel="noopener noreferrer"
+                      className="text-[9px] text-emerald-300 bg-emerald-900/25 px-1.5 py-0.5 rounded hover:underline">
+                      figure
+                    </a>
+                  )}
+                  {(chunk.techniques ?? []).slice(0, 3).map((t) => (
+                    <span key={t} className="text-[9px] text-slate-500 bg-slate-900 px-1.5 py-0.5 rounded">{t.replace(/_/g, ' ')}</span>
                   ))}
-                  {/* Source file */}
-                  {(chunk.tags ?? []).find((t) => t?.startsWith('src:')) && (
+                  {/* Source file — now a real jsonb field rather than a "src:" tag */}
+                  {chunk.source_ref?.source && (
                     <span className="text-[9px] text-slate-600 flex items-center gap-0.5">
-                      <FileText size={8} /> {(chunk.tags ?? []).find((t) => t.startsWith('src:'))?.replace('src:', '')}
+                      <FileText size={8} /> {chunk.source_ref.source}
                     </span>
                   )}
                 </div>

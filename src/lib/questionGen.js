@@ -524,7 +524,14 @@ function buildSectionMarksInstructions(pattern) {
 }
 
 /* ── Fetch KB chunks — pgvector primary, keyword fallback ─── */
-async function fetchKBChunks(subject, topicHints) {
+/**
+ * `examType` and `contentTypes` are now pushed into the RPC rather than being
+ * post-filtered (or, previously, not filtered at all — the semantic path could
+ * only ever narrow by subject, so a Class 8 query could rank a Class 12 chunk
+ * top). contentTypes lets a caller ask for e.g. only solved examples when
+ * generating numericals.
+ */
+async function fetchKBChunks(subject, topicHints, { examType = null, contentTypes = null } = {}) {
   const query = [subject !== 'Mixed' ? subject : '', topicHints || ''].filter(Boolean).join(' ');
 
   // Try semantic search first
@@ -532,9 +539,11 @@ async function fetchKBChunks(subject, topicHints) {
   if (embedding) {
     try {
       const { data } = await supabase.rpc('match_knowledge_base', {
-        query_embedding:  embedding,
-        match_count:      15,
-        filter_subject:   subject !== 'Mixed' ? subject : null,
+        query_embedding:     embedding,
+        match_count:         15,
+        filter_subject:      subject !== 'Mixed' ? subject : null,
+        filter_exam_type:    examType,
+        filter_content_type: contentTypes,
       });
       if (data?.length) {
         if (import.meta.env.DEV) console.log(`[fetchKBChunks] semantic path → ${data.length} chunks (subject=${subject})`);
@@ -771,10 +780,9 @@ export async function generateQuestionPaper({ subject, topics, examType, difficu
   const verbatimPassages = await fetchVerbatimPassages(subject, examType);
 
   // Fetch study notes from knowledge_base for this subject+exam (board/class mapped by examTag)
-  const examTag = examType?.toLowerCase().replace(/\s+/g, '_');
   let kbQuery = supabase.from('knowledge_base').select('content').limit(12);
   if (subject && subject !== 'Mixed') kbQuery = kbQuery.eq('subject', subject);
-  if (examTag) kbQuery = kbQuery.or(`tags.cs.{${examTag}},tags.cs.{${subject.toLowerCase()}}`);
+  if (examType) kbQuery = kbQuery.eq('exam_type', examType);
   const { data: kbRows } = await kbQuery;
   const studyNotes = kbRows ?? [];
 
@@ -1212,9 +1220,11 @@ export async function generateChapterNotes({ subject, chapter, examType }) {
   if (subject && subject !== 'Mixed') q = q.eq('subject', subject);
   const chapterTerm = chapter?.trim() ? chapter.split(',')[0].trim() : null;
   if (chapterTerm) {
-    // Escape braces in chapterTerm so PostgREST doesn't treat them as array literals
-    const safeTerm = chapterTerm.replace(/[{}]/g, '');
-    q = q.or(`content.ilike.%${safeTerm}%,tags.cs.{${safeTerm}}`);
+    // `chapter` is a real column now, so this is an indexed match instead of
+    // array-containment against a bag of mixed strings. ilike on content stays
+    // as a widener for chapters named slightly differently at upload time.
+    const safeTerm = chapterTerm.replace(/[%,()]/g, '');
+    q = q.or(`chapter.ilike.%${safeTerm}%,content.ilike.%${safeTerm}%`);
   }
   const { data: chunks, error: kbErr } = await q;
   if (kbErr) console.warn('[generateChapterNotes] KB query failed:', kbErr.message);
@@ -1384,8 +1394,8 @@ export async function generateImportantQA({ subject, chapter, examType }) {
 
   let kbQuery = supabase.from('knowledge_base').select('content').limit(20);
   if (subject && subject !== 'Mixed') kbQuery = kbQuery.eq('subject', subject);
-  const safeTerm = chapterTerm.replace(/[{}]/g, '');
-  kbQuery = kbQuery.or(`content.ilike.%${safeTerm}%,tags.cs.{${safeTerm}}`);
+  const safeTerm = chapterTerm.replace(/[%,()]/g, '');
+  kbQuery = kbQuery.or(`chapter.ilike.%${safeTerm}%,content.ilike.%${safeTerm}%`);
   const { data: kbRows } = await kbQuery;
 
   const pyqs = pyqRows ?? [];

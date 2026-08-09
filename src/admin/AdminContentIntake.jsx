@@ -10,7 +10,11 @@ import { chatComplete } from '../lib/aiProxy';
 import { supabase, adminSaveKnowledgeChunks } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { getFeatureFlag, FLAGS } from '../lib/featureFlags';
-import { fetchPdfBuffer, extractPdfPages, splitIntoBatches } from '../lib/pdfAnalyzer';
+import { fetchPdfBuffer } from '../lib/pdfAnalyzer';
+import { extractPagesWithVision, MAX_VISION_PAGES } from '../lib/pdfVision';
+import {
+  runPYQExtraction, runNotesExtraction, buildKbRows, buildFigureRows, figuresForLesson,
+} from '../lib/contentExtraction';
 import { getSubjectsForExam, BOARDS, CLASS_LEVELS, EXAM_TYPE_GROUPS } from '../lib/categories';
 import { getChapters } from '../lib/syllabus';
 import { listDriveFolderPdfs, fetchDriveFileBytes } from '../lib/driveFolder';
@@ -75,156 +79,6 @@ function matchSyllabusChapter(guess, chapterNames) {
 // (from pdfAnalyzer.js) keeps each call's input+output comfortably inside the
 // model's limits, cutting only at page boundaries; results are merged after.
 
-async function runPYQExtraction({ rawText, examType, subject, year, onProgress }) {
-  const isMixed = subject === 'Mixed';
-  const batches = splitIntoBatches(rawText);
-  const allQuestions = [];
-  let paperTitle = null, totalMarks = null;
-
-  for (let b = 0; b < batches.length; b++) {
-    onProgress(batches.length > 1 ? `AI extracting questions… (part ${b + 1}/${batches.length})` : 'AI extracting questions…');
-
-    const resp = await chatComplete({
-      model:           'gpt-4o',
-      max_tokens:      16000,
-      temperature:     0,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: 'You are an expert at extracting structured question papers from raw text. Return only valid JSON. Extract every question in the given text — this may be one part of a larger paper split across multiple calls, so only extract what appears in THIS excerpt.' },
-        {
-          role: 'user',
-          content: `Extract ALL questions from this ${examType}${isMixed ? '' : ` ${subject}`} question paper${year ? ` (${year})` : ''}${batches.length > 1 ? ` (excerpt ${b + 1} of ${batches.length})` : ''}.
-${isMixed ? '\nThis paper covers multiple subjects. For each question, also identify the subject (Physics, Chemistry, Biology for NEET; Physics, Chemistry, Mathematics for JEE).' : ''}
-
-For CBSE/board papers, section marks: A=1, B=2, C=3, D=5, E=4-5.
-For NEET/JEE: all MCQ, 4 marks correct, -1 wrong.
-
-Extract every question. For each include:
-- Full question text
-- Section label (A/B/C/D/E or blank)
-- Marks per question
-- Question type (MCQ / Short Answer / Long Answer / Numerical / Assertion-Reason / Case-Based)
-- Chapter or topic — identify this from the actual content, as precisely as you can
-- All 4 options if MCQ (A, B, C, D)
-- Correct answer if in answer key
-- Brief explanation if available
-- has_diagram: true if question references a figure/diagram/graph
-${isMixed ? '- subject: Physics / Chemistry / Biology / Mathematics' : ''}
-
-Return JSON:
-{
-  "paper_title": "title if visible",
-  "total_marks": 80,
-  "questions": [
-    {
-      "section": "A", "marks": 1, "type": "MCQ", "chapter": "topic name",
-      "question_text": "full question", "options": ["A. opt1","B. opt2","C. opt3","D. opt4"],
-      "correct_answer": "A", "explanation": "", "has_diagram": false${isMixed ? ',\n      "subject": "Biology"' : ''}
-    }
-  ]
-}
-
-RAW TEXT:
-${batches[b]}`,
-        },
-      ],
-    });
-
-    const data = JSON.parse(resp.choices[0].message.content);
-    allQuestions.push(...(data.questions ?? []));
-    paperTitle = paperTitle || data.paper_title;
-    totalMarks = totalMarks || data.total_marks;
-  }
-
-  if (!allQuestions.length) throw new Error('No questions found. Check if this is a text-based PDF.');
-  return { questions: allQuestions, paperTitle, totalMarks };
-}
-
-async function runNotesExtraction({ rawText, pages, examType, subject, onProgress }) {
-  const batches = splitIntoBatches(rawText);
-  const mergedLessons = []; // preserves first-seen order across batches
-  let unit = null;
-
-  for (let b = 0; b < batches.length; b++) {
-    onProgress(batches.length > 1 ? `AI structuring study notes… (part ${b + 1}/${batches.length})` : 'AI structuring study notes…');
-
-    const resp = await chatComplete({
-      model:           'gpt-4o',
-      max_tokens:      16000,
-      temperature:     0,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content: 'You structure textbook/study material PDFs into their real table-of-contents shape (unit, individual lessons/chapters, and the page range each one actually spans) and break each lesson into searchable knowledge chunks. Return only valid JSON. Use the page numbers as they actually appear printed in the PDF — do not invent them. This may be one part of a larger unit split across multiple calls — only extract lessons/chunks whose content appears in THIS excerpt; if a lesson clearly continues from where it left off, reuse the SAME title so it can be merged back together.',
-        },
-        {
-          role: 'user',
-          content: `This is ${examType} ${subject} content, possibly spanning one unit with multiple lessons/chapters (like a textbook "Contents" page), or just a single chapter — read the actual content and structure it correctly either way.${batches.length > 1 ? ` (excerpt ${b + 1} of ${batches.length} of a larger unit)` : ''}
-
-Each page in CONTENT below is prefixed with a literal [[PAGE N]] marker.
-
-For each distinct lesson/chapter you find, extract:
-- title: its real title, from the content (e.g. a story/chapter name) — not a generic label
-- page_start / page_end: the actual printed page numbers this lesson spans, as they visibly appear in the text (e.g. a running header showing "23"). Use null if you can't tell.
-- marker_start / marker_end: the [[PAGE N]] marker numbers where this lesson's content begins and ends — NOT the printed page numbers, just which markers it falls between. Always fill these in, they're always visible.
-- chunks: 100–300 word self-contained knowledge chunks covering that lesson's content, each with a heading and keywords.
-
-If the whole upload is really just one chapter/topic, return a single lesson.
-
-Return JSON:
-{
-  "unit": "Unit name if this content is part of a numbered/named unit, else null",
-  "lessons": [
-    {
-      "title": "chapter/lesson title",
-      "page_start": 2, "page_end": 8,
-      "marker_start": 1, "marker_end": 7,
-      "chunks": [ { "heading": "concept name", "content": "explanation", "keywords": ["kw1","kw2"] } ]
-    }
-  ]
-}
-
-CONTENT:
-${batches[b]}`,
-        },
-      ],
-    });
-
-    const data = JSON.parse(resp.choices[0].message.content);
-    unit = unit || data.unit || null;
-
-    for (const lesson of (data.lessons ?? [])) {
-      if (!lesson.chunks?.length) continue;
-
-      // Verbatim text is sliced directly from the ORIGINAL pages array using the
-      // AI-reported marker range — never taken from anything the AI wrote itself,
-      // so it can't be paraphrased. Locating a literal [[PAGE N]] marker is a much
-      // more reliable task for the model than reproducing a passage verbatim.
-      let verbatimText = null;
-      if (pages?.length && lesson.marker_start && lesson.marker_end) {
-        const start = Math.max(1, Math.min(pages.length, Math.round(lesson.marker_start)));
-        const end   = Math.max(start, Math.min(pages.length, Math.round(lesson.marker_end)));
-        verbatimText = pages.slice(start - 1, end).join('\n\n').trim() || null;
-      }
-
-      const key = (lesson.title || '').trim().toLowerCase();
-      const existing = key && mergedLessons.find((l) => (l.title || '').trim().toLowerCase() === key);
-      if (existing) {
-        existing.chunks.push(...lesson.chunks);
-        existing.page_start = existing.page_start != null ? Math.min(existing.page_start, lesson.page_start ?? existing.page_start) : lesson.page_start ?? null;
-        existing.page_end   = existing.page_end   != null ? Math.max(existing.page_end,   lesson.page_end   ?? existing.page_end)   : lesson.page_end   ?? null;
-        if (verbatimText) existing.verbatimText = existing.verbatimText ? `${existing.verbatimText}\n\n${verbatimText}` : verbatimText;
-      } else {
-        mergedLessons.push({ ...lesson, chunks: [...lesson.chunks], verbatimText });
-      }
-    }
-  }
-
-  if (!mergedLessons.length) throw new Error('No content could be extracted.');
-  return { unit, lessons: mergedLessons };
-}
-
 /* ── Save helpers ───────────────────────────────────────────────── */
 
 async function savePYQRows({ questions, examType, subject, year, source, isMixed, syllabusChapters }) {
@@ -264,11 +118,12 @@ async function savePYQRows({ questions, examType, subject, year, source, isMixed
 // Saves to knowledge_base (AI doubt-tutor retrieval) AND upserts one study_notes
 // row PER lesson/chapter (the curated notes library Content Map + the student-
 // facing Study Notes screen both read from) — a single unit upload with 3
-// chapters becomes 3 study_notes rows sharing the same `unit`, each with its
-// own title and real page range, instead of one flattened blob.
-async function saveNoteChunks({ unit, lessons, examType, subject, chapter, source, callerUid, syllabusChapters }) {
+
+async function saveNoteChunks({
+  unit, lessons, examType, subject, chapter, source, callerUid, syllabusChapters,
+  figures = [], equationsByPage = {},
+}) {
   const reviewQueueOn = await getFeatureFlag(FLAGS.CONTENT_REVIEW_QUEUE);
-  const examTag = examType ? examType.toLowerCase().replace(/\s+/g, '_') : null;
 
   let kbCount = 0;
   const chapterNames = [];
@@ -294,13 +149,23 @@ async function saveNoteChunks({ unit, lessons, examType, subject, chapter, sourc
       if (error) throw new Error(error.message);
       kbCount += rows.length;
     } else {
-      const kbRows = chunks.map((c) => ({
-        content: `${c.heading}\n\n${c.content}`,
-        subject,
-        tags:    [chapterName, unit, ...(examTag ? [examTag] : []), ...(c.keywords || [])].filter(Boolean),
-      }));
-      await adminSaveKnowledgeChunks(kbRows);
+      const kbRows = buildKbRows({
+        lesson, chapterName, unit, subject, examType, source, figures, equationsByPage,
+      });
+
+      const ids = await adminSaveKnowledgeChunks(kbRows);
       kbCount += kbRows.length;
+
+      const lessonFigures = figuresForLesson(lesson, figures);
+      if (lessonFigures.length) {
+        const { error: figErr } = await supabase.from('content_figures').insert(
+          buildFigureRows(lessonFigures, {
+            sourceId: ids?.[0]?.id ?? null, examType, subject, chapter: chapterName,
+          }),
+        );
+        // A figure that fails to record must not lose the chapter's text.
+        if (figErr) console.warn('[intake] content_figures insert failed:', figErr.message);
+      }
     }
 
     // Curated study_notes row for this one lesson/chapter.
@@ -501,6 +366,10 @@ export default function AdminContentIntake() {
   const [driveToken, setDriveToken] = useState('');
   const [scanningFolder, setScanningFolder] = useState(false);
   const [folderErr, setFolderErr] = useState('');
+  // Escape hatch for a scan whose text layer is just above the 80-char gate —
+  // a page of OCR garbage from a bad prior scan can read as "has text" while
+  // being unusable.
+  const [forceVision, setForceVision] = useState(false);
   const fileInputRef = useRef(null);
 
   // Step 4
@@ -586,9 +455,30 @@ export default function AdminContentIntake() {
       try {
         const buf = await getBytes(it);
         setStepMsg({ message: 'Extracting text…' });
-        const pages = await extractPdfPages(buf);
+
+        // Text layer first; vision only repairs the pages that need it (or
+        // every page when the admin forces it for a scan the gate missed).
+        // Before this, a scanned PDF died on the length check below.
+        const {
+          pages, figures, equationsByPage, visionPageCount, skippedVisionPages,
+        } = await extractPagesWithVision(
+          buf,
+          { subject, examType: dbExamType, chapter: it.chapter || chapterHint },
+          { forceVision, onProgress: (msg) => setStepMsg({ message: msg }) },
+        );
+
+        if (skippedVisionPages > 0) {
+          setStepMsg({ message: `${skippedVisionPages} page(s) over the ${MAX_VISION_PAGES}-page vision limit were left as-is — split the file to cover them.` });
+        }
+
         const rawText = pages.join('\n\n').trim();
-        if (!rawText || rawText.length < 100) throw new Error('No extractable text — scanned/image-only PDF?');
+        if (!rawText || rawText.length < 100) {
+          throw new Error(
+            visionPageCount > 0
+              ? 'Vision ran but returned no readable text — the pages may be blank or too low-resolution.'
+              : 'No extractable text, and no page was thin enough to trigger vision. Tick "Force vision" if this is a scan.',
+          );
+        }
 
         if (contentType === 'pyq') {
           const { questions } = await runPYQExtraction({
@@ -599,7 +489,25 @@ export default function AdminContentIntake() {
           const rows = await savePYQRows({
             questions, examType: dbExamType, subject, year, source: `${it.source}:${it.name}`, isMixed, syllabusChapters,
           });
-          setStepMsg({ status: 'done', message: `${rows.length} questions saved`, savedRows: rows });
+          // Figures found on a question paper are recorded per page rather than
+          // bound to a specific question — the extractor returns questions, not
+          // page positions, so there's nothing reliable to bind them to yet.
+          if (figures.length) {
+            const { error: figErr } = await supabase.from('content_figures').insert(
+              buildFigureRows(figures, {
+                sourceTable: 'pyq_questions',
+                examType: dbExamType, subject, chapter: it.chapter || chapterHint,
+              }),
+            );
+            if (figErr) console.warn('[intake] content_figures insert failed:', figErr.message);
+          }
+          setStepMsg({
+            status: 'done',
+            savedRows: rows,
+            message: `${rows.length} questions saved`
+              + (visionPageCount ? ` · ${visionPageCount} page(s) read by vision` : '')
+              + (figures.length ? ` · ${figures.length} figure(s)` : ''),
+          });
         } else {
           // Each page is prefixed with a [[PAGE N]] marker so the AI can point back
           // at exactly where a lesson's content lives — that marker range is then
@@ -616,10 +524,13 @@ export default function AdminContentIntake() {
           const { kbCount, chapterName, lessonCount } = await saveNoteChunks({
             unit, lessons, examType: dbExamType, subject, chapter: it.chapter || chapterHint,
             source: `${it.source}:${it.name}`, callerUid, syllabusChapters,
+            figures, equationsByPage,
           });
           setStepMsg({
             status: 'done',
-            message: `${kbCount} chunks saved across ${lessonCount} lesson${lessonCount !== 1 ? 's' : ''}${unit ? ` (${unit})` : ''} · "${chapterName}"`,
+            message: `${kbCount} chunks saved across ${lessonCount} lesson${lessonCount !== 1 ? 's' : ''}${unit ? ` (${unit})` : ''} · "${chapterName}"`
+              + (visionPageCount ? ` · ${visionPageCount} page(s) read by vision` : '')
+              + (figures.length ? ` · ${figures.length} figure(s)` : ''),
           });
         }
         // Deselect on success so a stray re-click of Process can't duplicate-save.
@@ -816,6 +727,25 @@ export default function AdminContentIntake() {
               </div>
             </div>
           )}
+
+          {/* Vision is normally automatic — this only exists for scans the
+              80-character gate can't see, e.g. a page carrying a thin layer of
+              garbage OCR from whoever scanned it first. */}
+          <label className="flex items-start gap-2.5 p-3 rounded-xl bg-slate-900/60 border border-white/8 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={forceVision}
+              onChange={(e) => setForceVision(e.target.checked)}
+              className="mt-0.5 accent-primary-500"
+            />
+            <span className="min-w-0">
+              <span className="block text-xs font-semibold text-slate-200">Force vision on every page</span>
+              <span className="block text-[11px] text-slate-500 leading-relaxed">
+                Only for scanned PDFs that still slip through — pages are read as images with an AI
+                call each, capped at {MAX_VISION_PAGES} per file. Leave off for normal PDFs.
+              </span>
+            </span>
+          </label>
 
           <div className="flex gap-3">
             <button onClick={goBack} className="px-4 py-2.5 rounded-xl border border-white/10 text-slate-400 hover:text-white hover:bg-white/5 text-sm font-semibold flex items-center gap-1.5 transition-colors">

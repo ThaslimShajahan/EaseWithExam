@@ -16,7 +16,7 @@ import { awardXP } from '../lib/gamification';
 import { createNotification } from '../lib/notifications';
 import MathText from '../components/ui/MathText';
 import PaywallModal from '../components/ui/PaywallModal';
-import { getSubjectsForExam, normalizeExamType, buildExamType, getExamLabel, EXAM_TYPE_GROUPS, BOARDS, CLASS_LEVELS, isExamTag, examTypeToTag } from '../lib/categories';
+import { getSubjectsForExam, normalizeExamType, buildExamType, getExamLabel, EXAM_TYPE_GROUPS, BOARDS, CLASS_LEVELS } from '../lib/categories';
 import { useSyllabusSubjects } from '../hooks/useSyllabusSubjects';
 import { getFeatureFlag, FLAGS } from '../lib/featureFlags';
 import { saveWrongAnswers, saveCorrectAnswers } from '../lib/errorNotebook';
@@ -86,7 +86,6 @@ function ChapterBrowser({ examType, classLevel, subject, onSelect }) {
     if (!open) return;
     setLoading(true);
     setChapters([]);
-    const examTag = examTypeToTag(examType);
     Promise.all([
       getChapters(toSyllabusExamType(examType), subject, classLevel).catch(() => []),
       supabase.from('pyq_questions')
@@ -96,18 +95,18 @@ function ChapterBrowser({ examType, classLevel, subject, onSelect }) {
         .not('chapter', 'is', null)
         .limit(200),
       supabase.from('knowledge_base')
-        .select('tags')
+        .select('chapter')
         .eq('subject', subject)
-        .contains('tags', examTag ? [examTag] : [])
+        .eq('exam_type', examType)
+        .not('chapter', 'is', null)
         .limit(200),
     ]).then(([syllabus, pyq, kb]) => {
       const fromSyllabus = (syllabus ?? []).map((c) => c.name);
       const fromPYQ       = (pyq.data ?? []).map((r) => r.chapter).filter(Boolean);
-      // tags mix real topic tags with exam/class classification tags (e.g.
-      // "cbse_class_8") and the bare subject name — exclude both, keep topics only.
-      const fromKB = (kb.data ?? []).flatMap((r) => r.tags ?? []).filter(
-        (t) => t && t !== subject && !isExamTag(t)
-      );
+      // `chapter` is a real column now. This used to flatten the KB's mixed
+      // string array and strip out exam/subject entries to guess which were
+      // really chapter names — that guesswork is gone.
+      const fromKB = (kb.data ?? []).map((r) => r.chapter).filter(Boolean);
       const all = [...new Set([...fromSyllabus, ...fromPYQ, ...fromKB])].sort();
       setChapters(all);
       setLoading(false);

@@ -224,14 +224,16 @@ export async function getRecentDoubtChat(firebaseUid) {
  * Search knowledge base by keywords — returns top 3 relevant chunks.
  * Used by Veda before answering to inject context.
  */
-export async function searchKnowledgeBase(query, embedding = null) {
+export async function searchKnowledgeBase(query, embedding = null, filters = {}) {
   try {
     // pgvector semantic search (preferred)
     if (embedding) {
       const { data } = await supabase.rpc('match_knowledge_base', {
-        query_embedding: embedding,
-        match_count:     5,
-        filter_subject:  null,
+        query_embedding:  embedding,
+        match_count:      5,
+        filter_subject:   filters.subject ?? null,
+        filter_exam_type: filters.examType ?? null,
+        filter_chapter:   filters.chapter ?? null,
       });
       if (data?.length) return data;
     }
@@ -695,13 +697,6 @@ export async function clearPYQQuestions() {
 }
 
 /* ── Topic frequency (PYQ analysis) ────────────────────── */
-
-export async function getKBTopics(subject) {
-  let q = supabase.from('knowledge_base').select('content, subject, tags').limit(60);
-  if (subject && subject !== 'Mixed') q = q.eq('subject', subject);
-  const { data } = await q;
-  return data ?? [];
-}
 
 export async function upsertTopicFrequency(rows) {
   if (!rows?.length) return;

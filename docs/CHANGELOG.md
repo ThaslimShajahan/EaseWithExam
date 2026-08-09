@@ -4,6 +4,75 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-10 (session 13) — Phase 1: multimodal extraction + content classification
+
+Implements §1 and §2 of the content-pipeline audit. Existing `knowledge_base` rows were disposable test data being re-uploaded from source, so this migration **truncates rather than backfills** and drops `tags[]` outright instead of keeping a compatibility shim.
+
+### Two production bugs found while building this
+
+**1. Browser-side PDF extraction was completely broken.** `pdfAnalyzer.js` imported `pdfjs-dist@6.0.227/build/pdf.min.js` — a URL that **404s**, because pdfjs v6 ships ESM only (`pdf.min.mjs`). Every browser PDF read failed at the loader before reaching extraction, which means the whole Content Intake screen was non-functional. The worker URL immediately below it was already `.mjs` and correct, which is exactly what made the mismatch easy to miss. Fixed, and given a local `pdfjs-dist` fallback so a CDN outage no longer takes ingestion down — the package is already a dependency.
+
+**2. `content_figures` could never be written to.** My own migration enabled RLS with a SELECT policy and nothing else, so every INSERT was denied. Caught by the Pilot B run, which extracted two figures and then failed to record either. Writes are now gated on a new `is_verified_admin()` (reads the Firebase JWT `sub`, checks `admins`) rather than opened to everyone — `knowledge_base` being wide open is a pre-existing weakness to narrow later, not a pattern to copy into a new table.
+
+### Multimodal extraction (§1)
+
+New `src/lib/pdfVision.js`: `renderPageToCanvas` / `renderPageToImage` / `visionExtractPage` / `cropCanvas` / `uploadFigure`, orchestrated by `extractPagesWithVision`. Deliberately a **text-layer repair plus a figure/equation sidecar**, not a replacement for the structuring pass — a repaired page flows into the existing `runNotesExtraction` / `runPYQExtraction` unchanged, so the blast radius stays inside extraction.
+
+**The thin-text gate alone silently failed half the job.** Pilot A on a real NCERT Physics chapter returned **0 figures and 0 equations**: the text layer is clean, so `needsVision` was false on all 22 pages, so vision never ran, so its diagrams were never seen. The gate is right for text repair and wrong as the only route to figures. Added a second independent trigger — `pageHasRasterImage()`, read off pdfjs's operator list (`paintImageXObject`), which is what the renderer will actually execute and so can't be fooled by prose that merely mentions "Fig. 4.1". Re-running then found **14 figures and 44 equations**. A figure-page's good text layer is never overwritten by the transcription; only genuinely thin pages are repaired.
+
+Deviations from the audit, confirmed with the owner: **JPEG** page input (a 2x A4 PNG is 1.5–3MB, base64 adds a third, per page, through an edge function — q0.85 lands 150–350KB with no OCR cost; figure crops stay PNG for line art), and a **40-page vision cap** per document so a 300-page scan can't arrive as an unannounced bill. `ai-proxy` needed no change — it forwards the request body verbatim.
+
+Bounding boxes get validated before use (`isUsableBbox`): vision models identify *that* a figure exists far more reliably than *where*, so a malformed or implausible box falls back to the full page image, which is a usable figure rather than a confidently-wrong crop.
+
+### Classification (§2)
+
+The existing notes-extraction prompt now also returns `content_type` / `technique[]` / `difficulty` / `confidence` per chunk — same single AI call, no extra pass. These land in **real, CHECK-constrained columns** with `normaliseClassification` mapping anything unrecognised to NULL, because a mislabelled chunk is a retrieval-quality problem while a rejected insert loses the entire upload.
+
+`match_knowledge_base` was replaced with a filtered variant taking exam type, chapter, content type, difficulty and techniques. This is the change everything downstream depends on: the vector store went from "semantic only" to **"filter, then rank"**. Previously chapter/exam scoping existed only as `tags.cs.{...}` string containment on the keyword *fallback* path — the semantic path could not narrow beyond subject at all, so a Class 8 query could rank a Class 12 chunk top.
+
+All 9 `tags[]` consumers updated. Most got **simpler**: `PracticeGeneratorPage` no longer flattens a mixed array and strips exam tags to guess which entries were chapter names, and `AdminContentLibrary` no longer reconstructs board/class filtering through `examTypeToTag` round-trips. `getKBTopics()` was deleted — zero callers.
+
+### Retired
+
+`scripts/ingest-ncert-folder.mjs` (and its 800-char slicer) and `scripts/backfill-kb-embeddings.mjs` are gone; the semantic chunker in the intake path is now the single ingestion route. Two divergent chunk shapes in one table would have caused retrieval problems that are very hard to diagnose later. Extraction logic moved out of the JSX into `src/lib/contentExtraction.js` so it's testable without an admin session.
+
+### Verification
+
+20 new unit tests (`pdfVision.test.js`) covering the gate boundary at 79/80/81 chars, bbox rejection cases, the vision payload shape, and graceful degradation on malformed responses — plus AbortError propagating rather than being swallowed into "this page had no text". 17 SQL checks over the new RPC: each filter narrows, filters compose, unmatched filters return empty rather than everything, the legacy 3-arg call still resolves, and both CHECK constraints reject drifted casing (`'Theorem'`, `'Medium'`).
+
+Pilots run through the real production modules via `npm run pilot`:
+
+- **Pilot A** (NCERT Class 11 Physics, 22pp): 0 thin pages, 22 figure-bearing pages, 14 figures cropped, 44 equations, 18 chunks classified and inserted with every real column populated. **~4.7 min and 22 vision calls** — that is the honest per-chapter cost of figure extraction.
+- **Pilot B** (synthetic image-only scan, 2pp): 0 chars/page → vision fires on both → 1,850 and 3,788 characters recovered → 3 chunks classified. **This PDF would previously have been rejected outright.**
+
+### Pilot B re-verified against a REAL scan
+
+The synthetic fixture is retained as `npm run pilot BS` (a committed regression fixture that needs no real scan on hand); `npm run pilot B` now points at the genuine scanned paper.
+
+The real input turned out to be the hard case: a **photograph of a computer screen** showing an NCERT page — browser tab chrome across the top, screen glare, moiré/scanline interference over the whole frame, mild perspective skew, and a diagonal "© NCERT not to be republished" watermark across the figures.
+
+**OCR came back word-perfect.** 1 page, 0 chars of text layer → `needsVision` fired correctly → 580 characters recovered, compared line by line against the rendered page:
+
+- Every word of every sentence matches, including the curly quotes in `'quadrilateral'` and the em-dash.
+- Italics (`*quadri*`, `*latus*`) and bold (`**angles**`) preserved as markdown, matching the source typography.
+- **Zero** substitution errors attributable to skew, glare, contrast or moiré — the specific failure modes the synthetic fixture could not test.
+- Screen furniture (browser tabs, the `×` and `+` buttons) and the watermark were correctly excluded rather than transcribed as content. The `[FIGURE 1]` placeholder landed exactly where the figures sit.
+- Only omission: the `0874CH04` print code in the top-right margin. Page metadata, not content.
+
+Classification, persistence and RLS all verified: 3 chunks → `content_type` `prose`/`prose`/`diagram`, `class_level` parsed to `'8'`, embeddings present, `source_ref` provenance intact. `content_figures` writes confirmed to **allow a verified admin and block a non-admin** under enforced RLS (the pilot's own denial is correct — it runs unauthenticated).
+
+### Figure cropping failed verification — now disabled
+
+Inspecting the actual uploaded images (rather than trusting the counts) showed **5 of 5 model-supplied bounding boxes were materially wrong**: three of Pilot A's crops contained nothing but body text, a fourth clipped a real figure in half while dragging in unrelated paragraphs, and the scanned page's box caught three of five figures plus text with its left edge cut off. Every one of those boxes was well-formed and plausibly sized, so `isUsableBbox` passed them all — the boxes are not malformed, they are simply inaccurate. That is a known VLM weakness: these models identify *that* a figure exists far more reliably than *where* it is.
+
+Counting figures would have reported this as a success. Looking at them is what caught it.
+
+`CROP_FROM_MODEL_BBOX` is now **off by default**: the figure image is the whole page, uploaded once per page and shared by every figure on it. Coarser, but it always actually contains the figure, and a student sent to the page it came from is strictly better served than by a confidently-wrong crop of the wrong region. Captions — which were consistently accurate ("Five geometric figures labeled (i) to (v), with (i), (ii), and (iii) being quadrilaterals") — plus chapter and page are what make figures findable. The model's box is still stored on `content_figures.bbox` as advisory metadata so a future pass can be scored against it.
+
+**Follow-up (not Phase 1):** derive figure rectangles geometrically by tracking the CTM through `paintImageXObject` in pdfjs's operator list, instead of asking a model to eyeball coordinates. That is the real fix for tight crops.
+
+---
+
 ## 2026-08-09 (session 12) — referral rewards gated on payment, admin referrals screen, toggle UI fix
 
 ### Referral payout moved to conversion
