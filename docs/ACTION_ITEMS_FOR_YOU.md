@@ -114,6 +114,40 @@ semantic verification (second-model pass or symbolic evaluation).
 - **Admin publish still records no reviewed state.** `handlePublish` re-runs
   `toEngineFormat` and ships; there is no "an admin actually checked this" flag.
 
+### PARKED: semantic verification — measured, costed, ready to wire in
+
+Prototyped against the same 30 questions and scored on the 4 hand-verified wrong
+keys. One `gpt-4o` call per question: re-solve from scratch, then compare.
+
+| | gpt-4o | gpt-4o-mini |
+|---|---|---|
+| tokens/question | 146 in, 40 out | 146 in, 45 out |
+| median latency | **1.34 s** (p90 1.67 s) | 1.37 s |
+| caught of 4 known-wrong | 2 | 2 |
+| false positives | **1** | 3 |
+
+- **Cost ≈ $0.0008/question (~8¢ per 100)** at ~$2.50/1M in + $10/1M out —
+  confirm against current OpenAI pricing before relying on it.
+- **Runs at generation time, comfortably.** Generating 15 questions already takes
+  52–119 s; verification is ~1.3 s/question and parallelises, so 15 questions at
+  concurrency 5 is ~4 s — under 5% added wall-clock, and 186 tokens × 15 is
+  nothing against the 30,000 TPM ceiling. Failures can be flagged `needs_review`
+  and filtered by the machinery already shipped in session 17.
+- **Use gpt-4o, not mini** — identical recall, three times the false positives.
+- **Recall is only ~50% alone**, and the verifier is itself wrong at roughly the
+  generator's rate (it insisted `a = 30 m/s ÷ 10 s` was 5 m/s²). But it is
+  **complementary** to the free cross-check, which caught the flywheel item the
+  model missed: **combined recall ≈ 75%**, at the cost of ~2 sound questions
+  withheld per 30.
+- **Effort: ~40 lines and about an hour**, reusing `needs_review` and the student
+  path filter.
+
+**Parked deliberately** (2026-08-10) because there are no real students yet —
+the platform is still dev/testing. **Revisit before any real student launch:** an
+11% wrong-key rate on a path that awards XP *and* writes `weak_topics` accuracy
+teaches the platform to recommend the wrong revision topics, and that error
+compounds silently.
+
 ### Decision still needed from the owner
 
 Whether the student practice path should be gated behind reviewed content, or
