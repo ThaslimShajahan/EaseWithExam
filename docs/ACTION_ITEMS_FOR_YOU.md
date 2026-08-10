@@ -134,7 +134,41 @@ filename.
 
 ---
 
-## ⚠ DO NOT APPLY ALONE — `20260810070000_match_kb_exam_type_array.sql`
+## DONE 2026-08-11 — `20260810070000` applied and the client deployed, one window
+
+Migration applied, client deployed, all checks green. **NEET now reads the Class
+11 corpus.** Live bundle `assets/index-CrZjys3H.js` (was `index-BiWNyNtH.js`).
+
+Post-deploy verification, against production:
+
+| check | result |
+|---|---|
+| semantic retrieval works | 5 chunks for a NEET Physics query |
+| NEET reaches Class 11 | `exam_types: CBSE Class 11` |
+| CBSE Class 10 uncontaminated | `exam_types: CBSE Class 10` only |
+| Ask-EWE lookup | 5 chunks |
+| student generation, verification NOT firing | `stats.disabled=true`, 0 model calls |
+| Exam Center CBSE sections | `{MCQ:17, A-R:2, Short Answer:11}` — matches baseline |
+
+**`answer_verification_off = true`** — semantic verification is deliberately OFF
+for launch. Students get option shuffling + the free cross-check (13.3% → 10.3%
+served-wrong) but not the verifier's further drop to 7.4%. Toggle in
+Admin → Feature Flags to enable; **no redeploy needed**, but flags are cached per
+session, so it applies to sessions started after the change. **Note the inverted
+sense: `true` means verification is DISABLED.**
+
+Rollback, while it still exists: server backup
+`~/deploy-backups/webroot-2026-08-10-192409.tar.gz` (3.4 MB, 287 files), plus
+`supabase/rollback/20260810070000_rollback.sql`. Bundle first, then SQL. The KVM
+snapshot taken beforehand expires 24h after 2026-08-11.
+
+Procedure now written down in `docs/DEPLOY.md`, including the two failure modes
+that bit during this deploy: `tar` exiting 2 on a successful extract, and 199
+files landing non-world-readable.
+
+---
+
+## ~~⚠ DO NOT APPLY ALONE~~ (RESOLVED — see above) — `20260810070000_match_kb_exam_type_array.sql`
 
 **Apply this migration and deploy the client in the SAME window. Never one
 without the other, in either order.** It is written and tested but deliberately

@@ -4,6 +4,26 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-11 (session 24) — migration + client deployed in one window; NEET now reads the Class 11 corpus
+
+`20260810070000` applied and the client deployed together, as required: the migration drops `match_knowledge_base`'s scalar `filter_exam_type` signature, so the live bundle and the new schema cannot both work. The site was deliberately degraded for the ~6 minutes between them.
+
+Verified at each stage rather than at the end. Immediately after the push: the `text[]` filter is accepted, a NEET query reaches `CBSE Class 11` rows, the 3-arg legacy call still resolves, and — the check that matters most — the **old scalar shape now returns HTTP 400**, confirming the cutover was real and the deploy genuinely urgent rather than assumed so.
+
+Post-deploy, against production: retrieval works, **NEET reaches Class 11 content**, CBSE Class 10 is uncontaminated, Ask-EWE works, student generation runs with verification correctly skipped (0 model calls, `stats.disabled=true`), and Exam Center CBSE papers keep their sections at `{MCQ:17, A-R:2, Short Answer:11}` — matching the pre-change baseline, so the regression guarded against in session 23 did not materialise.
+
+**Semantic verification shipped OFF** (`answer_verification_off = true`), a deliberate launch-day choice: students get option shuffling and the free cross-check without the extra per-question API call. Enabling it later needs no redeploy.
+
+### Two deploy failure modes found, both now documented
+
+**`tar` exits 2 on a successful deploy.** `assets/` and `landing/` are owned by a different user, so tar cannot restore their mode/mtime and exits non-zero *after extracting every file correctly*. Trusting the exit code alone would have triggered a false rollback. `--no-overwrite-dir` fixes it.
+
+**199 files landed non-world-readable.** The tarball carries the build machine's permissions, so files extracted as `640` where the previous deploy's were `644`. Directories are `770` and owned by another user, so a web server outside that group could not have read them. Caught by comparing against the previous deploy's permissions rather than by waiting for a 403.
+
+The procedure existed only in the owner'''s head until now; it is written down in `docs/DEPLOY.md`, along with the SSH-alias trap (`IdentitiesOnly yes` means the bare `user@host` form fails), the breaking-migration ordering, and rollback in both directions.
+
+---
+
 ## 2026-08-11 (session 23) — semantic answer verification shipped, and both question types measured for the first time
 
 `src/lib/answerVerification.js` — a second `gpt-4o` pass re-solves each generated question from scratch and disagreements are flagged `needs_review`, which the student paths drop. Wired into `PracticeGeneratorPage` and `backgroundGeneration.js`. Behind an **opt-out** flag (`answer_verification_off`): a missing flag row reads as false, so a safety check stays on by default while remaining disable-able without a deploy.
