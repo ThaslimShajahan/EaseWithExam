@@ -313,7 +313,93 @@ semantic verification (second-model pass or symbolic evaluation).
 - **Admin publish still records no reviewed state.** `handlePublish` re-runs
   `toEngineFormat` and ships; there is no "an admin actually checked this" flag.
 
-### PARKED: semantic verification — measured, costed, ready to wire in
+### SHIPPED 2026-08-11 — semantic verification is live on both student paths
+
+`src/lib/answerVerification.js`. A second gpt-4o pass re-solves each generated
+question from scratch; disagreements set `needs_review`, which the student paths
+drop. Wired into `PracticeGeneratorPage` **and** `backgroundGeneration.js` — the
+latter was a pre-existing gap, a student path that published straight to the
+student and had never filtered `needs_review` at all.
+
+Opt-OUT flag `answer_verification_off`: a missing flag row reads as false, so the
+safety check stays on by default and can be disabled without a deploy.
+
+**Measured, both types, hand-adjudicated:**
+
+| | MCQ (30) | Numerical (34) |
+|---|---|---|
+| wrong keys generated | 4 (13.3%) | 5 (14.7%) |
+| served-wrong, no checks | 13.3% | 14.7% |
+| served-wrong, cross-check only | 10.3% | **14.7%** |
+| served-wrong, **both (ships now)** | **7.4%** | **6.9%** |
+| recall / precision | 50% / 67% | 60% / 60% |
+
+**The cross-check is structurally blind to numericals** — it compares the keyed
+OPTION against its explanation, and numericals have no options, so it flagged
+**0 of 34**. Before this, numericals had no validation of any kind.
+
+**The projected ~75% combined recall did not hold — measured 50-60%.** Both MCQ
+misses were cases where the verifier agreed with a wrong key, including one where
+the correct option was present and the explanation stated the right value
+(`p(1)=0` keyed as `1`). The remaining wrong keys are real and still reach
+students at ~7%.
+
+### OPEN — the remaining ~7% served-wrong rate
+
+Verification roughly halves the wrong-key rate but does not close it. The misses
+share a shape: the verifier re-derives, gets its own wrong answer, and that wrong
+answer happens to agree with the wrong key — or it simply defers. Closing this
+needs something with a different failure mode than "ask a model", e.g. symbolic
+evaluation for the algebra/arithmetic subset (which is where every observed miss
+lived — all 4 MCQ wrong keys were Class 10 Maths; all 15 Class 11 Physics
+conceptual items were correct).
+
+Not attempted: it is a genuinely bigger piece of work than an overnight fix.
+
+### OPEN — Numerical questions are sometimes ill-posed for their own type
+
+Distinct from a wrong key. Observed in the 34-question numerical run:
+
+- *"Find the particular solution of dy/dx = 3x² if y(1) = 5"* — the answer is a
+  FUNCTION (`y = x³ + 4`); the key stores `4`, the integration constant.
+- *"Probability of at least one boy in 3 children"* — the true answer is `7/8`;
+  the key stores `7`, with the explanation calling it "the integer
+  representation". A student entering `0.875` is marked wrong.
+
+Both are questions whose answer is not a single number being generated as a type
+whose answer must be a single number. Worth a prompt constraint on the Numerical
+type guide; not attempted unsupervised because it changes generation.
+
+### OPEN — CBSE ignores the caller's `qTypes` selection
+
+`generateQuestionPaper` hardcodes `effectiveTypes` for CBSE-style exams to all
+five section types regardless of what the caller asked for (questionGen.js ~999).
+The comment says this is deliberate, so Short/Long Answer are never accidentally
+omitted from a full board paper.
+
+But the Practice Generator's school picker (`Q_TYPE_OPTIONS_SCHOOL`) lets a
+student choose **MCQ only** — and they will still receive Short and Long Answer
+questions. The UI promises something the generator does not honour.
+
+*(Not a student-visible issue for Numerical: `Q_TYPE_OPTIONS_SCHOOL` does not
+offer that type at all, and the competitive picker that does offer it maps to
+exam types where `qTypes` IS honoured.)*
+
+Fixing means changing CBSE paper composition, which is a behavioural change to
+the main generation path — deliberately not done unsupervised.
+
+### OPEN — Admin Paper Gen does not run verification
+
+Both student paths verify. Admin > Paper Gen stores raw questions in state and
+only calls `toEngineFormat` at publish/preview time, so wiring verification there
+means mapping flags back onto the raw list by index — a restructure of an admin
+screen, not a one-liner. An admin therefore publishes without the verifier's
+opinion, even though that is exactly the human-review moment where it would help
+most.
+
+### Original scoping note (kept for the numbers it recorded)
+
+#### PARKED: semantic verification — measured, costed, ready to wire in
 
 Prototyped against the same 30 questions and scored on the 4 hand-verified wrong
 keys. One `gpt-4o` call per question: re-solve from scratch, then compare.

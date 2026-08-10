@@ -4,6 +4,41 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-11 (session 23) — semantic answer verification shipped, and both question types measured for the first time
+
+`src/lib/answerVerification.js` — a second `gpt-4o` pass re-solves each generated question from scratch and disagreements are flagged `needs_review`, which the student paths drop. Wired into `PracticeGeneratorPage` and `backgroundGeneration.js`. Behind an **opt-out** flag (`answer_verification_off`): a missing flag row reads as false, so a safety check stays on by default while remaining disable-able without a deploy.
+
+Two properties worth keeping. It **never sees the stored key, explanation or answer** — showing the model the answer turns independent re-solving into agreement bias, and the measured recall would be fiction, so a test asserts it with sentinel values. And it **fails open**: a verification error leaves the question exactly as it was, because turning a transient API fault into an empty quiz would be the worse failure.
+
+### Measured, hand-adjudicated, both types
+
+| | MCQ (30) | Numerical (34) |
+|---|---|---|
+| wrong keys generated | 4 (13.3%) | 5 (14.7%) |
+| served-wrong, no checks | 13.3% | 14.7% |
+| served-wrong, cross-check only | 10.3% | **14.7%** |
+| served-wrong, **both** | **7.4%** | **6.9%** |
+
+Roughly halved on both types. The middle Numerical row is the finding: **the free cross-check flagged 0 of 34**. It compares the keyed *option* against its explanation, and numericals have no options — it is structurally blind to them, so before this work numericals had no validation of any kind.
+
+**The ~75% combined recall projected when this was scoped did not hold — measured 50-60%.** Recorded plainly rather than quietly restated: both MCQ misses were cases where the verifier agreed with a wrong key, including one where the correct option was present and the explanation stated the right value (`p(1) = 0`, keyed as `1`).
+
+### Three defects found by measuring
+
+**1. A student path was never filtered at all.** `backgroundGeneration.js` publishes straight to the student, scores them and writes `weak_topics` — and had never filtered `needs_review`, so it served questions the blocking flow has withheld since session 17.
+
+**2. The Numerical type could not be measured because it is barely generated.** Asking CBSE Class 10/11 for `qTypes:['Numerical']` returns 28 MCQ + 2 Assertion-Reason and **zero** Numericals: `generateQuestionPaper` hardcodes `effectiveTypes` for CBSE-style exams and that list omits Numerical, so the request is silently discarded. Measured under JEE Main/Advanced instead, which honour it — and even there compliance is partial (one Physics batch returned 15/15 MCQ). The CBSE evidence is kept as a benchmark set rather than deleted.
+
+**3. A false positive of my own making.** The verifier answered `1/3` against a key of `0.333333` — the same value — but `firstNumber` took the numerator and reported a disagreement, withholding a sound question. Fractions are now evaluated, guarded against slash chains so `1/3/2024` still reads as `1` rather than `1/3` or `3/2024`. Recomputed over the same 34 from the stored verifier answers (no new model calls): that FP disappears, nothing else moves — precision 50% → 60%.
+
+### Benchmark is now reproducible
+
+The previous two measurements were ad-hoc, so "the same benchmark" could only be re-approximated. `scripts/benchmark-answer-quality.mjs` fixes the configuration in code and checkpoints each batch; `benchmark-score.mjs` computes served-wrong rates per regime. The harness deliberately does **not** judge correctness — the premise is that the model is wrong ~10-15% of the time, so letting a model grade itself would launder the error rate rather than measure it. Verdicts are hand-adjudicated and merged in.
+
+Left open and logged rather than fixed unsupervised: the residual ~7% served-wrong rate, ill-posed Numericals whose answer isn't a single number, CBSE ignoring a caller's `qTypes`, and Admin Paper Gen not running the verifier.
+
+---
+
 ## 2026-08-10 (session 22) — 1,130 NEET PYQs loaded across six years, and four defects found by checking rather than counting
 
 New `scripts/bulk-load-pyq.mjs`, same hardened shape as `bulk-load-corpus.mjs`: checkpointed and resumable, one file at a time against the 30,000 TPM ceiling, 429 backoff, dev-server probe up front. It drives the real modules — `extractPagesWithVision`, `runPYQExtraction`, and `savePYQRows`, which was exported from `AdminContentIntake.jsx` so the loader shares the admin screen's row shape instead of keeping a second copy that could drift.
