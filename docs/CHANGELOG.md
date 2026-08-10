@@ -4,6 +4,38 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-10 (session 20) — `study_notes.unit` cleanup, and the CTM figure-cropping plan audited then corrected
+
+Two items picked up while PYQ sourcing is in flight. Nothing touching generation steering or the NEET/JEE mapping was changed — both stay parked.
+
+### `unit` repeated the chapter title on 81 backfilled notes
+
+`unit` exists to GROUP notes into a table of contents (`NotesBrowser`, `AdminStudyNotes`), so a unit whose only member is a chapter of the same name rendered as an accordion section of exactly one item, repeating its own title twice.
+
+Source of the dirt: `runNotesExtraction` asks for "Unit name if this content is part of a numbered/named unit, else null". A bulk-loaded NCERT PDF **is** one chapter, so the model has nothing else to name and answers with the chapter title; `scripts/backfill-study-notes.mjs` then copied it through verbatim.
+
+**The obvious one-liner was wrong, and measuring first is what caught it.** `UPDATE ... WHERE unit = chapter` would have hit 84 rows, but NCERT genuinely names a unit after its own opening chapter: `Number Play` (CBSE 10 Maths, 3 sibling chapters), `Locomotion and Movement` (CBSE 11 Biology, 1), `Proportional Reasoning` (CBSE 8 Maths, 1). Clearing those evicts the intro chapter from a unit that really exists and orphans it into "Other Notes" while its siblings stay grouped — worse than the cosmetic problem being fixed. `20260810060000_clear_self_referential_note_units.sql` therefore carries a `NOT EXISTS` sibling guard scoped to `exam_type + subject`.
+
+Applied and verified against the before-snapshot: 181 rows unchanged, 179 → 98 with a unit, **81 cleared, the 3 protected rows intact by ID**, 95 genuine-unit rows over 65 distinct names untouched.
+
+Also fixed at source — `dropSelfReferentialUnits()` in the backfill script carries the same guard so the next corpus load can't reintroduce it. Verified over the real 4,363-row corpus: clears the same 81. It preserves 2 of the 3 rather than all 3, which is **not** a disagreement — Class 10's "Number Play" unit exists only in `study_notes`, not in the corpus `knowledge_base`, while Class 8's same-named chapter genuinely has no siblings and should be cleared. Both paths clear the identical 81 rows.
+
+### Geometric figure cropping — audited, the documented plan disproved, then parked
+
+Session 17 recorded the follow-up as "derive figure rectangles by tracking the CTM through `paintImageXObject`" (in `CHANGELOG` and as a comment in `pdfVision.js`). Audited against the real corpus before writing any code, and **that plan finds nothing.**
+
+Every NCERT page paints exactly two rasters, neither of them a figure: a full-bleed page background at `{x:-0.012 y:-0.05 w:1.024 h:1.1}` and the diagonal "© NCERT not to be republished" watermark at `{x:0.096 y:0.246 w:0.782 h:0.594}`. Both repeat to four decimal places on every page — which is also the cheap way to recognise furniture. The real figures are **vector line art**, invisible to every `paintImage*` op.
+
+The workable source is `constructPath`, whose pdfjs-6 args are `[opsFlags, coords, minMax]` — a free per-path bounding box in user space that the CTM maps to an exact page rect. A scratch prototype on real Class 11 Physics ch. 4 produced **tight, correct crops of Fig 4.3 and Fig 4.5**, against the model bboxes' 0-for-5, with one characterisable false positive (stacked display equations).
+
+The pitfall worth recording: naive proximity clustering merged the **entire page into one cluster**, because a fraction bar, a callout border and a table rule each sit within the merge gap of the next thing, so the union walks the whole column. Pre-filtering those bridging paths *before* merging is the whole trick. Scans degrade correctly to a single whole-page rect, so there is no regression risk there.
+
+**Verified by rendering pages in a real browser and drawing the derived rects over them** — the same discipline that caught the model-bbox failure in session 17, and the reason the premise got corrected instead of implemented.
+
+Parked behind launch, not started. Full findings and the staged plan are in `docs/ACTION_ITEMS_FOR_YOU.md`; the stale comment in `pdfVision.js` was corrected to point there rather than keep asserting a disproved plan as fact.
+
+---
+
 ## 2026-08-10 (session 19) — §3 pattern stats and §4b paper scoring, narrowed to what the data supports
 
 ### §3 — `chapter_pattern_stats`, deliberately two axes short of its original scope

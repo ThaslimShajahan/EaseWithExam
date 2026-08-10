@@ -6,6 +6,39 @@ shipped in a degraded state. The narrative of what changed and why lives in
 
 ---
 
+## RESOLVED 2026-08-10 — `study_notes.unit` repeated the chapter title on 81 rows
+
+Applied via `supabase db push` (`20260810060000_clear_self_referential_note_units.sql`)
+and verified after the fact: 181 rows unchanged, 179 → 98 with a unit, **81
+cleared, the 3 protected rows intact by ID**, 95 genuine-unit rows across 65
+distinct unit names untouched. Kept here rather than moved to the changelog only
+because the `NOT EXISTS` guard below is a live constraint on anyone editing this
+later.
+
+The cosmetic problem: `unit` exists to GROUP notes into a table of contents, so a
+unit whose only member is a chapter of the same name rendered as a Study Hub /
+Admin accordion section of exactly one item, repeating its own title twice.
+
+Measured against production before writing it: **84 rows had `unit = chapter`,
+81 cleared, 3 deliberately preserved.** Those 3 are real NCERT units that
+happen to be named after their own opening chapter and have sibling chapters
+under them — `Number Play` (CBSE 10 Maths, 3 siblings), `Locomotion and Movement`
+(CBSE 11 Biology, 1), `Proportional Reasoning` (CBSE 8 Maths, 1). A plain
+`UPDATE ... WHERE unit = chapter` would have evicted those three from units that
+genuinely exist, orphaning the intro chapter into "Other Notes" while its
+siblings stayed grouped — worse than the cosmetic problem being fixed. Hence the
+`NOT EXISTS` guard. **Don't simplify it back down.**
+
+Source of the dirt is `runNotesExtraction`'s prompt ("Unit name if this content
+is part of a numbered/named unit, else null") — a bulk-loaded NCERT PDF *is* one
+chapter, so the model answers with the chapter title instead of null, and
+`scripts/backfill-study-notes.mjs` copies it through, so a future corpus load
+would reintroduce it. **Now fixed at source too** — `dropSelfReferentialUnits()`
+in that script carries the same sibling guard. Verified against the real 4,363-row
+corpus: it clears the same **81** and preserves the rest.
+
+---
+
 ## OPEN — Generated question answers are unverified (measured 2026-08-10)
 
 **Severity: high.** Generated questions reach students with no correctness check
@@ -152,6 +185,102 @@ compounds silently.
 
 Whether the student practice path should be gated behind reviewed content, or
 continue serving unreviewed generated questions with the validation now in place.
+
+---
+
+## PARKED (post-launch) — geometric figure cropping: audited, premise corrected, plan ready
+
+Audited 2026-08-10, **deliberately not started** — parked behind launch. Read this
+before picking it up, because the audit **disproved the plan that was written
+down** in `src/lib/pdfVision.js:71-73` and `CHANGELOG` ("derive figure rectangles
+by tracking the CTM through `paintImageXObject`"). That approach finds nothing on
+this corpus. The replacement is below.
+
+Why it matters: today `CROP_FROM_MODEL_BBOX = false`, so every figure's image is
+the **whole page**, shared by every figure on it. That was the right call (5 of 5
+model bboxes were materially wrong) but it is coarse, and tight per-figure crops
+are what a curated figure library actually needs.
+
+### Finding 1 — `paintImageXObject` finds ZERO figures. The documented plan fails.
+
+Every NCERT page paints exactly two rasters, and **neither is a figure**:
+
+| raster | rect (normalised) | what it is |
+|---|---|---|
+| `img_pN_1` | `{x:-0.012 y:-0.05 w:1.024 h:1.1}` | full-bleed page background |
+| `img_pN_2` | `{x:0.096 y:0.246 w:0.782 h:0.594}` | the diagonal "© NCERT not to be republished" watermark |
+
+Both repeat to 4 decimal places on **every** page — which is also the cheap
+discriminator for furniture. The real figures are **vector line art**, invisible
+to every `paintImage*` op. Verified by rendering pages in a real browser and
+drawing the derived rects over them, not by counting ops.
+
+### Finding 2 — the right source is `constructPath`, and pdfjs 6 hands it over free
+
+`constructPath` args in pdfjs 6 are `[opsFlags, coords, minMax]`, where `minMax`
+is a `Float32Array [minX, minY, maxX, maxY]` in **user space** — a per-path
+bounding box at no cost. `CTM x minMax` gives the exact page rect. The CTM walk
+itself (`save`/`restore`/`transform`, seeded from `viewport.transform`) is
+straightforward and was verified correct.
+
+### Finding 3 — a scratch prototype produced genuinely tight crops
+
+Real NCERT Class 11 Physics ch. 4 (`keph104.pdf`):
+
+| page | result |
+|---|---|
+| 5 | 1 candidate — **tight, correct crop of Fig 4.3** (cricketer), no false positives |
+| 7 | 2 candidates — **tight, correct crop of Fig 4.5** (train), **+1 false positive** (stacked display equations) |
+
+Against the model bboxes' **0 for 5**. The false positive is a characterisable
+class, not random noise.
+
+### Finding 4 — naive clustering fails, and the fix is the whole trick
+
+The first prototype merged the **entire page into one cluster**: an equation's
+fraction bar, a tinted callout border and a table rule each sit within the merge
+gap of the next thing, so the union walks the whole column. What made it work was
+pre-filtering the *bridging* paths **before** merging:
+
+- a path whose own box is mostly covered by glyphs is **inside a line of text**
+  (fraction bars, underlines) — not a figure
+- hairline rules (long, ~0 tall) and vertical rules
+- anything ≥85% of the page (furniture)
+
+Merge gap must stay small (~1.2% of page width): NCERT is two-column and a
+generous gap jumps the gutter and unions both columns into one "figure".
+
+### Finding 5 — scanned PDFs degrade correctly
+
+`_pilot/scanned-paper.pdf`: one raster covering the page, zero paths. Geometry
+yields exactly one whole-page rect — i.e. today's behaviour. **No regression
+risk on scans.**
+
+### Proposed plan (~1 day)
+
+**Step 0 — widen the sample first (~1h).** Two pages of one Physics chapter is
+not enough to set thresholds. Sample across Maths / Science / Biology and score
+by *looking* at the crops. This is the step that caught the last failure.
+
+**Step 1 — new `src/lib/pdfGeometry.js` (~3–4h).** Pure and unit-testable, no
+canvas needed (operator list + text layer only). Raster and vector sources,
+cross-page repeat detection for furniture, the text-aware pre-filter, then
+clustering.
+
+**Step 2 — pair geometry WITH the model, don't replace it (~2h).** The measured
+evidence says the model is reliably right about *how many* figures there are and
+*what* they show (captions were consistently accurate) and unreliable about
+*where*; geometry is exactly the reverse. So match the model's figure list onto
+the geometric candidates and crop from the matched rect, falling back to the page
+image when there is no confident match. Behind a new `CROP_FROM_GEOMETRY` flag,
+default off. `CROP_FROM_MODEL_BBOX` stays off permanently.
+
+**Step 3 — pilot, look at every crop, then decide the default (~1h).**
+
+### Known risks
+
+Display-equation false positives; the two-column gutter; Hindi and non-STEM PDFs
+were not audited at all. Scans are safe (Finding 5).
 
 ---
 

@@ -68,9 +68,20 @@ const PAGE_JPEG_QUALITY = 0.85;
  * caption (which was consistently accurate) plus chapter/page is what makes it
  * findable.
  *
- * The real fix is geometric: derive figure rectangles from pdfjs's operator
- * list by tracking the CTM through paintImageXObject, rather than asking a
- * model to eyeball coordinates. That's a follow-up, not a Phase 1 item.
+ * The real fix is geometric — but NOT the way this comment used to claim.
+ * "Track the CTM through paintImageXObject" was audited on 2026-08-10 and is
+ * WRONG for this corpus: every NCERT page paints exactly two rasters, a
+ * full-bleed background and the "not to be republished" watermark, and both
+ * repeat identically on every page. The actual figures are VECTOR line art,
+ * invisible to every paintImage* op.
+ *
+ * The workable source is constructPath, whose pdfjs-6 args carry a free
+ * per-path bounding box ([opsFlags, coords, minMax]) that CTM maps to an exact
+ * page rect. A scratch prototype cropped real figures tightly where the model
+ * bboxes went 0 for 5. Parked behind launch — full findings, the clustering
+ * pitfall that matters, and the staged plan are in
+ * docs/ACTION_ITEMS_FOR_YOU.md, "PARKED (post-launch) — geometric figure
+ * cropping".
  */
 const CROP_FROM_MODEL_BBOX = false;
 

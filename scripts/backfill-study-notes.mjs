@@ -145,7 +145,45 @@ function group(rows) {
     if (!g.unit && r.unit) g.unit = r.unit;
     g.rows.push(r);
   }
-  return [...groups.values()];
+  return dropSelfReferentialUnits([...groups.values()]);
+}
+
+/**
+ * Drops `unit` where it merely repeats the chapter title.
+ *
+ * runNotesExtraction asks for "Unit name if this content is part of a
+ * numbered/named unit, else null". A bulk-loaded NCERT PDF *is* one chapter, so
+ * the model has nothing else to name and answers with the chapter title rather
+ * than null. `unit` exists only to GROUP notes into a table of contents, so a
+ * unit whose only member is a chapter of the same name renders as an accordion
+ * section of exactly one item, repeating its own title twice. 81 rows had to be
+ * cleaned out of production this way once already
+ * (20260810060000_clear_self_referential_note_units.sql) — this stops the next
+ * corpus load from putting them back.
+ *
+ * The sibling check is NOT optional, and must stay in step with that migration:
+ * NCERT genuinely names a unit after its own opening chapter ("Number Play",
+ * "Locomotion and Movement", "Proportional Reasoning" are all real units with
+ * real sibling chapters). Dropping those would orphan the intro chapter out of a
+ * unit that legitimately exists.
+ *
+ * Scope note: this sees siblings present in knowledge_base (group() runs over
+ * every kb row, before the already-has-a-note filter), but not a sibling that
+ * exists only as a hand-authored study_notes row. That case would clear a unit
+ * the migration would have kept — narrow, and it fails toward "ungrouped",
+ * which is the recoverable direction.
+ */
+function dropSelfReferentialUnits(groups) {
+  const norm = (s) => (s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  for (const g of groups) {
+    if (!g.unit?.trim() || norm(g.unit) !== norm(g.chapter)) continue;
+    const hasSibling = groups.some((o) => o !== g
+      && norm(o.exam_type) === norm(g.exam_type)
+      && norm(o.subject)   === norm(g.subject)
+      && norm(o.unit)      === norm(g.unit));
+    if (!hasSibling) g.unit = null;
+  }
+  return groups;
 }
 
 /**
