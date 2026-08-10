@@ -14,6 +14,7 @@
  */
 
 import { generateQuestionPaper, toEngineFormat } from './questionGen';
+import { verifyQuestions } from './answerVerification';
 import { publishTest } from './supabase';
 import { incrementQuota } from './quota';
 import { createNotification, getNotificationPrefs } from './notifications';
@@ -45,7 +46,15 @@ export async function startBackgroundPaperGeneration({
       // this replaces, navigating away is now the expected, supported
       // path, not an abandonment signal.
     });
-    const formatted = toEngineFormat(raw?.questions ?? raw, subject, examType);
+    const engineQs = toEngineFormat(raw?.questions ?? raw, subject, examType);
+
+    // This is a STUDENT path — it publishes straight to the student and the
+    // result scores them and writes weak_topics accuracy — but it was never
+    // filtering needs_review, so it served questions the blocking flow in
+    // PracticeGeneratorPage has withheld since session 17. Same treatment here:
+    // verify, then drop anything either check distrusts.
+    const { questions: checked } = await verifyQuestions(engineQs);
+    const formatted = checked.filter((q) => !q.needs_review);
     if (!formatted.length) throw new Error('No questions returned. Try different settings.');
 
     const published = await publishTest({

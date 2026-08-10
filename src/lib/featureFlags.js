@@ -150,4 +150,9 @@ export const FLAGS = {
   BLUEPRINT_V2:          'blueprint_v2_enabled',
   PAPER_MODE_V2:         'paper_mode_v2_enabled',
   MAINTENANCE_MODE:      'maintenance_mode_enabled',
+  // Opt-OUT, unlike every flag above. Semantic answer verification protects the
+  // student path from wrong answer keys, so it runs by default — and a missing
+  // flag row reads as false, which keeps it on. Insert this key as `true` to
+  // disable it without a deploy.
+  ANSWER_VERIFICATION_OFF: 'answer_verification_off',
 };

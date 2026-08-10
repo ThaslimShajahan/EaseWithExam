@@ -8,6 +8,7 @@ import {
   Sigma, BookMarked, Atom, Brain, Printer,
 } from 'lucide-react';
 import { generateQuestionPaper, toEngineFormat, generateChapterNotes } from '../lib/questionGen';
+import { verifyQuestions } from '../lib/answerVerification';
 import { saveTestSession, supabase } from '../lib/supabase';
 import { getChapters } from '../lib/syllabus';
 import { useAuth } from '../context/AuthContext';
@@ -894,11 +895,23 @@ export default function PracticeGeneratorPage({ embedded = false }) {
 
       const raw       = await generateQuestionPaper({ subject, topics: topic, examType, difficulty, count, qTypes, rotationSlot: Math.floor(Math.random() * 5), signal: controller.signal });
       const engineQs  = toEngineFormat(raw, subject, examType);
+
+      // Second, independent check: a model re-solves each question from scratch
+      // and disagreements are flagged. The free key-vs-explanation cross-check
+      // inside toEngineFormat only catches keys that contradict their own
+      // working (~a quarter of wrong keys); the dominant failure is a key and
+      // explanation that agree and are both wrong. Measured together: ~75%
+      // recall versus ~25% for the cross-check alone. Adds ~4 s at concurrency 5
+      // against a 52-119 s generation. Fails open, so an API blip degrades to
+      // today's behaviour rather than an empty quiz.
+      const { questions: checked } = await verifyQuestions(engineQs, { signal: controller.signal });
+
       // This path scores the student and writes weak_topics accuracy, so a
-      // question whose key disagrees with its own explanation must not be
-      // served — being marked wrong for a right answer is worse than getting
-      // one question fewer. Admin > Paper Gen keeps them, flagged, for a human.
-      const formatted = engineQs.filter((q) => !q.needs_review);
+      // question either check distrusts must not be served — being marked wrong
+      // for a right answer is worse than getting one question fewer, and a bad
+      // key also corrupts the student's own weak-topic diagnostics. Admin >
+      // Paper Gen keeps them, flagged, for a human.
+      const formatted = checked.filter((q) => !q.needs_review);
       if (!formatted.length) throw new Error('No questions returned — try different settings.');
       setQs(formatted); setQIdx(0); setCorrect(0); setPhase('quiz');
 
