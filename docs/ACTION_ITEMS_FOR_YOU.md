@@ -407,6 +407,58 @@ exam types where `qTypes` IS honoured.)*
 Fixing means changing CBSE paper composition, which is a behavioural change to
 the main generation path — deliberately not done unsupervised.
 
+### PARTLY FIXED 2026-08-11 / rest PARKED — CBSE ignoring the caller's `qTypes`
+
+**Shipped (`0e5a9c2`), verified live:**
+
+1. `generateQuestionPaper` no longer overrides `qTypes` for CBSE-style exams.
+   The five-section set is now the DEFAULT when no selection is supplied, not a
+   substitute for one that was.
+2. `ExamCenterPage` resolved types with `EXAM_QTYPES[examType]`, but that map is
+   keyed by board (`'CBSE'`) and class (`'Class 10'`) while real values are the
+   combined `'CBSE Class 10'` — so it **missed and fell back to `['MCQ']`**.
+   Invisible while the generator ignored `qTypes`; with change 1 it would have
+   collapsed every Exam Center CBSE paper to MCQ-only. Now resolved via
+   `defaultQTypesFor()` in `examPattern.js`, unit-tested.
+
+**Still open — filter `buildSectionMarksInstructions` by selected type.**
+
+A narrow selection is honoured at some paper sizes and not others:
+
+| count | MCQ-only selection, CBSE Class 10 |
+|---|---|
+| 5, 10, 45 | clean |
+| 20 | `{MCQ:18, Assertion-Reason:2}` |
+| 30 | `{MCQ:18, Assertion-Reason:2, Short Answer:10}` |
+
+Not a tunable threshold — it is two prompt instructions fighting.
+`buildSectionMarksInstructions` (questionGen.js ~632) emits, for CBSE:
+
+> `SECTION → MARKS mapping (MANDATORY — every question MUST include section and marks, matching this EXACT structure — N questions total)`
+
+listing Sections A–E. So the prompt says "MCQ only" *and* "produce this exact
+five-section paper", and which one wins varies by size and by run.
+
+**Owner decision 2026-08-11: parked for post-launch.** It edits the structure
+that makes a CBSE paper a valid CBSE paper — a different risk class from the two
+changes above — and the residual behaviour is a UX annoyance, not a correctness
+or safety bug.
+
+If picked up: filter the block's `entries` to sections whose type is in
+`effectiveTypes` (infer from the section name — `/mcq/`, `/assertion/`,
+`/short/`, `/long/`, `/case/`), and fall back to the unfiltered block when
+nothing matches, so a bad inference degrades to today's behaviour.
+
+**One known delta from this partial fix, measured as immaterial.** Exam Center
+now passes four types (MCQ, Assertion-Reason, Short Answer, Long Answer) where
+the old hardcoded list also contained `Case-Based`. The CBSE pattern still has
+`Section E (Case-Based)` and the mandatory section block still demands it, so the
+structure is unchanged — only the type-guide description is absent. Neither the
+before nor the after run produced a Case-Based question at count=30, so no
+difference was observed. Adding `'Case-Based'` to the CBSE/`Class N` entries in
+`EXAM_QTYPES` would restore exact parity and is a one-word-per-entry change —
+deliberately not done here because it would alter what was live-verified.
+
 ### PARKED (post-launch) — Admin Paper Gen does not run verification
 
 Both student paths verify. Admin > Paper Gen stores raw questions in state and
