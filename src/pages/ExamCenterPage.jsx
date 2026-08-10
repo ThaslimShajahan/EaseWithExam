@@ -5,7 +5,7 @@ import {
   Sparkles, Play, Clock, FileText, Plus, Loader2, Trophy,
   Target, BookOpen, X, ChevronRight, Zap, GraduationCap, Printer, ClipboardList, Bell,
 } from 'lucide-react';
-import { getExamPattern, getMarkingLabel, getSubjectQuestionCount, getTestDurationMinutes } from '../lib/examPattern';
+import { getExamPattern, getMarkingLabel, getSubjectQuestionCount, getTestDurationMinutes, defaultQTypesFor } from '../lib/examPattern';
 import { getExamLabel } from '../lib/categories';
 import { getPublishedTests, getCompletedTestIds, supabase, publishPYQPaper } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
@@ -21,19 +21,6 @@ import { useSyllabusChapters } from '../hooks/useSyllabusChapters';
 import { buildExamType, isRelevantToStudent } from '../lib/categories';
 
 // Question types per exam (mirrors what the real paper uses)
-const EXAM_QTYPES = {
-  'NEET':         ['MCQ', 'Assertion-Reason'],
-  'JEE Main':     ['MCQ', 'Numerical'],
-  'JEE Advanced': ['MCQ', 'Numerical', 'Match the Following'],
-  'CBSE':         ['MCQ', 'Assertion-Reason', 'Short Answer', 'Long Answer'],
-  'ICSE':         ['MCQ', 'Short Answer', 'Long Answer'],
-  'State Board':  ['MCQ', 'Short Answer', 'Long Answer'],
-  'Class 8':      ['MCQ', 'Short Answer', 'Long Answer'],
-  'Class 9':      ['MCQ', 'Assertion-Reason', 'Short Answer', 'Long Answer'],
-  'Class 10':     ['MCQ', 'Assertion-Reason', 'Short Answer', 'Long Answer'],
-  'Class 11':     ['MCQ', 'Assertion-Reason', 'Short Answer', 'Long Answer'],
-  'Class 12':     ['MCQ', 'Assertion-Reason', 'Short Answer', 'Long Answer'],
-};
 
 const DIFFICULTIES = ['Easy', 'Medium', 'Hard', 'Mixed'];
 
@@ -142,7 +129,12 @@ function GenerateModal({ onClose, onStarted }) {
     const quota = await checkQuota(currentUser?.uid, 'paper_generations_used', isPremium);
     if (!quota.allowed) { setShowPaywall(true); return; }
 
-    const examQTypes = EXAM_QTYPES[examType] || ['MCQ'];
+    // Resolver, not a direct lookup: the map is keyed 'CBSE' / 'Class 10' but
+    // examType is the combined 'CBSE Class 10', so a plain lookup missed and
+    // silently fell back to ['MCQ']. Harmless while the generator ignored
+    // qTypes for CBSE; now that it honours them, that miss would have made
+    // every Exam Center CBSE paper MCQ-only.
+    const examQTypes = defaultQTypesFor(examType);
     const duration    = getTestDurationMinutes(examPat);
 
     startBackgroundPaperGeneration({

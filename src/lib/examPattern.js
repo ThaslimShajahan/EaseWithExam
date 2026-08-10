@@ -184,3 +184,53 @@ export function getTestDurationMinutes(pattern) {
   const subjectCount = Object.keys(sections).length || 1;
   return Math.round(duration / subjectCount);
 }
+
+/**
+ * Default question types for an exam, used when a caller has no explicit
+ * selection of its own (Exam Center's one-tap paper generation).
+ *
+ * WHY THIS IS A FUNCTION AND NOT A PLAIN LOOKUP
+ * The map is keyed by BOARD ('CBSE') and by CLASS ('Class 10'), but real
+ * exam_type values are the combined form — 'CBSE Class 10'. A direct
+ * `EXAM_QTYPES[examType]` therefore MISSES and falls through to its default.
+ *
+ * That was invisible while generateQuestionPaper ignored qTypes for CBSE-style
+ * exams: the generator substituted all five section types regardless, so a
+ * board paper came out correct despite the lookup having quietly resolved to
+ * ['MCQ']. The moment the generator started honouring qTypes (so that a student
+ * picking "MCQ only" actually gets MCQs), that silent miss would have collapsed
+ * every Exam Center CBSE paper to MCQ-only. Resolving the combined form is what
+ * makes the generator fix safe.
+ *
+ * Order matters: the class-specific entry wins over the board one, because
+ * 'Class 8' legitimately omits Assertion-Reason while 'CBSE' includes it.
+ */
+export const EXAM_QTYPES = {
+  'NEET':         ['MCQ', 'Assertion-Reason'],
+  'JEE Main':     ['MCQ', 'Numerical'],
+  'JEE Advanced': ['MCQ', 'Numerical', 'Match the Following'],
+  'CBSE':         ['MCQ', 'Assertion-Reason', 'Short Answer', 'Long Answer'],
+  'ICSE':         ['MCQ', 'Short Answer', 'Long Answer'],
+  'State Board':  ['MCQ', 'Short Answer', 'Long Answer'],
+  'Kerala State': ['MCQ', 'Short Answer', 'Long Answer'],
+  'Class 8':      ['MCQ', 'Short Answer', 'Long Answer'],
+  'Class 9':      ['MCQ', 'Assertion-Reason', 'Short Answer', 'Long Answer'],
+  'Class 10':     ['MCQ', 'Assertion-Reason', 'Short Answer', 'Long Answer'],
+  'Class 11':     ['MCQ', 'Assertion-Reason', 'Short Answer', 'Long Answer'],
+  'Class 12':     ['MCQ', 'Assertion-Reason', 'Short Answer', 'Long Answer'],
+};
+
+export function defaultQTypesFor(examType) {
+  if (!examType) return ['MCQ'];
+  if (EXAM_QTYPES[examType]) return EXAM_QTYPES[examType];
+
+  const cls = String(examType).match(/Class\s+(\d+)/i);
+  if (cls && EXAM_QTYPES[`Class ${cls[1]}`]) return EXAM_QTYPES[`Class ${cls[1]}`];
+
+  const board = String(examType).match(/^(CBSE|ICSE|State Board|Kerala State)\b/i);
+  if (board) {
+    const key = Object.keys(EXAM_QTYPES).find((k) => k.toLowerCase() === board[1].toLowerCase());
+    if (key) return EXAM_QTYPES[key];
+  }
+  return ['MCQ'];
+}

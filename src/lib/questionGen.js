@@ -993,12 +993,23 @@ export async function generateQuestionPaper({ subject, topics, examType, difficu
     subject, examType, preferTypes: QUESTION_SEED_TYPES, limit: 12,
   });
 
-  // For CBSE/school exams, always include all section types regardless of qTypes selection.
-  // This ensures Long Answer and Short Answer are never accidentally omitted.
+  // An EXPLICIT selection is always honoured; the CBSE full-section set is the
+  // DEFAULT for school exams, not an override of what the caller asked for.
+  //
+  // This used to substitute all five section types for CBSE-style exams
+  // unconditionally, so that a full board paper could never accidentally lose
+  // Short/Long Answer. The cost was that it also overrode a deliberate choice:
+  // the Practice Generator's school picker lets a student select "MCQ only" and
+  // they still received Short and Long Answer questions. The UI promised
+  // something the generator refused to do.
+  //
+  // The no-selection default below preserves the original protection — Exam
+  // Center and any caller that passes nothing still get the full set.
   const isCBSEPrompt = CBSE_STYLE_EXAMS.has(examType);
-  const effectiveTypes = isCBSEPrompt
-    ? ['MCQ', 'Assertion-Reason', 'Short Answer', 'Long Answer', 'Case-Based']
-    : (qTypes?.length ? qTypes : ['MCQ']);
+  const CBSE_ALL_SECTION_TYPES = ['MCQ', 'Assertion-Reason', 'Short Answer', 'Long Answer', 'Case-Based'];
+  const effectiveTypes = qTypes?.length
+    ? qTypes
+    : (isCBSEPrompt ? CBSE_ALL_SECTION_TYPES : ['MCQ']);
   const typeInstr = effectiveTypes.map((t) => `- ${t}: ${TYPE_GUIDE[t]}`).join('\n');
   const diffNote  = difficulty === 'Mixed' ? '30% Easy, 50% Medium, 20% Hard' : `All ${difficulty}`;
   const seed      = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`; // unique per call
