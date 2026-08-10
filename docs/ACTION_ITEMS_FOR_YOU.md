@@ -35,7 +35,16 @@ vision calls, and the combined papers additionally supply the **2024 Physics** a
 paper codes reorder questions but do not change them, so no distinct question is
 lost by preferring one code over another.
 
-### DECISION NEEDED — NEET 2024 has 198 good questions but NO answer key
+### RESOLVED 2026-08-10 — NEET 2024 keeps its questions, without answer keys
+
+**Owner decision: Option 1 — leave 2024 as-is.** Its 198 questions and chapter
+attribution stay; `correct_answer` stays NULL for all of them. Nothing depends on
+2024's keys: Blueprint V2 needs chapter distribution, not answers, and it already
+passes on all three subjects. The other five years supply 923 real keys.
+
+**Options 2 and 3 below are a post-launch nice-to-have, if time allows.** Neither
+is blocking, and neither should be attempted during launch week — Option 2
+deletes 198 good rows before it re-creates them.
 
 `2393a308-…` turned out to be a **question-only test booklet**: 2 "Ans" markers
 in 66,276 characters, no answer-key section, no solutions. Its 198 questions and
@@ -61,17 +70,20 @@ Biology, and they carry the same questions already loaded, so loading them
 naively **duplicates** those questions and skews Blueprint V2's chapter
 weighting.
 
-Three ways forward, none obviously right, so none taken:
-1. **Leave it.** 2024 contributes questions and chapter distribution only. The
-   other five years supply the answer keys. Zero risk, zero work.
+**POST-LAUNCH, OPTIONAL — how 2024's keys could be recovered later:**
+
+1. ~~**Leave it.**~~ **← chosen.** Zero risk, zero work.
 2. **Replace the 2024 load.** Delete the booklet rows; load 2024 Chemistry and
    Biology from the named scans (real keys), and 2024 Physics from the booklet's
-   Physics pages alone — `pageRange` now supports this (`[2, 7]`). Costs ~30
-   vision calls and loses answer keys for Physics only.
-3. **Verify first.** Load one named 2024 scan to a throwaway `source` and check
-   whether its key actually survives OCR before committing to option 2.
+   Physics pages alone — `pageRange` supports this (`[2, 7]`). ~30 vision calls,
+   ~15 min. Physics still ends up with no key, since the booklet is its only
+   source.
+3. **Verify before committing to 2.** Load one named 2024 scan under a throwaway
+   `source` and check whether its key actually survives OCR. ~13 vision calls.
 
-Option 3 then 2 is the careful path; option 1 is defensible given launch timing.
+If this is ever picked up, do **3 before 2** — the titles claim answers, but they
+are scans and the keys have not been confirmed legible. Option 2 without that
+check risks deleting 198 good rows and getting nothing back.
 
 ### No 2018 papers are present
 

@@ -34,7 +34,11 @@ Its answer key sits alone on page 26 as a compact list covering all 180. A key i
 
 Separately, the 2024 source turned out to be a **question-only test booklet** — 2 "Ans" markers in 66k characters, no key, no solutions — yet the extractor returned 45 answers, betraying themselves as option *text* (`"Succinyl-CoA → Succinic acid"`, `"( ) 2 1 x kcalm yr − −"`) with no explanations. **All 198 were set to null.** This project has already measured 10% hard-wrong keys from model inference, and a wrong key marks a correct student wrong *and* poisons their `weak_topics`. Options for recovering 2024's keys are logged in `ACTION_ITEMS_FOR_YOU.md` rather than guessed at.
 
-**Answer keys: 923 of 1,130 (81.7%)** — the 207 nulls are 198 from that 2024 booklet plus 9 genuinely absent. No institute name is recorded anywhere: `exam_type` is NEET, plus subject and year, and `source` is a synthetic key. Zero branding leaks in the loaded text.
+Owner decision: **leave 2024 as-is** — questions and chapter attribution kept, no answer keys. Nothing depends on them, and Blueprint V2 needs chapter distribution rather than answers. Recovery options are recorded as post-launch and optional.
+
+**Answer keys: 923 of 1,130 (81.7%)** — the 207 nulls are 198 from that 2024 booklet plus 9 genuinely absent.
+
+The run checkpoint was reconciled against the database afterwards, which mattered more than it looked: the loader's end-of-run summary **sums `withAnswer` across checkpoint entries**, so the stale pre-null figures would have reported 968 keys against a real 923. Every entry is now recomputed from the live table, with `withAnswerAtLoad` preserving what extraction originally returned. No institute name is recorded anywhere: `exam_type` is NEET, plus subject and year, and `source` is a synthetic key. Zero branding leaks in the loaded text.
 
 ---
 
