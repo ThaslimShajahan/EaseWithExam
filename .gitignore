@@ -32,5 +32,6 @@ secrets/
 test-fixtures/_shell.html
 public/_pilot/
 
-# Bulk corpus loader run state (resumable checkpoint, not source)
+# Bulk loader run state (resumable checkpoints, not source)
 .corpus-load-checkpoint.json
+.pyq-load-checkpoint.json

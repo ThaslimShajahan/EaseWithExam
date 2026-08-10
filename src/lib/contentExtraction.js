@@ -110,11 +110,55 @@ export function matchSyllabusChapter(guess, chapterNames) {
  * without reserving budget that is never used. Reservation per call drops from
  * ~20,000 to ~8,600, which is the difference between one upload monopolising
  * the minute and several running back to back.
+ *
+ * RE-MEASURED 2026-08-10 against NEET papers, which are far denser than the
+ * CBSE board papers the numbers above came from. A NEET paper is 180-200 MCQs
+ * with four options each and no long-answer questions:
+ *
+ *   measured output      515 bytes/question (~129 tokens), 2021 Physics, 37 Qs
+ *   densest source seen  366 source chars/question (2024 combined, 200 Qs)
+ *
+ * At the old 12,000-char batch that densest case packs ~33 questions into one
+ * call — ~4,250 output tokens against a 5,000 ceiling, i.e. 15% headroom before
+ * the finish_reason==='length' guard throws and the whole file fails. Dropping
+ * the batch to 9,000 chars gives ~25 questions and ~3,200 tokens, restoring
+ * ~37% headroom WITHOUT raising the reservation: max_tokens stays 5,000, so
+ * per-call TPM cost falls (less input, same ceiling) rather than rising.
+ *
+ * Lowering the batch is the right lever here, not raising the cap — reserved
+ * tokens are what the 30,000 TPM ceiling actually counts.
+ *
+ * CORRECTED AGAIN, from a real failure rather than a projection. 9,000 threw the
+ * truncation guard on NEET 2021 Biology, batch 2/4: that batch carried ~25
+ * questions and exceeded 5,000 output tokens, so BIOLOGY runs 200+ tokens per
+ * question — the earlier ~130 figure came from Physics and Chemistry, whose
+ * questions are short and whose options are symbolic. Biology stems and their
+ * explanations are prose, and prose is where the estimate broke.
+ *
+ * Sized against the worst case actually observed (220 tokens/question):
+ *   5,000 chars -> ~16 questions -> ~3,560 tokens against a 6,000 cap (41% clear)
+ *   densest source (2024 combined, 366 chars/q) -> ~14 questions -> ~3,000
+ *
+ * max_tokens goes UP to 6,000 here despite the TPM cost, because this guard
+ * throws the whole FILE rather than degrading one batch — the asymmetry is
+ * worth ~1 call/min. Net reservation per call is 1,250 input + 6,000 = ~7,250,
+ * about 4 calls/min against the org's 30,000 TPM.
  */
-const PYQ_BATCH_CHARS = 12000;
-const PYQ_MAX_TOKENS  = 5000;
+const PYQ_BATCH_CHARS = 5000;
+const PYQ_MAX_TOKENS  = 6000;
 
-export async function runPYQExtraction({ rawText, examType, subject, year, onProgress, syllabusChapters = [] }) {
+/**
+ * `preamble` — text repeated into EVERY batch, not split across them.
+ *
+ * Exists for papers that print a compact answer key on one page covering the
+ * whole paper (NEET 2025 page 26: "1. (2) 2. (2) 3. (2) …" for all 180). Batching
+ * is sequential with no cross-batch memory, so a key sitting in the last batch
+ * can only ever answer the last batch's questions — the other ~160 come back
+ * with correct_answer null despite the key being right there in the PDF.
+ *
+ * Defaults to '' so every existing caller is unchanged.
+ */
+export async function runPYQExtraction({ rawText, examType, subject, year, onProgress, syllabusChapters = [], preamble = '' }) {
   const isMixed = subject === 'Mixed';
   const batches = splitIntoBatches(rawText, PYQ_BATCH_CHARS);
 
@@ -183,7 +227,15 @@ Return JSON:
   ]
 }
 
-${chapterRule}
+${chapterRule}${preamble ? `
+ANSWER KEY FOR THE WHOLE PAPER — this covers every question in the paper, not
+just the excerpt below. Match each question you extract to its number in this
+key and use that as "correct_answer". Do NOT guess an answer that is not in this
+key, and do NOT treat the key itself as a question:
+"""
+${preamble}
+"""
+` : ''}
 RAW TEXT:
 ${batches[b]}`,
         },

@@ -4,6 +4,72 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-10 (session 22) — 1,130 NEET PYQs loaded across six years, and four defects found by checking rather than counting
+
+New `scripts/bulk-load-pyq.mjs`, same hardened shape as `bulk-load-corpus.mjs`: checkpointed and resumable, one file at a time against the 30,000 TPM ceiling, 429 backoff, dev-server probe up front. It drives the real modules — `extractPagesWithVision`, `runPYQExtraction`, and `savePYQRows`, which was exported from `AdminContentIntake.jsx` so the loader shares the admin screen's row shape instead of keeping a second copy that could drift.
+
+**1,130 questions, 99.7% snapped to the seeded syllabus, all three subjects clearing Blueprint V2.**
+
+| subject | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 | total |
+|---|---|---|---|---|---|---|---|
+| Physics | 50 | 50 | 50 | 50 | 47 | 45 | 292 |
+| Chemistry | 50 | 46 | 47 | 48 | 41 | 35 | 267 |
+| Biology | 100 | 98 | 99 | 100 | 92 | 82 | 571 |
+
+### The manifest is explicit because the folder is not trustworthy
+
+All 20 PDFs were opened and identified — md5 for duplicates, page text for subject/year, chars-per-page for text-layer usability. Three files were **byte-identical**; four more were scans of exams that two combined papers already carried with a clean text layer. Globbing the folder would have double-loaded ~300 questions. Six files skipped, each with a recorded reason.
+
+### Four defects, each caught by verifying rather than trusting the counts
+
+**1. The branding filter ate the subject matter.** `MOTION` and `PW` were in the institute-brand strip list. "Motion" is a core physics word — the first 2021 Physics load returned **zero** questions containing it, in a paper whose chapters include "Laws of Motion" and "Motion in a Plane". Those rows were deleted and reloaded. Only unambiguous brand tokens remain; `PW`/`Motion` now match solely alongside app-store chrome.
+
+**2. Batching was silently dropping a quarter of every paper.** 2021 Physics extracted **37 questions; the paper has 50**. Independent denominators — counting question-number markers in each PDF, where NEET numbers Physics 1-50, Chemistry 51-100, Biology 101-200 — turned "the extractor said 37" into "the extractor lost 13". `PYQ_BATCH_CHARS` 12,000 → 9,000 → **5,000** and `PYQ_MAX_TOKENS` → 6,000, the second cut forced by a real truncation throw on 2021 Biology: Biology runs **200+ tokens/question** against Physics/Chemistry's ~130, because its stems and explanations are prose. Both re-runs then came back exactly complete (50/50, 50/50, 100/100).
+
+**3. A solutions section read as a second set of questions.** The 2025 combined paper returned **329 questions against a true 180** (71/81/177 versus the real 45/45/90) — pages 27-48 are full solutions, and sequential batching has no memory of what it already extracted. Duplicates are worse than gaps here: Blueprint V2 weights chapters by raw frequency, so a duplicated section silently doubles its pull on every generated paper. Added `pageRange` to the loader; 2025 reloaded to **exactly 180**.
+
+Its answer key sits alone on page 26 as a compact list covering all 180. A key in one batch can only answer that batch, so `runPYQExtraction` gained an optional **`preamble`** repeated into every batch. 2025 answer coverage went **67 → 180 of 180**.
+
+**4. NEET answer keys were unparseable, and one paper's were invented.** `parseAnswerLetter` mapped only `A`-`D`, but NTA numbers its options `(1)`-`(4)` — so all 180 valid 2025 keys resolved to null, reported as "unparseable answer key". Now accepts both, anchored to the first token so `"42"` is still not option 4 and `"BONUS"` is still not option B. 246 stored rows normalised to canonical letters; the key distribution is now unskewed (A 237 / B 270 / C 207 / D 209).
+
+Separately, the 2024 source turned out to be a **question-only test booklet** — 2 "Ans" markers in 66k characters, no key, no solutions — yet the extractor returned 45 answers, betraying themselves as option *text* (`"Succinyl-CoA → Succinic acid"`, `"( ) 2 1 x kcalm yr − −"`) with no explanations. **All 198 were set to null.** This project has already measured 10% hard-wrong keys from model inference, and a wrong key marks a correct student wrong *and* poisons their `weak_topics`. Options for recovering 2024's keys are logged in `ACTION_ITEMS_FOR_YOU.md` rather than guessed at.
+
+**Answer keys: 923 of 1,130 (81.7%)** — the 207 nulls are 198 from that 2024 booklet plus 9 genuinely absent. No institute name is recorded anywhere: `exam_type` is NEET, plus subject and year, and `source` is a synthetic key. Zero branding leaks in the loaded text.
+
+---
+
+## 2026-08-10 (session 21) — NEET syllabus seeded from the Class 11 corpus, ahead of the first NEET PYQ upload
+
+43 `syllabus_nodes` rows for NEET Physics (14) / Chemistry (9) / Biology (20), so chapter snapping works on the first upload rather than after it.
+
+**Seeded from the Class 11 corpus on purpose, not from a syllabus list.** Content Intake snaps every extracted PYQ chapter onto a `syllabus_nodes` name, so seeding NEET from the same chapter strings `knowledge_base` already uses is what lets a NEET question reach Class 11 content at all. Seeding from any other list would have produced a syllabus that looks right and silently fails to join. Verified after writing: **43/43 chapter names match a `knowledge_base` chapter exactly**, covering all 1,531 Class 11 Phy/Chem/Bio chunks.
+
+`seed-syllabus-from-corpus.mjs` gained `--from-exam` (read chapters under one exam_type, write rows under another) and a `--preset=neet`. `class_level` and the key prefix come from the *source* exam, so these land as `c11_*` and a Class 12 pass can add `c12_*` without collision. Class 11 Mathematics is deliberately excluded — it is JEE's subject.
+
+**Found and fixed a real bug in that script, by checking the count instead of the exit code.** The first run inserted 42 rows, not 43: the dedupe query was scoped to `exam_type` alone, so NEET Chemistry's "Thermodynamics" was skipped as "already present" because NEET Physics had just claimed `c11_thermodynamics`. CBSE Class 10 never exposed this — Mathematics and Science share no chapter names. Dedupe is now scoped to `exam_type + subject`, which is also how `getChapters()` reads, and the missing row was inserted.
+
+Recorded three things in `ACTION_ITEMS_FOR_YOU.md` rather than acting on them: **Class 12 is entirely absent** (NEET is 11+12, so roughly half of each paper will not snap — seeding a static Class 12 chapter list first is recommended); two corpus-vocabulary artifacts that must *not* be renamed in AdminSyllabus without renaming `knowledge_base` too, or the join breaks; and a pre-existing `chapter_key` collision that merges flashcard decks for same-named chapters across subjects, now reachable for the first time.
+
+### Class 12 and pre-rationalisation chapters — 56 more rows, NEET now has 99
+
+The corpus-derived 43 are Class 11 and post-2023 rationalised. The papers being uploaded are **2018 and 2022**, which predate rationalisation, so beyond the missing Class 12 half they also ask about chapters the current NCERT books no longer contain. `scripts/seed-neet-static-chapters.mjs` adds Class 12 current (37), Class 11 legacy (9) and Class 12 legacy (10), owner-reviewed before running.
+
+Deliberately **not** corpus-derived, and deliberately carrying no content: a syllabus row makes a name available to `matchSyllabusChapter()`, it does not create chunks. Retrieval for Class 12 still finds nothing — the win is chapter *attribution*, which is what Blueprint V2 groups on.
+
+Legacy rows are `is_active = true` because `getChapters()` filters on it and intake snaps against that exact list, so an inactive row would be invisible to snapping and the exercise pointless. The visible cost — ~19 empty chapters in the picker — is pushed to the bottom via `sort_order` bands (Class 12 current 100+, Class 11 legacy 900+, Class 12 legacy 950+). Verified after writing: 99 rows, zero duplicate `(subject, chapter_key)`, original 43/43 corpus join intact.
+
+### Option B implemented — four call sites, not five
+
+`match_knowledge_base`'s `filter_exam_type` becomes `text[]` (one changed line, `= ANY()`, copying the `filter_content_type` pattern already in that function), plus `src/lib/examMapping.js` — `examTypesFor()`, dependency-free because `supabase.js` imports it and putting it in `syllabus.js` would close an import cycle. Call sites: `questionGen.js:662` (`.eq` → `.in`), `questionGen.js:727`, `supabase.js:243`.
+
+**The fifth site was a miscount, corrected on inspection.** `fetchVerbatimPassages` (`questionGen.js:769`) returns `[]` unless the subject is English/Hindi/Sanskrit, so it was never on the NEET path and was left alone.
+
+Build passes; 161 tests pass, including 8 new ones covering the widening, exact-match-not-fuzzy behaviour, and that the shared fallback list can't be mutated between calls.
+
+**Migration deliberately NOT applied.** A parameter type change drops the old signature, so the live client's scalar argument would start failing — migration and client deploy must go in the same window. Flagged at the top of `ACTION_ITEMS_FOR_YOU.md` so it can't be applied accidentally on its own. Nothing about the PYQ upload depends on it.
+
+---
+
 ## 2026-08-10 (session 20) — `study_notes.unit` cleanup, and the CTM figure-cropping plan audited then corrected
 
 Two items picked up while PYQ sourcing is in flight. Nothing touching generation steering or the NEET/JEE mapping was changed — both stay parked.

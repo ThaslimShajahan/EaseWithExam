@@ -72,7 +72,11 @@ function cleanChapterGuess(filename) {
 
 /* ── Save helpers ───────────────────────────────────────────────── */
 
-async function savePYQRows({ questions, examType, subject, year, source, isMixed, syllabusChapters }) {
+// Exported so scripts/bulk-load-pyq.mjs writes PYQ rows through the SAME
+// function the admin screen uses, rather than keeping a second copy of the row
+// shape. These rows feed Blueprint V2's chapter allocation, so a drifted
+// duplicate would corrupt generation quietly.
+export async function savePYQRows({ questions, examType, subject, year, source, isMixed, syllabusChapters }) {
   const reviewQueueOn = await getFeatureFlag(FLAGS.CONTENT_REVIEW_QUEUE);
 
   const rows = questions.map((q) => ({

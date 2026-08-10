@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { auth, adminAuth } from '../firebase/config';
 import { logChange, ENTITY, ACTION } from './changelog';
 import { embedText } from './aiProxy';
+import { examTypesFor } from './examMapping';
 
 const supabaseUrl  = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnon = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -236,7 +237,10 @@ export async function searchKnowledgeBase(query, embedding = null, filters = {})
         query_embedding:     embedding,
         match_count:         5,
         filter_subject:      filters.subject ?? null,
-        filter_exam_type:    filters.examType ?? null,
+        // Array, not scalar: a NEET/JEE query also reads the Class 11+12
+        // corpus. Returns null when examType is absent, which the RPC still
+        // treats as "no constraint". See examMapping.js.
+        filter_exam_type:    examTypesFor(filters.examType),
         filter_chapter:      filters.chapter ?? null,
         filter_content_type: filters.contentTypes ?? null,
         filter_difficulty:   filters.difficulty ?? null,

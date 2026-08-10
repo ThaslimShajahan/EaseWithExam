@@ -4,6 +4,7 @@ import { chatComplete, embedText } from './aiProxy';
 import { getFeatureFlag, FLAGS } from './featureFlags';
 import { getChapterPatternStats, scorePaperAgainstPattern } from './patternStats';
 import { getChapters } from './syllabus';
+import { examTypesFor } from './examMapping';
 import { attachDiagrams } from './diagrams';
 // getExamPattern() checks admin-uploaded paper_templates overrides before
 // falling back to PAPER_PATTERNS below (see examPattern.js) — this IS a
@@ -75,10 +76,29 @@ function cbseMarksForSection(section, type, examType) {
  * docs/ACTION_ITEMS_FOR_YOU.md.
  */
 
-/** Answer letter -> index. null (never 0) when absent or unparseable. */
+/**
+ * Answer key -> option index. null (never 0) when absent or unparseable.
+ *
+ * Accepts BOTH conventions, because real papers use both: CBSE/board keys are
+ * lettered "A"-"D", but NTA numbers its options "(1)"-"(4)" and NEET answer keys
+ * are published that way. Reading only letters silently rejected every NEET key
+ * — the 2025 paper's 180 answers all parsed as null and were reported as
+ * "unparseable answer key" despite being perfectly valid.
+ *
+ * Leading punctuation is skipped so "(3)", "3.", "3)" and "Ans: 3" all resolve.
+ */
 export function parseAnswerLetter(raw) {
-  const ch = String(raw ?? '').trim().toUpperCase().charAt(0);
-  return ch in LETTER_IDX ? LETTER_IDX[ch] : null;
+  const s = String(raw ?? '').trim().toUpperCase()
+    .replace(/^ANS(WER)?\s*[:.\-]?\s*/, '')   // "Ans: B"
+    .replace(/^[([{\s]+/, '');                // "(3)"
+
+  // Anchored to the FIRST token, never searched: a bare letter or a bare digit.
+  // The negative lookaheads are what keep this honest —
+  //   "42"    is not option 4 (a longer number is not a key)
+  //   "BONUS" is not option B (a word is not a key; NEET awards these to all)
+  if (/^[A-D](?![A-Z])/.test(s)) return LETTER_IDX[s.charAt(0)];
+  if (/^[1-4](?![0-9])/.test(s)) return Number(s.charAt(0)) - 1;
+  return null;
 }
 
 /**
@@ -659,7 +679,9 @@ async function fetchChunksPreferringTypes({
   const base = () => {
     let q = supabase.from('knowledge_base').select(cols);
     if (subject && subject !== 'Mixed') q = q.eq('subject', subject);
-    if (examType) q = q.eq('exam_type', examType);
+    // .in, not .eq: NEET/JEE read the Class 11+12 corpus too (examMapping.js).
+    // Subject above still separates NEET from JEE.
+    if (examType) q = q.in('exam_type', examTypesFor(examType));
     if (chapterTerm) {
       const safe = chapterTerm.replace(/[%,()]/g, '');
       q = q.or(`chapter.ilike.%${safe}%,content.ilike.%${safe}%`);
@@ -721,7 +743,7 @@ async function fetchKBChunks(subject, topicHints, { examType = null, contentType
         query_embedding:     embedding,
         match_count:         15,
         filter_subject:      subject !== 'Mixed' ? subject : null,
-        filter_exam_type:    examType,
+        filter_exam_type:    examTypesFor(examType),
         filter_content_type: contentTypes,
       });
       if (data?.length) {

@@ -4,6 +4,25 @@
  *   node scripts/seed-syllabus-from-corpus.mjs --dry-run
  *   node scripts/seed-syllabus-from-corpus.mjs
  *   ... --exam="CBSE Class 10" --subject=Science
+ *   ... --preset=neet                     # NEET Physics/Chemistry/Biology
+ *   ... --exam=NEET --subject=Physics --from-exam="CBSE Class 11"
+ *
+ * SEEDING ONE EXAM FROM ANOTHER'S CORPUS (--from-exam)
+ *   NEET's syllabus IS Class 11 + 12 Physics/Chemistry/Biology, and the corpus
+ *   is loaded under exam_type 'CBSE Class 11'. Reading and writing under the
+ *   same exam_type would find zero chapters for NEET, so --from-exam splits the
+ *   two: read chapter names from the Class 11 corpus, write syllabus_nodes rows
+ *   tagged NEET.
+ *
+ *   This matters beyond convenience. Content Intake snaps every extracted PYQ
+ *   chapter onto a syllabus_nodes name, so seeding NEET from the Class 11
+ *   corpus makes NEET PYQ chapter strings land on the SAME vocabulary the
+ *   knowledge_base chunks already use — which is what lets a NEET query reach
+ *   Class 11 content later, whatever mapping strategy is chosen. Seeding NEET
+ *   from some other chapter list would silently break that join.
+ *
+ *   class_level and the chapter_key prefix come from the SOURCE exam, so these
+ *   land as c11_* and a future Class 12 pass adds c12_* without colliding.
  *
  * WHY THIS MATTERS BEFORE UPLOADING PYQs
  *   Content Intake runs every extracted question's AI-guessed chapter through
@@ -36,13 +55,25 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (n, d) => { const h = process.argv.find((a) => a.startsWith(`--${n}=`)); return h ? h.split('=').slice(1).join('=') : d; };
 const DRY = process.argv.includes('--dry-run');
 
+// NEET is Physics + Chemistry + Biology only. Class 11 Mathematics is
+// deliberately NOT here: it is JEE's subject, and since every query filters on
+// subject as well as exam_type, keeping the corpus split by subject is what
+// lets one Class 11 corpus serve NEET and JEE without either seeing the other's
+// papers.
+const PRESETS = {
+  neet: ['Physics', 'Chemistry', 'Biology'].map((subject) => ({
+    examType: 'NEET', subject, fromExam: 'CBSE Class 11',
+  })),
+};
+
 // Tier 1 from the Step 4 plan: exam_type matches the loaded corpus exactly.
-const TARGETS = arg('exam') && arg('subject')
-  ? [{ examType: arg('exam'), subject: arg('subject') }]
-  : [
-      { examType: 'CBSE Class 10', subject: 'Mathematics' },
-      { examType: 'CBSE Class 10', subject: 'Science' },
-    ];
+const TARGETS = PRESETS[(arg('preset') ?? '').toLowerCase()]
+  ?? (arg('exam') && arg('subject')
+    ? [{ examType: arg('exam'), subject: arg('subject'), fromExam: arg('from-exam', arg('exam')) }]
+    : [
+        { examType: 'CBSE Class 10', subject: 'Mathematics' },
+        { examType: 'CBSE Class 10', subject: 'Science' },
+      ]);
 
 const env = Object.fromEntries(
   readFileSync(resolve(ROOT, '.env'), 'utf8').split('\n')
@@ -81,10 +112,20 @@ async function corpusChapters(examType, subject) {
 }
 
 let totalNew = 0;
-for (const { examType, subject } of TARGETS) {
-  const classLevel = classLevelFrom(examType);
-  const chapters = await corpusChapters(examType, subject);
-  const existing = await get(`syllabus_nodes?select=chapter_key,chapter_name&exam_type=eq.${encodeURIComponent(examType)}`);
+for (const { examType, subject, fromExam } of TARGETS) {
+  const srcExam = fromExam ?? examType;
+  // Source exam, not target: NEET carries no class number of its own, but the
+  // chapters do — so these key as c11_* and leave room for c12_*.
+  const classLevel = classLevelFrom(srcExam);
+  const chapters = await corpusChapters(srcExam, subject);
+  // Scoped to exam_type AND subject. Scoping to exam_type alone silently DROPS
+  // a chapter whose name exists in a sibling subject: NEET Physics and NEET
+  // Chemistry both have "Thermodynamics", both slugify to c11_thermodynamics,
+  // and Chemistry's row was skipped as "already present" on the first run.
+  // Class 10 never exposed this because Mathematics and Science share no
+  // chapter names. getChapters() filters on exam_type + subject, so a key
+  // repeated across subjects is correct, not a conflict.
+  const existing = await get(`syllabus_nodes?select=chapter_key,chapter_name&exam_type=eq.${encodeURIComponent(examType)}&subject=eq.${encodeURIComponent(subject)}`);
   const have = new Set(existing.map((r) => r.chapter_key));
 
   const rows = chapters.map((c, i) => ({
@@ -98,7 +139,7 @@ for (const { examType, subject } of TARGETS) {
     subtopics:    [],
   })).filter((r) => !have.has(r.chapter_key));
 
-  console.log(`\n${examType} / ${subject}`);
+  console.log(`\n${examType} / ${subject}${srcExam !== examType ? `   (chapters read from ${srcExam})` : ''}`);
   console.log(`  corpus chapters : ${chapters.length}`);
   console.log(`  already present : ${chapters.length - rows.length}`);
   console.log(`  to insert       : ${rows.length}`);

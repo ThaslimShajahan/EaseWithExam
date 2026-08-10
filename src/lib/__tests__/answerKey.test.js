@@ -110,3 +110,37 @@ describe('toEngineFormat answer-key handling', () => {
     expect(q.needs_review).toBe(false);
   });
 });
+
+/* NTA-style numeric answer keys — added after the NEET PYQ load found that the
+ * 2025 paper's 180 answers were all published as "(1)".."(4)" and parsed as
+ * null under a letters-only map. */
+describe('parseAnswerLetter — numeric NTA keys', () => {
+  it('maps bare digits 1-4 onto option indexes', () => {
+    expect(parseAnswerLetter('1')).toBe(0);
+    expect(parseAnswerLetter('2')).toBe(1);
+    expect(parseAnswerLetter('3')).toBe(2);
+    expect(parseAnswerLetter('4')).toBe(3);
+  });
+
+  it('handles the bracketed form NEET keys actually print', () => {
+    expect(parseAnswerLetter('(1)')).toBe(0);
+    expect(parseAnswerLetter('(4)')).toBe(3);
+    expect(parseAnswerLetter('3)')).toBe(2);
+    expect(parseAnswerLetter('2.')).toBe(1);
+  });
+
+  it('still handles letters, including bracketed and prefixed forms', () => {
+    expect(parseAnswerLetter('A')).toBe(0);
+    expect(parseAnswerLetter('(C)')).toBe(2);
+    expect(parseAnswerLetter('Ans: B')).toBe(1);
+    expect(parseAnswerLetter('d')).toBe(3);
+  });
+
+  it('rejects out-of-range and junk rather than defaulting to 0', () => {
+    expect(parseAnswerLetter('5')).toBeNull();
+    expect(parseAnswerLetter('0')).toBeNull();
+    expect(parseAnswerLetter('BONUS')).toBeNull();
+    expect(parseAnswerLetter('')).toBeNull();
+    expect(parseAnswerLetter(null)).toBeNull();
+  });
+});
