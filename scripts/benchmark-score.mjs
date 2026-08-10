@@ -19,12 +19,18 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (n, d) => { const h = process.argv.find((a) => a.startsWith(`--${n}=`)); return h ? h.split('=').slice(1).join('=') : d; };
 const SET = arg('set', 'mcq');
+const TYPE = arg('type', null);   // e.g. --type=Numerical to score one type
 const FILE = resolve(ROOT, '.benchmark', `${SET}.json`);
 if (!existsSync(FILE)) { console.error(`no benchmark file at ${FILE}`); process.exit(1); }
 
 const s = JSON.parse(readFileSync(FILE, 'utf8'));
-const all = Object.entries(s.batches).flatMap(([bid, b]) =>
+let all = Object.entries(s.batches).flatMap(([bid, b]) =>
   b.questions.map((q) => ({ ...q, batch: bid, label: `${bid}:${q.idx}` })));
+
+// A batch requested as one type can come back mixed, so scoring a specific
+// type has to filter rather than assume.
+if (TYPE) all = all.filter((q) => q.type === TYPE);
+if (!all.length) { console.error(`no questions of type ${TYPE}`); process.exit(1); }
 
 const unjudged = all.filter((q) => typeof q.handVerifiedCorrect !== 'boolean');
 if (unjudged.length) {

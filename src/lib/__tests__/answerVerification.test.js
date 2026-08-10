@@ -50,6 +50,20 @@ describe('firstNumber', () => {
     expect(firstNumber(42)).toBe(42);
   });
 
+  // Regression: the first numerical benchmark withheld a sound question because
+  // the verifier answered "1/3" against a key of "0.333333" — same value, read
+  // as 1 vs 0.333.
+  it('evaluates simple fractions rather than taking the numerator', () => {
+    expect(firstNumber('1/3')).toBeCloseTo(0.3333, 4);
+    expect(firstNumber('-3/4')).toBeCloseTo(-0.75, 6);
+    expect(firstNumber('22/7 approx')).toBeCloseTo(22 / 7, 6);
+  });
+
+  it('does not treat a date or a divide-by-zero as a fraction', () => {
+    expect(firstNumber('1/3/2024')).toBe(1);   // a date, not a third
+    expect(firstNumber('5/0')).toBe(5);
+  });
+
   it('returns null when there is no number', () => {
     expect(firstNumber('none of these')).toBeNull();
     expect(firstNumber('')).toBeNull();
@@ -67,6 +81,12 @@ describe('numericAgrees', () => {
   it('returns null — not false — when a side has no number to compare', () => {
     expect(numericAgrees('twenty', '20')).toBeNull();
     expect(numericAgrees('20', '')).toBeNull();
+  });
+
+  it('accepts a fraction against its decimal — the false positive that was found', () => {
+    expect(numericAgrees('1/3', '0.333333')).toBe(true);
+    expect(numericAgrees('0.5', '1/2')).toBe(true);
+    expect(numericAgrees('1/3', '0.5')).toBe(false);
   });
 
   it('treats zero-vs-zero as agreement without dividing by zero', () => {

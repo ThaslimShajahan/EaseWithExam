@@ -75,10 +75,31 @@ export function isVerifiable(q) {
     && q.correctOption < q.options.length;
 }
 
-/** First real number in a string, tolerating units, commas and unicode minus. */
+/**
+ * First real number in a string, tolerating units, commas and unicode minus.
+ *
+ * FRACTIONS ARE HANDLED FIRST, and they matter: the verifier answers a question
+ * like "evaluate the integral" with `1/3` while the stored key is `0.333333`.
+ * Those are the same number, but reading only the leading integer turns `1/3`
+ * into `1` and reports a false disagreement — a sound question withheld from a
+ * student because of a formatting difference. Measured on the first numerical
+ * benchmark: 1 of 2 false positives came from exactly this.
+ */
 export function firstNumber(raw) {
   if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
   const s = String(raw ?? '').replace(/[−–—]/g, '-').replace(/,(?=\d{3}\b)/g, '');
+
+  // a/b before a plain number, so the numerator isn't taken on its own.
+  // The lookarounds reject any slash CHAIN, in either direction, so a date like
+  // "1/3/2024" falls through to the plain-number path (-> 1) instead of being
+  // read as 1/3 or, worse, as the trailing 3/2024.
+  const f = s.match(/(?<![\d/])(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)(?![\d.]*\s*\/)/);
+  if (f) {
+    const num = Number(f[1]);
+    const den = Number(f[2]);
+    if (Number.isFinite(num) && Number.isFinite(den) && den !== 0) return num / den;
+  }
+
   const m = s.match(/-?\d+(?:\.\d+)?(?:\s*[eE]\s*-?\d+)?/);
   if (!m) return null;
   const n = Number(m[0].replace(/\s+/g, ''));

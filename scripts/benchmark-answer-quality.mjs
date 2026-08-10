@@ -42,11 +42,26 @@ const SETS = {
     { id: 'c10-maths',   subject: 'Mathematics', examType: 'CBSE Class 10', count: 15, qTypes: ['MCQ'] },
     { id: 'c11-physics', subject: 'Physics',     examType: 'CBSE Class 11', count: 15, qTypes: ['MCQ'] },
   ],
-  // Numericals have never been measured. The MCQ run produced 28 MCQ + 2
-  // Assertion-Reason and zero Numericals, so the one category with no
-  // structural filter at all was never exercised.
+  // Numericals have never been measured. First attempt asked CBSE Class 10/11
+  // for them and got 28 MCQ + 2 Assertion-Reason and ZERO Numericals — not bad
+  // luck, but by construction: generateQuestionPaper hardcodes effectiveTypes
+  // for CBSE-style exams and that list has no 'Numerical' in it (questionGen.js
+  // ~999), so qTypes is silently discarded. Kept below as `numerical-cbse` since
+  // it documents that behaviour.
+  //
+  // JEE Main honours qTypes AND genuinely has a numerical-answer section, so it
+  // is the honest way to exercise this type.
+  // Even under JEE Main, type compliance is partial — the first Physics batch
+  // came back 15/15 MCQ while Maths came back 13/13 Numerical. Extra batches
+  // are here to reach a sample of actual Numericals worth quoting a rate from.
   numerical: [
-    { id: 'num-c11-physics', subject: 'Physics',   examType: 'CBSE Class 11', count: 15, qTypes: ['Numerical'] },
+    { id: 'num-jee-physics', subject: 'Physics',     examType: 'JEE Main', count: 15, qTypes: ['Numerical'] },
+    { id: 'num-jee-maths',   subject: 'Mathematics', examType: 'JEE Main', count: 15, qTypes: ['Numerical'] },
+    { id: 'num-jee-chem',    subject: 'Chemistry',   examType: 'JEE Main', count: 15, qTypes: ['Numerical'] },
+    { id: 'num-jee-maths-2', subject: 'Mathematics', examType: 'JEE Advanced', count: 15, qTypes: ['Numerical'] },
+  ],
+  'numerical-cbse': [
+    { id: 'num-c11-physics', subject: 'Physics',     examType: 'CBSE Class 11', count: 15, qTypes: ['Numerical'] },
     { id: 'num-c10-maths',   subject: 'Mathematics', examType: 'CBSE Class 10', count: 15, qTypes: ['Numerical'] },
   ],
 };
