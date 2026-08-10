@@ -35,3 +35,6 @@ public/_pilot/
 # Bulk loader run state (resumable checkpoints, not source)
 .corpus-load-checkpoint.json
 .pyq-load-checkpoint.json
+
+# Answer-quality benchmark run state (regenerable, not source)
+.benchmark/
