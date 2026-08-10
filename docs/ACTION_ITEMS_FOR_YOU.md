@@ -423,24 +423,6 @@ type guide.
 behaviour, and the verifier already withholds the worst of these (the 7/8-keyed-
 as-7 item was caught).
 
-### OPEN — CBSE ignores the caller's `qTypes` selection
-
-`generateQuestionPaper` hardcodes `effectiveTypes` for CBSE-style exams to all
-five section types regardless of what the caller asked for (questionGen.js ~999).
-The comment says this is deliberate, so Short/Long Answer are never accidentally
-omitted from a full board paper.
-
-But the Practice Generator's school picker (`Q_TYPE_OPTIONS_SCHOOL`) lets a
-student choose **MCQ only** — and they will still receive Short and Long Answer
-questions. The UI promises something the generator does not honour.
-
-*(Not a student-visible issue for Numerical: `Q_TYPE_OPTIONS_SCHOOL` does not
-offer that type at all, and the competitive picker that does offer it maps to
-exam types where `qTypes` IS honoured.)*
-
-Fixing means changing CBSE paper composition, which is a behavioural change to
-the main generation path — deliberately not done unsupervised.
-
 ### PARTLY FIXED 2026-08-11 / rest PARKED — CBSE ignoring the caller's `qTypes`
 
 **Shipped (`0e5a9c2`), verified live:**
@@ -751,10 +733,15 @@ NEET/JEE decision above.
 
 ---
 
-## DECISION NEEDED — how NEET/JEE relates to the CBSE Class 11 corpus
+## RESOLVED 2026-08-11 — how NEET/JEE relates to the CBSE Class 11 corpus
 
-Not urgent, but it blocks the PYQ work that actually serves the product, so it
-wants deciding before NEET papers are sourced rather than after.
+**Option B was chosen, implemented and deployed.** A NEET/JEE query now reads the
+Class 11+12 corpus via `examTypesFor()` (`src/lib/examMapping.js`) plus a
+`text[]` filter on `match_knowledge_base`. Verified live: a NEET Physics query
+returns `CBSE Class 11` chunks, and CBSE Class 10 is uncontaminated.
+
+The analysis below is kept because it records why A, C and D were rejected — in
+particular that SUBJECT filtering already separates NEET from JEE for free.
 
 ### The problem
 
