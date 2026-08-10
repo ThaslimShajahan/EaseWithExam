@@ -344,19 +344,34 @@ the correct option was present and the explanation stated the right value
 (`p(1)=0` keyed as `1`). The remaining wrong keys are real and still reach
 students at ~7%.
 
-### OPEN — the remaining ~7% served-wrong rate
+### PARKED (post-launch, NOT before 14 Aug) — the residual ~7% served-wrong rate
 
-Verification roughly halves the wrong-key rate but does not close it. The misses
-share a shape: the verifier re-derives, gets its own wrong answer, and that wrong
-answer happens to agree with the wrong key — or it simply defers. Closing this
-needs something with a different failure mode than "ask a model", e.g. symbolic
-evaluation for the algebra/arithmetic subset (which is where every observed miss
-lived — all 4 MCQ wrong keys were Class 10 Maths; all 15 Class 11 Physics
-conceptual items were correct).
+**Owner decision 2026-08-11: do not attempt before launch.** This needs a
+different approach, not more tuning of the current one, and it is genuinely
+bigger scope than a pre-launch fix.
 
-Not attempted: it is a genuinely bigger piece of work than an overnight fix.
+Verification roughly halves the wrong-key rate (13.3% → 7.4% MCQ, 14.7% → 6.9%
+Numerical) but does not close it. Every observed miss shares one shape: the
+verifier re-derives, reaches its *own* wrong answer, and that answer happens to
+agree with the wrong key. Adding a third model pass would share the same failure
+mode and is not expected to help.
 
-### OPEN — Numerical questions are sometimes ill-posed for their own type
+**Why symbolic evaluation is the candidate.** All 4 MCQ wrong keys were Class 10
+**Mathematics**; all 15 Class 11 Physics conceptual items were correct. The
+numerical misses were arithmetic too (an equilibrium concentration off by ~2x, a
+de Broglie mass the explanation itself contradicted). The errors live in the
+algebra/arithmetic subset, which is exactly the part a CAS can check
+deterministically rather than probabilistically — a genuinely different failure
+mode from "ask a model".
+
+Rough shape if picked up: detect questions whose answer is a closed-form
+numeric/algebraic expression, re-evaluate the explanation's own working
+symbolically, and flag when it disagrees with the key. Non-trivial: parsing
+LaTeX working reliably is its own project, and it only covers the subset.
+
+**Do not start this before 14 Aug.**
+
+### PARKED (post-launch) — Numerical questions are sometimes ill-posed for their own type
 
 Distinct from a wrong key. Observed in the 34-question numerical run:
 
@@ -368,7 +383,11 @@ Distinct from a wrong key. Observed in the 34-question numerical run:
 
 Both are questions whose answer is not a single number being generated as a type
 whose answer must be a single number. Worth a prompt constraint on the Numerical
-type guide; not attempted unsupervised because it changes generation.
+type guide.
+
+**Owner decision 2026-08-11: parked for post-launch.** It changes generation
+behaviour, and the verifier already withholds the worst of these (the 7/8-keyed-
+as-7 item was caught).
 
 ### OPEN — CBSE ignores the caller's `qTypes` selection
 
@@ -388,7 +407,7 @@ exam types where `qTypes` IS honoured.)*
 Fixing means changing CBSE paper composition, which is a behavioural change to
 the main generation path — deliberately not done unsupervised.
 
-### OPEN — Admin Paper Gen does not run verification
+### PARKED (post-launch) — Admin Paper Gen does not run verification
 
 Both student paths verify. Admin > Paper Gen stores raw questions in state and
 only calls `toEngineFormat` at publish/preview time, so wiring verification there
@@ -396,6 +415,9 @@ means mapping flags back onto the raw list by index — a restructure of an admi
 screen, not a one-liner. An admin therefore publishes without the verifier's
 opinion, even though that is exactly the human-review moment where it would help
 most.
+
+**Owner decision 2026-08-11: parked for post-launch.** Lower urgency than the
+student paths, which are covered — an admin is at least looking at the questions.
 
 ### Original scoping note (kept for the numbers it recorded)
 
