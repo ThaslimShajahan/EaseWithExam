@@ -4,6 +4,56 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-11 (session 25) — syllabus seeded for CBSE Classes 8, 9 and 11; Class 8 Maths found to be seeded against the wrong textbook edition
+
+`syllabus_nodes` went from **141 to 268 rows** (+127), via `scripts/seed-syllabus-from-corpus.mjs` — the same insert-only, dedupe-by-`chapter_key` path used for Class 10 and NEET. Nothing was deleted or edited.
+
+| Exam / subject | Before | After | Inserted |
+|---|---|---|---|
+| CBSE Class 8 / Science | 0 | 13 | 13 |
+| CBSE Class 8 / Mathematics | 11 | 26 | 15 |
+| CBSE Class 9 / Mathematics | 0 | 8 | 8 |
+| CBSE Class 9 / Science | 0 | 14 | 14 |
+| CBSE Class 11 / Physics | 0 | 14 | 14 |
+| CBSE Class 11 / Chemistry | 0 | 9 | 9 |
+| CBSE Class 11 / Biology | 0 | 20 | 20 |
+| CBSE Class 11 / Mathematics | 0 | 14 | 14 |
+| CBSE Class 11 / Biotechnology | 0 | 20 | 20 |
+
+Class 8 Science was **not** covered — it had zero rows against 321 loaded chunks.
+
+### Class 8 Mathematics was not partial — it was the wrong book
+
+The 11 pre-existing rows are the **old** NCERT Class 8 Maths chapter list (Rational Numbers, Linear Equations in One Variable, Practical Geometry, Mensuration…). The 427 loaded chunks are the **new** *Ganita Prakash* Part 1 + Part 2 (A Square and A Cube, Number Play, The Baudhāyana-Pythagoras Theorem…). Real overlap is **zero**: the single `chapter_key` collision, `c8_cubes_and_cube_roots`, comes from a stray duplicate ingestion (below), not from a shared chapter.
+
+So Class 8 Maths carried 26 rows for a 14-chapter book: 15 correct new-book names, **10 stale old-book names with no corpus behind them**, and 1 collision. The stale rows were live snapping targets — `matchSyllabusChapter()` would happily snap an extracted PYQ chapter onto "Mensuration", which no chunk uses, making that content unreachable.
+
+### The 10 stale rows are now deactivated, not deleted
+
+`scripts/deactivate-stale-c8-maths-syllabus.mjs` sets `is_active = false` on exactly those ten `chapter_key`s. Deliberately reversible rather than destructive, this close to launch — the same script with `--reactivate` puts them back, and no row was destroyed.
+
+**Class 8 Mathematics: 26 rows, 16 active.** The active set is now *exactly* the set of chapter names the corpus uses — verified both directions, zero active rows without corpus and zero corpus chapters without an active row. Those 16 are the book's 14 real chapters plus the 2 section-level names from the duplicate Chapter 1 ingestion below, which stay active so their chunks are not orphaned.
+
+`c8_cubes_and_cube_roots` was **excluded** from the deactivation despite looking like an eleventh old-book row: `knowledge_base` really does carry 3 chunks under that name.
+
+**The deactivated rows are invisible in Admin → Syllabus**, which filters `is_active = true` (`AdminSyllabus.jsx:708`). Reversal is via the script, not the UI.
+
+Verified that deactivation actually gates the snapping path rather than being cosmetic: `getChapters()` filters `.eq('is_active', true)` (`src/lib/syllabus.js:43`), and it is the source for Content Intake's snap list (`AdminContentIntake.jsx:357` → `matchSyllabusChapter`), question generation (`questionGen.js:1042`), the student chapter list (`useSyllabusChapters.js`), and the Content Map (`AdminContentMap.jsx:210`).
+
+### Duplicate ingestion of Class 8 Maths Chapter 1
+
+`Chapter 1 a Square and A cube.pdf` is loaded twice: cleanly under `NCRT 8/…PART 1/` (25 chunks, all named "A Square and A Cube"), and again under a bare `file:` source (14 chunks, which the structuring pass split into three names — "A Square and A Cube", "Understanding Perfect Squares", "Cubes and Cube Roots"). The two section-level names were seeded as chapters, because excluding them would orphan their chunks from chapter-based lookup. Fixing this properly means de-duplicating the corpus, not editing the syllabus.
+
+### CBSE Class 12 could not be seeded
+
+Zero Class 12 chunks exist, so a corpus-derived seed yields nothing — confirmed by dry run across Physics, Chemistry, Biology and Mathematics. Unchanged from the §5 limitation in `PROJECT_STATUS.md`. Note this is a *CBSE Class 12* gap only: NEET already carries 47 `class_level=12` rows (of 99) from the static seeder, so NEET attribution to Class 12 chapters still works — there is just no source material behind them.
+
+### Lower-confidence chapter names now in the vocabulary
+
+Seeded as-is, because the vocabulary must match what the chunks are actually tagged with: Class 9 Science **"Exploration"** (14 chunks, looks like a truncation of "Exploration: Entering the World of Secondary Science", which is also present) and Class 11 Biotechnology **"Chapter 1: Introduction"**. Class 11 Chemistry produced only **9** chapters for 576 chunks, which is short of a full Class 11 syllabus — a corpus coverage gap, not a seeding one.
+
+---
+
 ## 2026-08-11 (session 24) — migration + client deployed in one window; NEET now reads the Class 11 corpus
 
 `20260810070000` applied and the client deployed together, as required: the migration drops `match_knowledge_base`'s scalar `filter_exam_type` signature, so the live bundle and the new schema cannot both work. The site was deliberately degraded for the ~6 minutes between them.

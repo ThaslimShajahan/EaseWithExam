@@ -6,6 +6,67 @@ shipped in a degraded state. The narrative of what changed and why lives in
 
 ---
 
+## RESOLVED 2026-08-11 — 10 stale Class 8 Mathematics syllabus rows deactivated
+
+**Owner's decision: deactivate, don't delete.** Reversible was the right call
+this close to launch — no reason to destroy data when a flag does the job.
+
+`node scripts/deactivate-stale-c8-maths-syllabus.mjs` set `is_active = false` on
+the ten rows below. **Class 8 Mathematics is now 26 rows, 16 active**, and the
+active set is exactly the set of chapter names the corpus uses — verified both
+directions, zero active rows without corpus and zero corpus chapters without an
+active row. The 16 are the book's 14 real chapters plus the 2 section-level
+names from the duplicate Chapter 1 ingestion (below), kept active so their
+chunks are not orphaned.
+
+To undo: `node scripts/deactivate-stale-c8-maths-syllabus.mjs --reactivate`.
+**Note the deactivated rows do not appear in Admin → Syllabus**, which filters
+`is_active = true` — reversal is via the script, not the UI.
+
+`c8_cubes_and_cube_roots` was deliberately left active: it looks like an
+eleventh old-book row, but 3 chunks really do carry that name.
+
+### The ten rows, for the record
+
+CBSE Class 8 Mathematics had 26 `syllabus_nodes` rows for what is really a
+14-chapter book. 15 are the new *Ganita Prakash* chapters that the 427 loaded
+chunks actually use. The other 11 predate this work and are the **old** NCERT
+Class 8 Maths chapter list. Ten of them had **zero corpus behind them**:
+
+> Rational Numbers · Linear Equations in One Variable · Understanding
+> Quadrilaterals · Practical Geometry · Data Handling · Squares and Square
+> Roots · Algebraic Expressions and Identities · Mensuration · Introduction to
+> Graphs · Playing with Numbers
+
+**Why this is not cosmetic.** `syllabus_nodes` is the closed vocabulary that
+Content Intake snaps every extracted chapter name onto. A Class 8 Maths PYQ
+whose AI-guessed chapter was "Mensuration" would snap cleanly onto a row that no
+`knowledge_base` chunk uses — so the question is filed under a chapter with no
+retrievable content, and nothing reports the mismatch. Several stale names are
+near-synonyms of real ones ("Squares and Square Roots" vs "Understanding
+Perfect Squares", "Understanding Quadrilaterals" vs "Quadrilaterals", "Playing
+with Numbers" vs "Number Play"), which made a wrong snap more likely, not less.
+
+Deactivation genuinely closes that path rather than being cosmetic:
+`getChapters()` filters `.eq('is_active', true)` (`src/lib/syllabus.js:43`), and
+it feeds Content Intake's snap list (`AdminContentIntake.jsx:357`), question
+generation (`questionGen.js:1042`), the student chapter list
+(`useSyllabusChapters.js`) and the Content Map (`AdminContentMap.jsx:210`).
+
+### STILL OPEN — two corpus problems in the same area
+
+- **Class 8 Maths Chapter 1 is ingested twice** — once cleanly (25 chunks) and
+  once under a bare `file:` source (14 chunks, split into 3 chapter names). The
+  two extra names, "Understanding Perfect Squares" and "Cubes and Cube Roots",
+  are active syllabus rows because excluding them would orphan their chunks.
+  Fixing this properly means de-duplicating the corpus, not editing the syllabus
+  — after which those two rows should be deactivated too, taking Class 8 Maths
+  to its true 14.
+- **Class 11 Chemistry has only 9 chapters** for 576 chunks — short of a full
+  Class 11 syllabus. Worth checking which textbook files were loaded.
+
+---
+
 ## NEET PYQ bulk load — file audit, decisions, and judgment calls (2026-08-10)
 
 Every one of the 20 PDFs in `easy with exam/PYQ/` was **opened and identified**,

@@ -112,7 +112,7 @@ Counts read directly from the production database on 2026-08-11.
 | `knowledge_base` | 4,377 |
 | `study_notes` | 181 (all published) |
 | `pyq_questions` | 1,217 |
-| `syllabus_nodes` | 141 |
+| `syllabus_nodes` | 268 |
 | `chapter_pattern_stats` (view) | 125 |
 | `content_figures` | 32 |
 | `topic_frequency` | 0 (unused) |
@@ -160,18 +160,39 @@ answer key in the source document, so those 87 questions have none.
 | NEET | Biology | 39 |
 | NEET | Chemistry | 30 |
 | NEET | Physics | 30 |
+| CBSE Class 11 | Biology | 20 |
+| CBSE Class 11 | Biotechnology | 20 |
+| CBSE Class 11 | Physics | 14 |
+| CBSE Class 11 | Mathematics | 14 |
+| CBSE Class 11 | Chemistry | 9 |
 | CBSE Class 10 | Mathematics | 14 |
 | CBSE Class 10 | Science | 13 |
-| CBSE Class 8 | Mathematics | 11 |
+| CBSE Class 9 | Science | 14 |
+| CBSE Class 9 | Mathematics | 8 |
+| CBSE Class 8 | Mathematics | 26 (16 active) |
+| CBSE Class 8 | Science | 13 |
 | CBSE Class 8 | English | 4 |
+
+**Total 268 rows**, up from 141 — Classes 8 (Science), 9 and 11 were seeded from
+the corpus on 2026-08-11.
 
 NEET's 99 chapters cover Class 11, Class 12, and chapters that were removed from
 NCERT textbooks in the 2023 syllabus revision but still appear in the older
-papers we loaded.
+papers we loaded. 52 are tagged `class_level` 11 and 47 are tagged 12.
 
-**CBSE Classes 9, 11 and 12 have no syllabus rows**, even though Class 9 and 11
-have substantial textbook content loaded. Chapter-based features are degraded for
-those classes.
+**CBSE Class 12 still has no syllabus rows**, because it has no corpus to derive
+them from — see §5. Chapter-based features remain degraded for Class 12.
+
+**Class 8 Mathematics holds 26 rows but only 16 are active.** The 10 leftovers
+from the old NCERT chapter list were deactivated (`is_active = false`) on
+2026-08-11 rather than deleted, so the change is reversible via
+`scripts/deactivate-stale-c8-maths-syllabus.mjs --reactivate`. The 16 active
+names match the loaded *Ganita Prakash* corpus exactly — the book's 14 real
+chapters plus 2 section-level names from a duplicate ingestion of Chapter 1.
+Note deactivated rows do not show in Admin → Syllabus, which filters on
+`is_active`.
+
+**Class 8 English's 4 rows have no corpus** behind them either (0 chunks loaded).
 
 ### `study_notes`
 
@@ -307,7 +328,7 @@ accepting real payments.**
   deck.
 - **OpenAI rate limit is 30,000 tokens/minute**, which is tight. It caused
   multi-pass failures during bulk loading and constrains large generations.
-- **CBSE Classes 9, 11, 12 have no syllabus rows**, degrading chapter features.
+- **CBSE Class 12 has no syllabus rows** (no corpus to derive them from), degrading chapter features there. Classes 8, 9 and 11 were seeded 2026-08-11.
 - **Class 11 Biotechnology** (369 chunks) is loaded but isn't a NEET or JEE
   subject — it is unused weight.
 - **No admin "reviewed" state.** Publishing doesn't record that a human checked
