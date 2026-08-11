@@ -55,3 +55,5 @@ public/_pilot/
 # Transient output of scripts/audit-admin-rpc-grants.mjs introspection runs.
 .admin-rpcs.json
 .admin-rpc-audit.json
+.diag-token.mjs
+.verify-gate.mjs
