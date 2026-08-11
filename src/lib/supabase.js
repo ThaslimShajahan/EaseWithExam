@@ -266,23 +266,23 @@ export async function searchKnowledgeBase(query, embedding = null, filters = {})
 
 /* ── Subscriptions ──────────────────────────────────────── */
 
+// Reads go through get_user_subscription() because `subscriptions` now runs RLS
+// with no client policy at all — a direct .from('subscriptions') select returns
+// nothing. The RPC enforces self-access against the verified JWT and never
+// returns the razorpay_* columns.
 export async function getSubscription(firebaseUid) {
   if (!firebaseUid) return null;
-  const { data } = await supabase
-    .from('subscriptions')
-    .select('plan, status, expires_at, starts_at')
-    .eq('user_id', firebaseUid)
-    .maybeSingle();
-  if (!data) return null;
+  const { data, error } = await supabase.rpc('get_user_subscription', { p_uid: firebaseUid });
+  if (error || !data) return null;
   const isActive = data.status === 'active' &&
     (!data.expires_at || new Date(data.expires_at) > new Date());
   return { ...data, isActive };
 }
 
-export async function adminGetAllSubscriptions() {
-  const { data } = await supabase
-    .from('subscriptions')
-    .select('user_id, plan, status, expires_at, amount_paid, starts_at');
+export async function adminGetAllSubscriptions(callerUid) {
+  // Cross-user read: goes through the admin RPC, which carries the role check.
+  // The table itself no longer permits any client select.
+  const { data } = await supabase.rpc('admin_list_subscriptions', { p_caller: callerUid });
   return (data ?? []).map((sub) => ({
     ...sub,
     isActive: sub.status === 'active' && (!sub.expires_at || new Date(sub.expires_at) > new Date()),
@@ -296,22 +296,21 @@ export async function adminGetAllUsers(callerUid) {
   return data ?? [];
 }
 
-export async function adminGrantPremium(firebaseUid, plan = 'premium_yearly') {
+// Was a direct client upsert into `subscriptions` with no authorisation of its
+// own — it relied entirely on this function only being reachable from admin UI.
+// With the table's ALL/true policy that meant anyone holding the anon key could
+// grant themselves any plan. Now goes through admin_grant_subscription, which
+// checks the caller against the admins table server-side.
+export async function adminGrantPremium(firebaseUid, plan = 'premium_yearly', callerUid) {
   const expiryDays = plan === 'neet_complete' ? 1095 : plan === 'premium_yearly' ? 365 : 30;
-  const expires_at = new Date(Date.now() + expiryDays * 86_400_000).toISOString();
-  const { error } = await supabase
-    .from('subscriptions')
-    .upsert({
-      user_id:    firebaseUid,
-      plan,
-      status:     'active',
-      starts_at:  new Date().toISOString(),
-      expires_at,
-      amount_paid: 0,
-      reminder_sent_at: null,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id' });
+  const { error } = await supabase.rpc('admin_grant_subscription', {
+    p_caller:  callerUid,
+    p_user_id: firebaseUid,
+    p_plan:    plan,
+    p_days:    expiryDays,
+  });
   if (error) throw error;
+  const expires_at = new Date(Date.now() + expiryDays * 86_400_000).toISOString();
   logChange(ENTITY.PLAN_CONFIG, firebaseUid, ACTION.UPDATE,
     { after: { plan, expires_at } }, 'Admin granted premium subscription');
 }

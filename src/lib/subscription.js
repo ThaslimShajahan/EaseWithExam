@@ -130,12 +130,13 @@ export const PLANS = {
 
 /* ── Subscription CRUD ──────────────────────────────────── */
 
+// Reads via RPC: `subscriptions` now runs RLS with no client policy, so a
+// direct select returns nothing. The RPC allows self — or a parent with an
+// active link, which is what ParentDashboardPage relies on — and never returns
+// the razorpay_* columns. The old select('*') would have exposed the payment
+// signature to the browser.
 export async function getUserSubscription(firebaseUid) {
-  const { data } = await supabase
-    .from('subscriptions')
-    .select('*')
-    .eq('user_id', firebaseUid)
-    .maybeSingle();
+  const { data } = await supabase.rpc('get_user_subscription', { p_uid: firebaseUid });
 
   if (!data) return { plan: 'free', status: 'active' };
 

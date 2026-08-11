@@ -79,7 +79,7 @@ function EditDrawer({ user, onClose, onSaved }) {
     setGrantingPrem(true);
     setError('');
     try {
-      await adminGrantPremium(user.firebase_uid, grantPlan);
+      await adminGrantPremium(user.firebase_uid, grantPlan, getCallerUid());
       setPremGranted(true);
       onSaved({ ...user }); // refresh parent list to show Crown badge
       setTimeout(() => { setPremGranted(false); onClose(); }, 2000);
@@ -321,7 +321,7 @@ export default function AdminStudents() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([adminGetAllUsers(getCallerUid()), adminGetAllTestSessions(), adminGetAllSubscriptions()])
+    Promise.all([adminGetAllUsers(getCallerUid()), adminGetAllTestSessions(), adminGetAllSubscriptions(getCallerUid())])
       .then(([u, s, subscriptions]) => {
         setUsers(u || []);
         setSessions(s || []);
