@@ -23,6 +23,7 @@ const FLAG_DOCS = {
   dalle_proxy_enabled:          'DALL-E image generation routes through Supabase Edge Function (key stays server-side).',
   centre_invites_enabled:       'Coaching centres can create shareable invite links / QR codes to enrol students.',
   maintenance_mode_enabled:     'Shows a "back in a few minutes" screen to students. Turn ON right before deploying, OFF right after. The Admin Panel always stays reachable so you can turn it back off.',
+  payments_enabled:             'Master switch for Razorpay checkout. OFF hides every purchase CTA and shows "payments open 14 August" instead — the free plan is unaffected. Before turning ON, confirm the bank account is live AND that create-razorpay-order is deployed (it 404s otherwise and checkout fails).',
 };
 
 function FlagRow({ flagKey, enabled, onToggle, toggling }) {

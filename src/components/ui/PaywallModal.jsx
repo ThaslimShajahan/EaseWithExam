@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Zap, Check, Crown } from 'lucide-react';
 import { PLANS, initiateRazorpayPayment } from '../../lib/subscription';
+import { usePaymentsEnabled, PAYMENTS_CLOSED_TITLE, PAYMENTS_CLOSED_BODY } from '../../lib/paymentsGate';
 import { useAuth } from '../../context/AuthContext';
 import Button from './Button';
 
@@ -12,6 +13,10 @@ export default function PaywallModal({ onClose, feature, firebaseUid, email, nam
   const [selectedPlan, setSelected] = useState('premium_monthly');
   const [paying, setPaying]         = useState(false);
   const [error,  setError]          = useState('');
+
+  // Loading counts as closed, so no live Pay button renders before the flag lands.
+  const { enabled: paymentsEnabled, loading: paymentsLoading } = usePaymentsEnabled();
+  const paymentsClosed = !paymentsEnabled || paymentsLoading;
 
   const handlePay = async () => {
     setPaying(true);
@@ -113,22 +118,37 @@ export default function PaywallModal({ onClose, feature, firebaseUid, email, nam
             })}
           </div>
 
-          {/* CTA */}
+          {/* CTA — or the closed notice. The paywall is triggered by hitting a
+              quota wall, so a student sees this at their most frustrated moment;
+              it must explain, not just fail. The plan picker above stays visible
+              so they can still see what they will get on the 14th. */}
           <div className="px-5 pb-5">
-            {error && <p className="text-xs text-red-600 mb-2 text-center">{error}</p>}
-            <Button
-              variant="primary"
-              full
-              size="lg"
-              loading={paying}
-              icon={<Zap size={16} />}
-              onClick={handlePay}
-            >
-              {paying ? 'Opening payment...' : `Pay ${PLANS[selectedPlan]?.priceLabel}`}
-            </Button>
-            <p className="text-[10px] text-slate-400 text-center mt-2">
-              Secured by Razorpay · Cancel anytime · Money-back guarantee
-            </p>
+            {paymentsClosed ? (
+              <div className="rounded-2xl bg-amber-50 border border-amber-200 p-4 text-center">
+                <p className="text-sm font-bold text-amber-900">{PAYMENTS_CLOSED_TITLE}</p>
+                <p className="mt-1 text-xs text-amber-800/90 leading-relaxed">{PAYMENTS_CLOSED_BODY}</p>
+                <Button variant="secondary" full size="md" className="mt-3" onClick={onClose}>
+                  Keep using the free plan
+                </Button>
+              </div>
+            ) : (
+              <>
+                {error && <p className="text-xs text-red-600 mb-2 text-center">{error}</p>}
+                <Button
+                  variant="primary"
+                  full
+                  size="lg"
+                  loading={paying}
+                  icon={<Zap size={16} />}
+                  onClick={handlePay}
+                >
+                  {paying ? 'Opening payment...' : `Pay ${PLANS[selectedPlan]?.priceLabel}`}
+                </Button>
+                <p className="text-[10px] text-slate-400 text-center mt-2">
+                  Secured by Razorpay · Cancel anytime · Money-back guarantee
+                </p>
+              </>
+            )}
           </div>
         </motion.div>
       </motion.div>

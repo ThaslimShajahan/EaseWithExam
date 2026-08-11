@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { Check, X, Crown, Zap, Star, ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { PLANS, initiateRazorpayPayment } from '../lib/subscription';
+import { usePaymentsEnabled, PAYMENTS_CLOSED_TITLE, PAYMENTS_CLOSED_BODY } from '../lib/paymentsGate';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import Button from '../components/ui/Button';
@@ -52,7 +53,7 @@ function FeatureCell({ value }) {
   return <span className="text-xs font-medium text-slate-700">{value}</span>;
 }
 
-function PlanCard({ planId, plan: planProp, highlight, onSelect, loading, isCurrent }) {
+function PlanCard({ planId, plan: planProp, highlight, onSelect, loading, isCurrent, paymentsClosed }) {
   const plan = planProp ?? PLANS[planId];
   const isFree = planId === 'free';
   // isCurrent is already a boolean computed correctly by the caller for both
@@ -143,16 +144,23 @@ function PlanCard({ planId, plan: planProp, highlight, onSelect, loading, isCurr
         ))}
       </div>
 
+      {/* `paymentsClosed` covers the loading state too, so a live "Get Premium"
+          never flashes on screen before the flag resolves and withdraws it. The
+          free plan keeps its normal control — nothing about it is purchased. */}
       <Button
         variant={isOwned ? 'secondary' : 'primary'}
         full
         size="md"
         loading={loading}
-        disabled={isOwned}
-        onClick={() => !isOwned && onSelect(planId)}
+        disabled={isOwned || (paymentsClosed && !isFree)}
+        onClick={() => !isOwned && !(paymentsClosed && !isFree) && onSelect(planId)}
         className={highlight && !isOwned ? 'bg-white !text-primary-700 hover:bg-primary-50 border-white' : ''}
       >
-        {isOwned ? 'Current Plan ✓' : `Get ${plan.name}`}
+        {isOwned
+          ? 'Current Plan ✓'
+          : paymentsClosed && !isFree
+            ? 'Opens 14 August'
+            : `Get ${plan.name}`}
       </Button>
     </motion.div>
   );
@@ -166,6 +174,11 @@ export default function PricingPage() {
   const [success, setSuccess]       = useState('');
   const [planData, setPlanData]     = useState(PLANS);
   const [compare,  setCompare]       = useState(BASE_COMPARE);
+
+  // Treat "still loading" as closed — see paymentsGate. A false-then-true flip
+  // would render a live purchase button for a frame before withdrawing it.
+  const { enabled: paymentsEnabled, loading: paymentsLoading } = usePaymentsEnabled();
+  const paymentsClosed = !paymentsEnabled || paymentsLoading;
 
   useEffect(() => {
     supabase.from('plan_config').select('*').then(({ data }) => {
@@ -237,6 +250,17 @@ export default function PricingPage() {
           </p>
         </div>
 
+        {/* Payments kill switch — replaces the retry-me checkout error with an
+            honest date. Rendered above the cards so it is read before any CTA. */}
+        {paymentsClosed && !paymentsLoading && (
+          <div className="mb-6 bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl p-5 text-center">
+            <p className="font-bold text-[15px]">{PAYMENTS_CLOSED_TITLE}</p>
+            <p className="mt-1.5 text-sm text-amber-800/90 max-w-xl mx-auto leading-relaxed">
+              {PAYMENTS_CLOSED_BODY}
+            </p>
+          </div>
+        )}
+
         {/* Success / Error */}
         {success && (
           <div className="mb-6 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl p-4 text-center text-sm font-medium">
@@ -260,6 +284,7 @@ export default function PricingPage() {
               loading={activePlan === id}
               onSelect={handleSelect}
               isCurrent={id === 'free' ? !isPremium : subscription?.plan === id && isPremium}
+              paymentsClosed={paymentsClosed}
             />
           ))}
         </div>

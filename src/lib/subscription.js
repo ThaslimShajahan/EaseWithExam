@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { createNotification } from './notifications';
 import { sendTransactionalEmail } from './email';
+import { arePaymentsEnabled, PAYMENTS_CLOSED_ERROR } from './paymentsGate';
 
 /* ── Plan catalogue ─────────────────────────────────────── */
 
@@ -256,6 +257,14 @@ export function loadRazorpayScript() {
 }
 
 export async function initiateRazorpayPayment({ planId, firebaseUid, email, name, onSuccess, onFailure }) {
+  // Kill switch, checked before anything else — before the Razorpay script is
+  // even loaded, so a disabled site makes no third-party request and shows no
+  // checkout chrome. This is the backstop, not the primary gate: PricingPage
+  // and PaywallModal hide their CTAs, and this catches any path that reaches
+  // checkout anyway (a stale tab, a direct call, a future caller).
+  // Defaults to disabled if the flag is missing or unreadable — see paymentsGate.
+  if (!(await arePaymentsEnabled())) { onFailure?.(PAYMENTS_CLOSED_ERROR); return; }
+
   const loaded = await loadRazorpayScript();
   if (!loaded) { onFailure?.('Payment gateway unavailable. Please try again.'); return; }
 
