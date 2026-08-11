@@ -10,7 +10,18 @@
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  // A cross-origin response hides every header not named here, so without this
+  // the browser cannot read Retry-After even when we forward it below — the
+  // client's rate-limit backoff would silently fall back to guessing.
+  'Access-Control-Expose-Headers': 'retry-after',
 };
+
+/** Passes OpenAI's own backoff instruction through to the browser on a 429.
+ *  Guessing a delay works; being told the real one works better. */
+function withRetryAfter(headers: Record<string, string>, upstream: Response) {
+  const retryAfter = upstream.headers.get('retry-after');
+  return retryAfter ? { ...headers, 'Retry-After': retryAfter } : headers;
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
@@ -74,7 +85,7 @@ Deno.serve(async (req: Request) => {
 
     return new Response(JSON.stringify(data), {
       status: openaiRes.status,
-      headers: { ...CORS, 'Content-Type': 'application/json' },
+      headers: withRetryAfter({ ...CORS, 'Content-Type': 'application/json' }, openaiRes),
     });
   } catch (err) {
     return new Response(JSON.stringify({ error: String(err) }), {

@@ -282,9 +282,19 @@ Return "equations": [] and "figures": [] when there are none.`;
  * Resolves to a null-ish result rather than throwing on a bad response: one
  * unreadable page must not abort a 40-page document. The caller keeps whatever
  * text layer that page already had.
+ *
+ * BUT IT SAYS SO. The result carries `ok` and, when false, an `error` reason.
+ * This used to return a bare empty result for every failure, which made a rate
+ * limit indistinguishable from a genuinely blank page — the document finished
+ * with silently unrepaired pages and intake reported success. "Failed" and
+ * "empty" are different claims and the caller needs to tell them apart.
+ *
+ * A caller abort still throws: cancelling means stop the document, whereas a
+ * timeout (which aiProxy raises as AiRequestError, not AbortError) means fail
+ * this page and carry on.
  */
 export async function visionExtractPage(dataUri, textLayer, ctx = {}, { signal } = {}) {
-  const empty = { markdown: '', equations: [], figures: [] };
+  const empty = { markdown: '', equations: [], figures: [], ok: false, error: null };
   try {
     const resp = await chatComplete({
       model: 'gpt-4o',
@@ -306,18 +316,30 @@ export async function visionExtractPage(dataUri, textLayer, ctx = {}, { signal }
     }, { signal });
 
     const raw = resp?.choices?.[0]?.message?.content;
-    if (!raw) return empty;
-    const parsed = JSON.parse(raw);
+    if (!raw) return { ...empty, error: 'model returned an empty response' };
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { ...empty, error: 'model returned unparseable JSON' };
+    }
+
     return {
       markdown:  typeof parsed.markdown === 'string' ? parsed.markdown : '',
       equations: Array.isArray(parsed.equations) ? parsed.equations.filter((e) => e?.latex) : [],
       figures:   Array.isArray(parsed.figures)   ? parsed.figures   : [],
+      ok:        true,
+      error:     null,
     };
   } catch (e) {
-    // An aborted request is the caller navigating away — propagate it so the
-    // orchestrator stops instead of grinding through the rest of the document.
+    // An aborted request is the caller cancelling or navigating away —
+    // propagate it so the orchestrator stops instead of grinding through the
+    // rest of the document.
     if (e?.name === 'AbortError') throw e;
-    return empty;
+    // Everything else (timeout, 429 past its retries, 5xx, network) is this
+    // page's failure alone.
+    return { ...empty, error: e?.message || 'vision call failed' };
   }
 }
 
@@ -380,22 +402,37 @@ export async function extractPagesWithVision(arrayBuffer, ctx = {}, {
   // lesson, which is what makes that association possible.
   const equationsByPage = {};
   let equationCount = 0;
-  let visionPageCount = 0;     // pages sent to the model
+  // Pages the model actually READ. This used to be incremented for every page
+  // we merely attempted, so a document whose calls all failed still reported
+  // "N page(s) read by vision" — an over-report of exactly the pages the
+  // operator most needed to know about.
+  let visionPageCount = 0;
   let repairedPageCount = 0;   // of those, pages whose text was actually replaced
+  const failedPages = [];      // [{ pageNo, reason }] — surfaced to the caller
 
-  for (const pageNo of targets) {
+  // Index drives the progress counter rather than visionPageCount: a failed
+  // page must still advance "3/16", or the display stalls on a number that
+  // never moves again and looks exactly like the hang this replaces.
+  for (const [idx, pageNo] of targets.entries()) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    onProgress?.(`Reading page ${pageNo} with vision… (${visionPageCount + 1}/${targets.length})`);
+    onProgress?.(`Reading page ${pageNo} with vision… (${idx + 1}/${targets.length})`);
 
     let pageCanvas;
     try {
       pageCanvas = await renderPageToCanvas(pdfDoc, pageNo);
-    } catch {
-      continue; // page won't rasterise — keep whatever text layer it had
+    } catch (e) {
+      // Page won't rasterise — keep whatever text layer it had, but say so.
+      failedPages.push({ pageNo, reason: e?.message || 'page could not be rasterised' });
+      continue;
     }
 
     const dataUri = pageCanvas.toDataURL('image/jpeg', PAGE_JPEG_QUALITY);
     const result = await visionExtractPage(dataUri, pages[pageNo - 1], { ...ctx, pageNo }, { signal });
+
+    if (!result.ok) {
+      failedPages.push({ pageNo, reason: result.error || 'vision call failed' });
+      continue;
+    }
 
     // Only a page whose text was unusable gets overwritten. On a figure page
     // the extracted text layer is exact and the transcription is not — swapping
@@ -461,5 +498,9 @@ export async function extractPagesWithVision(arrayBuffer, ctx = {}, {
     figurePageCount: figurePages.length,
     pageCount,
     skippedVisionPages: skipped,
+    // Pages we tried and could not read, with the reason for each. Distinct
+    // from skippedVisionPages, which were never attempted (over the cap).
+    failedPages,
+    failedPageCount: failedPages.length,
   };
 }

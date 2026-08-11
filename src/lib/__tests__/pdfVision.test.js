@@ -107,21 +107,36 @@ describe('visionExtractPage', () => {
     expect(text).toContain('partial layer text');
   });
 
-  // One bad page must not abort a 40-page document.
+  // One bad page must not abort a 40-page document — but it must not pass for a
+  // blank page either. `ok: false` plus a reason is what lets the orchestrator
+  // report "3 pages FAILED" instead of silently shipping unrepaired text.
   it.each([
-    ['malformed JSON', { choices: [{ message: { content: '{ not json' } }] }],
-    ['empty choices',  { choices: [] }],
-    ['no content',     { choices: [{ message: {} }] }],
-  ])('degrades to an empty result on %s', async (_label, response) => {
+    ['malformed JSON', { choices: [{ message: { content: '{ not json' } }] }, /unparseable JSON/],
+    ['empty choices',  { choices: [] },                                      /empty response/],
+    ['no content',     { choices: [{ message: {} }] },                       /empty response/],
+  ])('degrades to a FAILED result on %s, carrying the reason', async (_label, response, reason) => {
     chatComplete.mockResolvedValue(response);
     const r = await visionExtractPage('data:image/jpeg;base64,AAA', '', {});
-    expect(r).toEqual({ markdown: '', equations: [], figures: [] });
+    expect(r.markdown).toBe('');
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(reason);
   });
 
-  it('degrades to an empty result when the call itself throws', async () => {
-    chatComplete.mockRejectedValue(new Error('502 upstream'));
+  it('reports the underlying error when the call itself throws', async () => {
+    chatComplete.mockRejectedValue(new Error('AI request timed out after 90s'));
     const r = await visionExtractPage('data:image/jpeg;base64,AAA', '', {});
     expect(r.markdown).toBe('');
+    expect(r.ok).toBe(false);
+    // The reason has to survive to the UI — "it failed" is what made the
+    // original hang undiagnosable for 15 minutes.
+    expect(r.error).toBe('AI request timed out after 90s');
+  });
+
+  it('marks a genuinely blank page as ok, not failed', async () => {
+    ok({ markdown: '', equations: [], figures: [] });
+    const r = await visionExtractPage('data:image/jpeg;base64,AAA', '', {});
+    expect(r.ok).toBe(true);
+    expect(r.error).toBeNull();
   });
 
   // An abort is the operator navigating away — it must stop the run, not be

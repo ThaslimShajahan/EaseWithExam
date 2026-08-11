@@ -4,9 +4,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Upload, Link2, FileText, Loader2, CheckCircle2, AlertTriangle,
   X, Inbox, Info, BookOpen, ClipboardList, FolderSearch, Check, Circle,
-  ChevronLeft, ImagePlus, ChevronDown, ChevronUp, Network, ArrowRight,
+  ChevronLeft, ImagePlus, ChevronDown, ChevronUp, Network, ArrowRight, Ban, MinusCircle,
 } from 'lucide-react';
-import { chatComplete } from '../lib/aiProxy';
+import { chatComplete, AI_REQUEST_TIMEOUT_MS } from '../lib/aiProxy';
 import { supabase, adminSaveKnowledgeChunks } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { getFeatureFlag, FLAGS } from '../lib/featureFlags';
@@ -376,6 +376,11 @@ export default function AdminContentIntake() {
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchResults, setBatchResults] = useState([]); // [{ name, status, message, savedRows? }]
   const [batchErr,     setBatchErr]     = useState('');
+  // Cancels the in-flight run. The abort plumbing already existed all the way
+  // down through extractPagesWithVision/visionExtractPage — this screen simply
+  // never created a controller, so it was dead wiring and an operator watching
+  // a stuck page had nothing to press.
+  const abortRef = useRef(null);
 
   function changeExamBase(e) {
     setExamBase(e);
@@ -442,6 +447,10 @@ export default function AdminContentIntake() {
     return fetchDriveFileBytes(item.id, driveToken);
   }
 
+  function handleCancel() {
+    abortRef.current?.abort(new DOMException('Cancelled by operator', 'AbortError'));
+  }
+
   async function handleProcess() {
     const selected = items.filter((it) => it.selected);
     if (!selected.length) return;
@@ -450,9 +459,19 @@ export default function AdminContentIntake() {
     setBatchErr('');
     setBatchResults(selected.map((it) => ({ name: it.name, status: 'pending', message: 'Waiting…' })));
 
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
     for (let i = 0; i < selected.length; i++) {
       const it = selected[i];
       const setStepMsg = (patch) => setBatchResults((rs) => rs.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+
+      // Cancelling mid-batch stops the queue too, not just the current file.
+      if (ctrl.signal.aborted) {
+        setStepMsg({ status: 'cancelled', message: 'Cancelled before it started' });
+        continue;
+      }
+
       setStepMsg({ status: 'processing', message: 'Fetching…' });
       try {
         const buf = await getBytes(it);
@@ -462,16 +481,24 @@ export default function AdminContentIntake() {
         // every page when the admin forces it for a scan the gate missed).
         // Before this, a scanned PDF died on the length check below.
         const {
-          pages, figures, equationsByPage, visionPageCount, skippedVisionPages,
+          pages, figures, equationsByPage, visionPageCount, skippedVisionPages, failedPages,
         } = await extractPagesWithVision(
           buf,
           { subject, examType: dbExamType, chapter: it.chapter || chapterHint },
-          { forceVision, onProgress: (msg) => setStepMsg({ message: msg }) },
+          { forceVision, onProgress: (msg) => setStepMsg({ message: msg }), signal: ctrl.signal },
         );
 
         if (skippedVisionPages > 0) {
           setStepMsg({ message: `${skippedVisionPages} page(s) over the ${MAX_VISION_PAGES}-page vision limit were left as-is — split the file to cover them.` });
         }
+
+        // Pages that were attempted and failed keep their original (thin) text
+        // layer, so the upload can still succeed — but the operator has to be
+        // told which pages are degraded and why, or a partially-read document
+        // is indistinguishable from a clean one.
+        const failNote = failedPages?.length
+          ? ` · ${failedPages.length} page(s) FAILED to read (${failedPages.slice(0, 3).map((f) => `p${f.pageNo}: ${f.reason}`).join('; ')}${failedPages.length > 3 ? `; +${failedPages.length - 3} more` : ''})`
+          : '';
 
         const rawText = pages.join('\n\n').trim();
         if (!rawText || rawText.length < 100) {
@@ -504,11 +531,12 @@ export default function AdminContentIntake() {
             if (figErr) console.warn('[intake] content_figures insert failed:', figErr.message);
           }
           setStepMsg({
-            status: 'done',
+            status: failedPages?.length ? 'partial' : 'done',
             savedRows: rows,
             message: `${rows.length} questions saved`
               + (visionPageCount ? ` · ${visionPageCount} page(s) read by vision` : '')
-              + (figures.length ? ` · ${figures.length} figure(s)` : ''),
+              + (figures.length ? ` · ${figures.length} figure(s)` : '')
+              + failNote,
           });
         } else {
           // Each page is prefixed with a [[PAGE N]] marker so the AI can point back
@@ -529,24 +557,39 @@ export default function AdminContentIntake() {
             figures, equationsByPage,
           });
           setStepMsg({
-            status: 'done',
+            status: failedPages?.length ? 'partial' : 'done',
             message: `${kbCount} chunks saved across ${lessonCount} lesson${lessonCount !== 1 ? 's' : ''}${unit ? ` (${unit})` : ''} · "${chapterName}"`
               + (visionPageCount ? ` · ${visionPageCount} page(s) read by vision` : '')
-              + (figures.length ? ` · ${figures.length} figure(s)` : ''),
+              + (figures.length ? ` · ${figures.length} figure(s)` : '')
+              + failNote,
           });
         }
         // Deselect on success so a stray re-click of Process can't duplicate-save.
         setItems((its) => its.map((x) => (x.source === it.source && x.name === it.name && x.id === it.id) ? { ...x, selected: false } : x));
       } catch (e) {
-        setStepMsg({ status: 'error', message: e.message });
+        // A cancel is an operator decision, not a failure — it must not be
+        // filed under "3 files failed" alongside real errors.
+        if (e?.name === 'AbortError' || ctrl.signal.aborted) {
+          setStepMsg({ status: 'cancelled', message: 'Cancelled — nothing was saved for this file' });
+        } else {
+          setStepMsg({ status: 'error', message: e.message });
+        }
       }
     }
+
+    abortRef.current = null;
     setBatchRunning(false);
   }
 
-  const doneCount    = batchResults.filter((r) => r.status === 'done').length;
-  const errorCount   = batchResults.filter((r) => r.status === 'error').length;
-  const allSavedRows = batchResults.flatMap((r) => r.savedRows ?? []);
+  // 'partial' saved its rows too — it just could not read every page — so it
+  // counts as done for "did anything land?" purposes while still being called
+  // out separately in the summary.
+  const doneCount      = batchResults.filter((r) => r.status === 'done' || r.status === 'partial').length;
+  const savedCount     = batchResults.filter((r) => r.status === 'done').length;
+  const partialCount   = batchResults.filter((r) => r.status === 'partial').length;
+  const errorCount     = batchResults.filter((r) => r.status === 'error').length;
+  const cancelledCount = batchResults.filter((r) => r.status === 'cancelled').length;
+  const allSavedRows   = batchResults.flatMap((r) => r.savedRows ?? []);
   const canProceedInput = items.some((it) => it.selected);
 
   return (
@@ -793,21 +836,47 @@ export default function AdminContentIntake() {
                 {r.status === 'pending' && <Circle size={14} className="text-slate-600 shrink-0" />}
                 {r.status === 'processing' && <Loader2 size={14} className="animate-spin text-primary-400 shrink-0" />}
                 {r.status === 'done' && <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />}
+                {r.status === 'partial' && <AlertTriangle size={14} className="text-amber-400 shrink-0" />}
+                {r.status === 'cancelled' && <MinusCircle size={14} className="text-slate-500 shrink-0" />}
                 {r.status === 'error' && <AlertTriangle size={14} className="text-red-400 shrink-0" />}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-slate-200 truncate">{r.name}</p>
-                  <p className={`text-xs mt-0.5 truncate ${r.status === 'error' ? 'text-red-400' : 'text-slate-500'}`}>{r.message}</p>
+                  {/* Not truncated for partial/error: the whole point of the
+                      failed-page note is the reason text at the end of it. */}
+                  <p className={[
+                    'text-xs mt-0.5',
+                    r.status === 'error' ? 'text-red-400' : r.status === 'partial' ? 'text-amber-300' : 'text-slate-500',
+                    (r.status === 'partial' || r.status === 'error') ? 'break-words' : 'truncate',
+                  ].join(' ')}>{r.message}</p>
                 </div>
               </div>
             ))}
           </div>
 
+          {batchRunning && (
+            <div className="flex items-center gap-3 rounded-xl px-4 py-3 bg-slate-900/60 border border-white/8">
+              <p className="flex-1 text-xs text-slate-400 leading-relaxed">
+                Each page is given {Math.round(AI_REQUEST_TIMEOUT_MS / 1000)}s and retried twice before it is marked failed — a stuck
+                page no longer blocks the rest of the document. Cancel stops after the current page; nothing is saved for a cancelled file.
+              </p>
+              <button
+                onClick={handleCancel}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-900/30 hover:bg-red-900/50 border border-red-700/30 text-red-300 text-xs font-bold transition-colors shrink-0"
+              >
+                <Ban size={13} /> Cancel
+              </button>
+            </div>
+          )}
+
           {!batchRunning && batchResults.length > 0 && (
-            <div className={`flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold ${errorCount > 0 ? 'bg-amber-900/20 border border-amber-700/20 text-amber-300' : 'bg-emerald-900/20 border border-emerald-700/20 text-emerald-300'}`}>
-              {errorCount > 0 ? <AlertTriangle size={16} className="shrink-0" /> : <CheckCircle2 size={16} className="shrink-0" />}
-              {doneCount === 0 ? `All ${errorCount} file${errorCount === 1 ? '' : 's'} failed — see errors above.`
-                : errorCount > 0 ? `Batch complete — ${doneCount} saved, ${errorCount} failed.`
-                : `Batch complete — all ${doneCount} file${doneCount === 1 ? '' : 's'} saved.`}
+            <div className={`flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold ${errorCount > 0 || partialCount > 0 ? 'bg-amber-900/20 border border-amber-700/20 text-amber-300' : cancelledCount > 0 ? 'bg-slate-800/60 border border-white/10 text-slate-300' : 'bg-emerald-900/20 border border-emerald-700/20 text-emerald-300'}`}>
+              {errorCount > 0 || partialCount > 0 ? <AlertTriangle size={16} className="shrink-0" /> : cancelledCount > 0 ? <MinusCircle size={16} className="shrink-0" /> : <CheckCircle2 size={16} className="shrink-0" />}
+              {[
+                savedCount > 0 && `${savedCount} saved`,
+                partialCount > 0 && `${partialCount} saved with unread pages`,
+                errorCount > 0 && `${errorCount} failed`,
+                cancelledCount > 0 && `${cancelledCount} cancelled`,
+              ].filter(Boolean).join(' · ') || 'Nothing processed.'}
             </div>
           )}
 
