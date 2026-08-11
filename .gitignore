@@ -57,3 +57,7 @@ public/_pilot/
 .admin-rpc-audit.json
 .diag-token.mjs
 .verify-gate.mjs
+
+# Generated P0.5 batch output before it is promoted into supabase/migrations/
+.p05-batch*.sql
+.p05-inventory.json
