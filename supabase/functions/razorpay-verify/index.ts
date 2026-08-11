@@ -93,18 +93,53 @@ serve(async (req) => {
     });
   }
 
-  // Activate subscription via SECURITY DEFINER RPC
-  const supabase  = createClient(SUPABASE_URL, SERVICE_KEY);
-  const days      = PLAN_DAYS[plan_id] ?? 30;
+  const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+
+  // Claim the order. This is the security boundary, not the signature above.
+  //
+  // The HMAC proves the payment is real; it says nothing about WHO it was for.
+  // Previously firebase_uid, plan_id and amount_paid were taken from the request
+  // body, so one valid triple could be replayed indefinitely, redeemed onto any
+  // account, and upgraded to any plan. redeem_payment_order flips the row to
+  // 'redeemed' in the same statement that reads it, so a second attempt matches
+  // nothing, and it returns the binding recorded when the order was created.
+  //
+  // Everything below uses those values. The body's copies are ignored.
+  const { data: claim, error: claimErr } = await supabase.rpc('redeem_payment_order', {
+    p_caller:     ACTIVATE_SECRET,
+    p_order_id:   razorpay_order_id,
+    p_payment_id: razorpay_payment_id,
+  });
+
+  if (claimErr || !claim) {
+    // Already redeemed, unknown order, or the shared secret is unset. All are
+    // refusals; the RPC deliberately does not distinguish them to the caller.
+    console.error('redeem_payment_order refused:', claimErr);
+    return new Response(JSON.stringify({ error: 'Order not redeemable' }), {
+      status: 409, headers: { ...CORS, 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (claim.firebase_uid !== firebase_uid || claim.plan_id !== plan_id) {
+    // Not fatal — the stored values win either way — but a mismatch means the
+    // client sent something the order does not agree with, which is worth
+    // seeing in the logs.
+    console.warn(
+      `payload/order mismatch on ${razorpay_order_id}: ` +
+      `body(${firebase_uid}, ${plan_id}) vs order(${claim.firebase_uid}, ${claim.plan_id})`,
+    );
+  }
+
+  const days      = PLAN_DAYS[claim.plan_id] ?? 30;
   const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
 
   const { error } = await supabase.rpc('activate_subscription', {
     p_caller:    ACTIVATE_SECRET,
-    p_uid:       firebase_uid,
-    p_plan:      plan_id,
+    p_uid:       claim.firebase_uid,
+    p_plan:      claim.plan_id,
     p_expires:   expiresAt,
     p_payment_id:razorpay_payment_id,
-    p_amount:    amount_paid ?? 0,
+    p_amount:    claim.amount_paise ?? 0,
   });
 
   if (error) {
@@ -114,8 +149,12 @@ serve(async (req) => {
     });
   }
 
-  console.log(`✅ Payment verified and subscription activated: ${plan_id} for ${firebase_uid}`);
-  return new Response(JSON.stringify({ success: true, plan_id, firebase_uid }), {
-    status: 200, headers: { ...CORS, 'Content-Type': 'application/json' },
-  });
+  // Report what was actually activated, which is the order's binding — not the
+  // body's copy. Logging the request's version here would have made a
+  // redirected redemption look correct in the logs.
+  console.log(`✅ Payment verified and subscription activated: ${claim.plan_id} for ${claim.firebase_uid}`);
+  return new Response(
+    JSON.stringify({ success: true, plan_id: claim.plan_id, firebase_uid: claim.firebase_uid }),
+    { status: 200, headers: { ...CORS, 'Content-Type': 'application/json' } },
+  );
 });

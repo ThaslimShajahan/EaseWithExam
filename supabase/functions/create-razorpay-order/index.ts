@@ -87,5 +87,28 @@ serve(async (req) => {
     return json(502, { error: order?.error?.description || 'Failed to create order' });
   }
 
+  // Record who this order is for, before the client ever sees the id.
+  //
+  // razorpay-verify reads this row instead of trusting its request body. The
+  // same binding already goes to Razorpay in `notes` above, but that copy would
+  // cost a round-trip to read back and cannot carry redemption state — the row
+  // is what makes a payment redeemable exactly once. See migration
+  // 20260811260000. Written with the service role, which bypasses the
+  // deny-all RLS on payment_orders.
+  const { error: ledgerErr } = await supabase.from('payment_orders').insert({
+    order_id:     order.id,
+    firebase_uid,
+    plan_id,
+    amount_paise: amount,
+  });
+
+  if (ledgerErr) {
+    // Fail the checkout rather than hand back an order that cannot be redeemed.
+    // An unrecorded order is worse than no order: the student would pay and
+    // razorpay-verify would then refuse to activate anything.
+    console.error('payment_orders insert failed:', ledgerErr);
+    return json(500, { error: 'Could not start checkout. Please try again.' });
+  }
+
   return json(200, { order_id: order.id, amount, currency: 'INR' });
 });
