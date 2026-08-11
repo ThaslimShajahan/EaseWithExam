@@ -798,6 +798,68 @@ were not audited at all. Scans are safe (Finding 5).
 
 ---
 
+## PARKED (post-launch) — three AI helpers still have no timeout or retry
+
+`chatComplete` was hardened on 2026-08-11 (commit `d5ac587`) after a PYQ upload
+hung for 15+ minutes on a single page. **Three sibling functions in the same
+file were deliberately left alone**, scoped out to avoid changing behaviour in
+paths that investigation had not covered, right before launch:
+
+| function | used by | today |
+|---|---|---|
+| `generateImage` | Admin Paper Gen → "Generate with AI" diagram button | no timeout, no retry, `catch { return null }` |
+| `embedText` | `_addEmbeddings` (KB save), doubt-chat search, `questionGen` retrieval | no timeout; ad-hoc retry at one call site only |
+| `generateSpeech` | Podcast Generator (TTS), `PodcastPage.jsx:66` | no timeout, no retry; throws on failure |
+
+**Why it matters.** These are the *same bug class* that produced the intake hang:
+each calls `fetch` with no `signal` and no deadline, so a request that never
+settles blocks its caller forever with no error.
+
+**Ranked, because they are not equally exposed:**
+
+1. **`generateImage` — the closest match to the original symptom.** A
+   long-running call behind a button an admin sits and watches, exactly like the
+   vision path was, and it swallows every error into `null`. A rate limit is
+   indistinguishable from "image generation failed". Do this one first.
+2. **`generateSpeech`** — no timeout, but it *throws*, so a failure at least
+   surfaces to the student. Only the hang is unhandled.
+3. **`embedText` — least urgent; partly handled already.** Checked 2026-08-11:
+   `_addEmbeddings` (`src/lib/supabase.js:352`) already does a one-shot retry
+   after 1s and counts `failedCount`, which **is** surfaced — it writes a
+   changelog entry, `"N KB chunk(s) inserted without embeddings — embed API
+   unavailable"`. So the silent-degradation problem does *not* apply to the KB
+   save path. What remains is the missing timeout (it can still hang forever),
+   and that the ad-hoc retry neither honours `Retry-After` nor distinguishes a
+   429 from a 400 — it retries both once, then gives up. The other two call
+   sites (doubt-chat, `questionGen:739`) have no retry at all and fall back to
+   keyword search.
+
+**What the fix looks like.** The machinery already exists and is tested: reuse
+`runWithRetry` / `withDeadline` / `parseRetryAfter` from `src/lib/aiProxy.js`.
+Roughly a one-line application each, plus deciding a per-call timeout (DALL·E 3
+legitimately runs 30–60s, so 90s is about right; embeddings should be far
+shorter, ~20s).
+
+Two things to settle when picking this up, both of which are why it was not just
+done blind:
+
+1. **`embedText` returning `null` is load-bearing.** All three call sites treat
+   a null embedding as "skip" — `_addEmbeddings` counts it, doubt-chat falls
+   back to keyword search. Making it throw would change save behaviour. Bound it
+   first; change the contract separately, if at all. Its existing one-shot retry
+   should be replaced by `runWithRetry`, not stacked on top of it.
+2. **`?route=images` and `?route=tts` do not get the `Retry-After` passthrough.**
+   `withRetryAfter` in `supabase/functions/ai-proxy/index.ts` is only applied on
+   the JSON branch. Extending retry to those routes means extending that too, or
+   they will silently fall back to exponential backoff while appearing to honour
+   the server.
+
+Owner decision on 2026-08-11: **not before launch** — nothing is actively broken
+in these three paths, and the scope-expansion risk outweighs the benefit this
+close to the date.
+
+---
+
 ## FOLLOW-UP (gated) — use chapter_pattern_stats to STEER generation, not just score it
 
 Today the stats measure a paper after it is generated. Steering means feeding the
