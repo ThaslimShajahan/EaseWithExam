@@ -30,12 +30,22 @@ const URL = env.VITE_SUPABASE_URL, K = env.VITE_SUPABASE_ANON_KEY;
 const H = { apikey: K, Authorization: `Bearer ${K}`, 'Content-Type': 'application/json' };
 
 function query(sql) {
-  const out = execFileSync('npx', ['supabase', 'db', 'query', '--linked'], {
-    cwd: ROOT, encoding: 'utf8', input: sql, maxBuffer: 32 * 1024 * 1024,
-    shell: true, stdio: ['pipe', 'pipe', 'ignore'],
-  });
+  let out;
+  try {
+    out = execFileSync('npx', ['supabase', 'db', 'query', '--linked'], {
+      cwd: ROOT, encoding: 'utf8', input: sql, maxBuffer: 32 * 1024 * 1024,
+      shell: true, stdio: ['pipe', 'pipe', 'ignore'],
+    });
+  } catch (e) {
+    // A non-zero exit puts the CLI's JSON on e.stdout, and execFileSync's own
+    // e.message is just "Command failed: npx supabase ...". Rethrowing that
+    // message alone loses the Postgres error, which is the only thing that
+    // tells a caller WHY a statement was rejected — and an assertion that
+    // cannot see the reason will pass on any failure at all.
+    throw new Error(`db query failed: ${String(e.stdout ?? e.message).slice(0, 500)}`);
+  }
   const j = JSON.parse(out.slice(out.indexOf('{')));
-  if (j._tag === 'Error' || j.error) throw new Error(`db query failed: ${JSON.stringify(j.error ?? j).slice(0, 300)}`);
+  if (j._tag === 'Error' || j.error) throw new Error(`db query failed: ${JSON.stringify(j.error ?? j).slice(0, 500)}`);
   return j.rows ?? j.result ?? [];
 }
 
@@ -103,10 +113,16 @@ const withSecret = (sql) => query(`set local app.subscription_secret = 'audit-se
 }
 
 {
-  let raised = false, msg = '';
+  // Assert WHY it failed, not merely that it did. "Something threw" would also
+  // be satisfied by a typo in this script, a permission error, or a dropped
+  // connection — the same false-pass shape that once scored a PGRST202/404 as
+  // success. Only the guard's own RAISE counts.
+  let msg = '';
   try { withSecret(`select public.redeem_payment_order('audit-secret','${ORDER}','pay_second') as r`); }
-  catch (e) { raised = true; msg = String(e.message).slice(0, 60); }
-  check(raised, 'second redemption of the same order is refused (replay blocked)', msg);
+  catch (e) { msg = String(e.message); }
+  check(/Order not redeemable/.test(msg),
+    'second redemption refused by the guard (replay blocked)',
+    msg ? `raised: ${(msg.match(/ERROR:[^\\]*/) ?? ['?'])[0].slice(0, 60)}` : 'did NOT raise');
 }
 
 {
