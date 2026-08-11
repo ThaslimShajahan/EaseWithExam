@@ -477,7 +477,9 @@ export async function adminClearAllData(callerUid) {
   await Promise.allSettled([
     supabase.from('knowledge_base').delete().neq('id', DUMMY),
     supabase.from('question_cache').delete().neq('id', DUMMY),
-    supabase.from('pyq_questions').delete().neq('id', DUMMY),
+    // pyq_questions no longer accepts a direct delete (20260812020000) — the
+    // same reason exam_blueprints already needed an RPC here.
+    supabase.rpc('admin_clear_pyq_questions', { p_caller: callerUid }),
     (async () => {
       try {
         const { data } = await supabase.rpc('admin_list_published_tests', { p_caller: callerUid });
@@ -731,10 +733,15 @@ export async function getPYQCount() {
   } catch { return 0; }
 }
 
-export async function clearPYQQuestions() {
-  try {
-    await supabase.from('pyq_questions').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-  } catch {}
+export async function clearPYQQuestions(callerUid = null) {
+  // Direct deletes are closed (20260812020000). The empty catch is kept from
+  // the original, but the error is now at least visible in the console — a
+  // silently refused "clear everything" that looks like it worked is worse
+  // than one that reports.
+  const { error } = await supabase.rpc('admin_clear_pyq_questions', {
+    p_caller: callerUid ?? _getCallerUidFromSession(),
+  });
+  if (error) console.error('[clearPYQQuestions] refused:', error.message);
 }
 
 /* ── Topic frequency (PYQ analysis) ────────────────────── */

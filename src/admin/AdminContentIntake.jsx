@@ -76,7 +76,7 @@ function cleanChapterGuess(filename) {
 // function the admin screen uses, rather than keeping a second copy of the row
 // shape. These rows feed Blueprint V2's chapter allocation, so a drifted
 // duplicate would corrupt generation quietly.
-export async function savePYQRows({ questions, examType, subject, year, source, isMixed, syllabusChapters }) {
+export async function savePYQRows({ questions, examType, subject, year, source, isMixed, syllabusChapters, callerUid = null }) {
   const reviewQueueOn = await getFeatureFlag(FLAGS.CONTENT_REVIEW_QUEUE);
 
   // Every adjustment normaliseMarks makes is collected so the operator sees it.
@@ -108,10 +108,13 @@ export async function savePYQRows({ questions, examType, subject, year, source, 
     };
   });
 
-  const { data: saved, error } = await supabase
-    .from('pyq_questions')
-    .insert(rows)
-    .select('id, question_text, has_diagram, section, marks, chapter');
+  // Direct table writes are closed (20260812020000) — pyq_questions was
+  // ALL-writable by anyone holding the public anon key. Same returned shape as
+  // the old .insert().select(), so callers are unaffected.
+  const { data: saved, error } = await supabase.rpc('admin_insert_pyq_rows', {
+    p_caller: callerUid || getCallerUid(),
+    p_rows:   rows,
+  });
   if (error) throw new Error(error.message);
 
   logChange(ENTITY.PYQ_QUESTION, 'bulk', ACTION.CREATE,
@@ -156,7 +159,10 @@ async function saveNoteChunks({
         status:        'in_review',
         source,
       }));
-      const { error } = await supabase.from('pyq_questions').insert(rows);
+      const { error } = await supabase.rpc('admin_insert_pyq_rows', {
+        p_caller: callerUid || getCallerUid(),
+        p_rows:   rows,
+      });
       if (error) throw new Error(error.message);
       kbCount += rows.length;
     } else {
@@ -220,7 +226,9 @@ async function uploadImageForPYQ(file, rowId) {
   const { error: upErr } = await supabase.storage.from('question-papers').upload(path, file, { upsert: true });
   if (upErr) throw upErr;
   const { data } = supabase.storage.from('question-papers').getPublicUrl(path);
-  const { error: updErr } = await supabase.from('pyq_questions').update({ image_url: data.publicUrl }).eq('id', rowId);
+  const { error: updErr } = await supabase.rpc('admin_set_pyq_image', {
+    p_caller: getCallerUid(), p_id: rowId, p_image_url: data.publicUrl,
+  });
   if (updErr) throw updErr;
   logChange(ENTITY.PYQ_QUESTION, rowId, ACTION.UPDATE, { after: { image_url: data.publicUrl } }, 'Diagram image attached to PYQ question');
   return data.publicUrl;

@@ -28,11 +28,17 @@ async function loadReviewQueue({ subject } = {}) {
   return data ?? [];
 }
 
+function getCallerUid() {
+  try {
+    const key = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
+    return key ? JSON.parse(sessionStorage.getItem(key))?.uid : '';
+  } catch { return ''; }
+}
+
 async function setStatus(ids, status) {
-  const { error } = await supabase
-    .from('pyq_questions')
-    .update({ status })
-    .in('id', ids);
+  const { error } = await supabase.rpc('admin_update_pyq_status', {
+    p_caller: getCallerUid(), p_ids: ids, p_status: status,
+  });
   if (error) throw error;
 }
 

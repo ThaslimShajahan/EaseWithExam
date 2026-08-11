@@ -57,7 +57,13 @@ function sortExamTypes(values) {
 }
 
 async function deletePYQ(id) {
-  await supabase.from('pyq_questions').delete().eq('id', id);
+  const { error } = await supabase.rpc('admin_delete_pyq_rows', {
+    p_caller: getCallerUid(), p_ids: [id],
+  });
+  // Was a bare await with no error check — a refused delete looked identical to
+  // a successful one, and the row vanished from the list either way because the
+  // caller filters it out locally.
+  if (error) throw new Error(error.message);
 }
 
 async function deleteKBChunk(id) {

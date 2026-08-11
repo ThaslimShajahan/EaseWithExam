@@ -506,6 +506,7 @@ function PYQExtractPanel() {
       const r = await extractPYQFromKB({
         subject, examType,
         onProgress: (msg) => setProgress(msg),
+        callerUid: getCallerUid(),
       });
       setResult(r);
       loadCount();

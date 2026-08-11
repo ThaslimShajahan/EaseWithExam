@@ -1383,7 +1383,7 @@ function parseAIQuestions(raw) {
 }
 
 /* ── PYQ extraction from KB chunks ───────────────────────── */
-export async function extractPYQFromKB({ subject, examType, onProgress }) {
+export async function extractPYQFromKB({ subject, examType, onProgress, callerUid }) {
   let q = supabase.from('knowledge_base').select('content, subject');
   if (subject && subject !== 'Mixed') q = q.eq('subject', subject);
   const { data: chunks } = await q.limit(80);
@@ -1449,7 +1449,11 @@ ${batchText}`,
     status:         reviewQueueOn ? 'in_review' : 'published',
   }));
 
-  const { error: insErr } = await supabase.from('pyq_questions').insert(rows);
+  // Direct writes are closed (20260812020000). This runs from the admin PYQ
+  // Bank panel, so the caller uid comes from the admin session.
+  const { error: insErr } = await supabase.rpc('admin_insert_pyq_rows', {
+    p_caller: callerUid, p_rows: rows,
+  });
   if (insErr) throw new Error(`pyq_questions insert failed: ${insErr.message}`);
 
   return { extracted: rows.length };

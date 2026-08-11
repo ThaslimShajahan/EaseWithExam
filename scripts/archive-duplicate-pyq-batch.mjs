@@ -39,12 +39,17 @@
  *   from all four without destroying anything. --restore puts them back.
  *
  * NOTE ON HOW THIS WRITES
- *   It PATCHes with the public anon key, which works because pyq_questions
- *   carries an RLS policy `pyq_open` (cmd=ALL, roles=public, qual=true). That
- *   this script CAN run at all is itself a finding: anyone holding the anon key
- *   can rewrite or delete the entire question bank. See
- *   docs/ACTION_ITEMS_FOR_YOU.md. Do not treat this script's success as
- *   evidence that the table is protected.
+ *   Originally it PATCHed the table directly with the public anon key, which
+ *   worked because pyq_questions carried an RLS policy `pyq_open` (cmd=ALL,
+ *   roles=public, qual=true) — i.e. anyone holding the public key could rewrite
+ *   or delete the entire question bank. That hole is closed by
+ *   20260812020000_lock_pyq_questions_writes.sql, so this now goes through
+ *   admin_update_pyq_status like every other writer, and needs ADMIN_UID set to
+ *   a real admin's Firebase uid:
+ *
+ *     ADMIN_UID=<uid> node scripts/archive-duplicate-pyq-batch.mjs
+ *
+ *   Reads still use the anon key — pyq_select is deliberately still open.
  */
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -118,17 +123,39 @@ if (DRY) {
   process.exit(0);
 }
 
-const res = await fetch(`${BASE}/rest/v1/pyq_questions?${scope}${batchFilter}`, {
-  method: 'PATCH',
-  headers: { ...H, Prefer: 'return=representation' },
-  body: JSON.stringify({ status: targetStatus }),
-});
-if (!res.ok) {
-  console.error(`\nPATCH FAILED ${res.status}: ${(await res.text()).slice(0, 400)}`);
+const ADMIN_UID = process.env.ADMIN_UID;
+if (!ADMIN_UID) {
+  console.error('\nADMIN_UID is required — direct table writes are closed (20260812020000).');
+  console.error('Usage: ADMIN_UID=<firebase-uid> node scripts/archive-duplicate-pyq-batch.mjs\n');
   process.exit(1);
 }
-const patched = await res.json();
-console.log(`\npatched: ${patched.length} rows`);
+
+// Select the exact ids first (reads are still open), then hand them to the RPC.
+const idRes = await fetch(
+  `${BASE}/rest/v1/pyq_questions?select=id&${scope}${batchFilter}&limit=2000`,
+  { headers: H },
+);
+const idRows = await idRes.json();
+if (!Array.isArray(idRows)) {
+  console.error(`\nid lookup failed: ${JSON.stringify(idRows).slice(0, 300)}`);
+  process.exit(1);
+}
+console.log(`\nmatched ${idRows.length} row(s) to re-status`);
+
+const res = await fetch(`${BASE}/rest/v1/rpc/admin_update_pyq_status`, {
+  method: 'POST',
+  headers: H,
+  body: JSON.stringify({
+    p_caller: ADMIN_UID,
+    p_ids:    idRows.map((r) => r.id),
+    p_status: targetStatus,
+  }),
+});
+if (!res.ok) {
+  console.error(`\nRPC FAILED ${res.status}: ${(await res.text()).slice(0, 400)}`);
+  process.exit(1);
+}
+console.log(`patched: ${await res.json()} rows`);
 
 const after = await snapshot();
 show('AFTER', after);

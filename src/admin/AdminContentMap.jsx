@@ -231,7 +231,9 @@ export default function AdminContentMap() {
     const callerUid = getCallerUid();
     try {
       if (data.pyqIds.length) {
-        const { error } = await supabase.from('pyq_questions').delete().in('id', data.pyqIds);
+        const { error } = await supabase.rpc('admin_delete_pyq_rows', {
+          p_caller: callerUid, p_ids: data.pyqIds,
+        });
         if (error) throw error;
         logChange(ENTITY.PYQ_QUESTION, data.pyqIds.join(','), ACTION.BULK_DELETE,
           { count: data.pyqIds.length, subject, chapter: chapterName },
