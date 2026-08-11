@@ -191,14 +191,22 @@ end;
 $function$;
 
 ------------------------------------------------------------------------------
--- Close the table. READ STAYS OPEN.
+-- THE POLICIES ARE NOT DROPPED HERE. That is 20260812030000, deliberately.
 ------------------------------------------------------------------------------
--- Dropping the permissive ALL policies leaves RLS enabled with no
--- INSERT/UPDATE/DELETE policy at all, which is deny-by-default -- the same
--- enabled-with-no-write-policy shape used for `subscriptions` in
--- 20260811160000. The SECURITY DEFINER functions above bypass RLS, so every
--- legitimate writer keeps working through its RPC.
-drop policy if exists pyq_open          on public.pyq_questions;
-drop policy if exists pyq_insert_update on public.pyq_questions;
-
--- pyq_select (SELECT, {anon,authenticated}) is intentionally NOT dropped.
+-- This migration is PURELY ADDITIVE: it creates functions and changes no
+-- existing behaviour. Nothing that works today stops working when it lands.
+--
+-- Splitting it that way is what removes the deployment window. The production
+-- client writes to pyq_questions DIRECTLY; the new client writes through the
+-- RPCs above. Dropping the policies in the same migration would break admin
+-- writes between the push and the frontend deploy, and deploying the frontend
+-- first would break them between the deploy and the push — an outage either
+-- way, which is the same shape of mistake as the P0 lockdown on 2026-08-11.
+--
+-- Safe order, no window at any point:
+--   1. push THIS migration        -> RPCs exist; old client still writes
+--                                    directly and still works
+--   2. deploy the frontend        -> new client uses the RPCs, which now exist
+--   3. verify the admin surfaces  -> Intake, Review, Library, Map, PYQ Bank
+--   4. push 20260812030000        -> policies dropped, hole closed, and by now
+--                                    nothing is writing directly any more

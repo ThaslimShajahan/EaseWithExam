@@ -1,0 +1,43 @@
+-- Step 2 of 2 — actually close the anon-writable question bank.
+--
+-- PREREQUISITES. Do not apply this until BOTH are true:
+--   1. 20260812020000_add_pyq_admin_write_rpcs.sql is applied (the five
+--      admin_* RPCs exist), and
+--   2. the frontend using those RPCs is DEPLOYED.
+--
+-- Applying this while production still runs a client that writes to
+-- pyq_questions directly takes Content Intake, Content Review, Content Library
+-- and Content Map deletes down instantly. That is why the two halves are
+-- separate files: 20260812020000 is purely additive and safe to push at any
+-- time, this one is the switch.
+--
+-- WHAT WAS WRONG
+--   pyq_open           cmd=ALL  roles={public}         qual=true  with_check=true
+--   pyq_insert_update  cmd=ALL  roles={authenticated}  qual=true  with_check=true
+--
+-- RLS was ENABLED, so the table passed any audit checking only
+-- relrowsecurity — but a policy of `true` for `public` is no protection at
+-- all. Measured before the fix, non-destructively:
+--
+--   anon INSERT -> 400 23502   (RLS allowed it; only NOT NULL stopped it)
+--   anon UPDATE -> 204         (open)
+--   anon DELETE -> 204         (open)
+--
+-- An anon DELETE returning 204, against ~1,800 rows: six years of NEET papers,
+-- the Class X maths sets, and the chapter_pattern_stats blueprint built from
+-- them. The anon key ships in the client bundle and is public by design.
+--
+-- Dropping both permissive policies leaves RLS enabled with NO
+-- INSERT/UPDATE/DELETE policy, which is deny-by-default — the same
+-- enabled-with-no-write-policy shape used for `subscriptions` in
+-- 20260811160000. The SECURITY DEFINER RPCs bypass RLS, so every legitimate
+-- writer keeps working through its own guarded entry point.
+
+drop policy if exists pyq_open          on public.pyq_questions;
+drop policy if exists pyq_insert_update on public.pyq_questions;
+
+-- pyq_select (SELECT, {anon,authenticated}) is intentionally NOT dropped.
+-- Read access is meant to be open: students browse PYQ sets, the generator
+-- reads chapters for its blueprint, Content Map counts rows. Breaking reads
+-- would take all three down at once, so the audit asserts SELECT still works
+-- rather than only asserting that writes fail.
