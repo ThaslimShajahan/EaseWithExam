@@ -47,5 +47,7 @@ public/_pilot/
 # playwright. Not part of the suite — the committed assertions live in
 # src/lib/__tests__/seoRoutes.test.js.
 .verify-seo.mjs
+.verify-prod.mjs
+.count-users.mjs
 .shot404.mjs
 .shot-*.png
