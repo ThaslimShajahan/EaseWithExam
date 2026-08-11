@@ -61,3 +61,4 @@ public/_pilot/
 # Generated P0.5 batch output before it is promoted into supabase/migrations/
 .p05-batch*.sql
 .p05-inventory.json
+.diag-*.mjs
