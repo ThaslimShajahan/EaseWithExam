@@ -1,27 +1,42 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Only genuinely public, indexable URLs belong here. Every entry must have a
+  matching entry in src/lib/seo.js (PAGE_SEO) that is not noindex, and must not
+  appear in robots.txt's Disallow list — both are asserted by
+  src/lib/__tests__/seoRoutes.test.js.
+
+  This currently lists five URLs, which is the entire public surface of the
+  site. Everything else is behind authentication. Growing this list means
+  creating public content pages (Tier 2), not adding entries here.
+-->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://www.easewithexam.com/</loc>
+    <lastmod>2026-08-11</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
     <loc>https://www.easewithexam.com/about</loc>
+    <lastmod>2026-08-11</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
   <url>
     <loc>https://www.easewithexam.com/contact</loc>
+    <lastmod>2026-08-11</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>
   </url>
   <url>
     <loc>https://www.easewithexam.com/privacy</loc>
+    <lastmod>2026-08-11</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
   </url>
   <url>
     <loc>https://www.easewithexam.com/terms</loc>
+    <lastmod>2026-08-11</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
   </url>

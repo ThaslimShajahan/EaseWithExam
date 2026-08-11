@@ -12,6 +12,8 @@ import { PLANS } from '../lib/subscription';
 import {
   SUPPORTED_SYLLABI, PRODUCT_FACTS, VALUE_CARDS, DIFFERENTIATORS, FAQ_GROUPS,
 } from '../lib/landingContent';
+import { useSeo } from '../lib/seo';
+import StructuredData from '../components/seo/StructuredData';
 
 /**
  * Public landing page, laid out from the supplied reference designs.
@@ -87,14 +89,27 @@ function Hero({ onGetStarted }) {
             <ArrowRight size={13} className="text-slate-400" />
           </a>
 
+          {/* The H1 carries the terms people actually search. The previous
+              "Crack Your Exam With an AI Tutor" named none of them — no exam,
+              no board, no country — so the single strongest on-page signal was
+              spent on a phrase nobody types. Board coverage is stated exactly
+              as SUPPORTED_SYLLABI defines it: CBSE and Kerala State, not "all
+              state boards". */}
           <h1 className="mt-7 text-[2.75rem] sm:text-6xl font-extrabold text-slate-900 leading-[1.05] tracking-tight">
-            Crack Your Exam
+            NEET, JEE &amp; CBSE Prep
+            {/* The space is load-bearing. The span is display:block so it reads
+                as a line break visually either way, but textContent — which is
+                what text extractors concatenate — would otherwise yield
+                "PrepWith an AI Tutor" and lose "Prep" as a matchable token. */}
+            {' '}
             <span className="block">With an AI Tutor</span>
           </h1>
 
           <p className="mt-5 text-slate-500 text-[15px] sm:text-base leading-relaxed max-w-md">
-            Real exam-pattern papers, a tutor that explains instead of just answering,
-            and a study plan that adapts to the chapters you keep getting wrong.
+            Exam preparation for Indian students across CBSE, Kerala State board,
+            NEET and JEE. Real exam-pattern papers, a tutor that explains instead
+            of just answering, and a study plan that adapts to the chapters you
+            keep getting wrong.
           </p>
 
           <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -469,11 +484,13 @@ function ClosingBand({ onGetStarted }) {
 }
 
 export default function LandingPage() {
+  useSeo('/');
   const [showAuth, setShowAuth] = useState(false);
   const open = () => setShowAuth(true);
 
   return (
     <div className="min-h-screen bg-white">
+      <StructuredData />
       <PublicNavBar onSignIn={open} />
       <Hero onGetStarted={open} />
       <SyllabusStrip />

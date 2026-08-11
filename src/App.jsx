@@ -11,6 +11,9 @@ import MaintenanceGate from './components/ui/MaintenanceGate';
 import LandingPage    from './pages/LandingPage';
 import OnboardingPage from './pages/OnboardingPage';
 import DashboardPage  from './pages/DashboardPage';
+// Eager: the 404 is the catch-all, so a lazy chunk would mean a crawler (and a
+// lost visitor) waits on a second round-trip to find out the page is missing.
+import NotFoundPage   from './pages/NotFoundPage';
 
 const JoinCentrePage       = lazy(() => import('./pages/JoinCentrePage'));
 const CoachingStaffJoinPage= lazy(() => import('./pages/CoachingStaffJoinPage'));
@@ -251,7 +254,14 @@ export default function App() {
         )}
 
         <Route path="/"  element={<RequireNoAuth><LandingPage /></RequireNoAuth>} />
-        <Route path="*"  element={<Navigate to="/dashboard" replace />} />
+
+        {/* A branded 404, NOT a redirect. This used to be
+            <Navigate to="/dashboard" replace />, which sent every logged-out
+            visitor — and so every crawler — bouncing off RequireAuth back to
+            the homepage under HTTP 200. That made an unbounded set of bad URLs
+            look like duplicates of `/`. See NotFoundPage for the half of the
+            fix that needs nginx. */}
+        <Route path="*"  element={<NotFoundPage />} />
       </Routes>
       </MaintenanceGate>
       </Suspense>

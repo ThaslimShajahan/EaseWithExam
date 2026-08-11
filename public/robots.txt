@@ -1,12 +1,42 @@
+# Every path below is behind authentication. Left crawlable, each one serves
+# index.html, redirects client-side to "/", and so looks to Google like another
+# copy of the homepage — soft duplicates that spend crawl budget and dilute the
+# one page currently worth indexing.
+#
+# The indexable set is the five URLs in sitemap.xml. src/lib/seo.js is the
+# source of truth for which those are, and seoRoutes.test.js asserts nothing
+# indexable is also Disallowed here.
+
 User-agent: *
 Allow: /
+
 Disallow: /admin
-Disallow: /dashboard
-Disallow: /study
-Disallow: /exams
-Disallow: /progress
-Disallow: /profile
-Disallow: /test
+Disallow: /analytics
+Disallow: /auth
 Disallow: /coaching
+Disallow: /coaching-invite
+Disallow: /dashboard
+Disallow: /doubt
+Disallow: /exam-alerts
+Disallow: /exam-center
+Disallow: /exams
+Disallow: /flashcards
+Disallow: /goals
+Disallow: /help
+Disallow: /join
+Disallow: /leaderboard
+Disallow: /learn
+Disallow: /notebook
+Disallow: /notifications
+Disallow: /onboarding
+Disallow: /paper-mode
+Disallow: /parent
+Disallow: /practice
+Disallow: /pricing
+Disallow: /profile
+Disallow: /progress
+Disallow: /study
+Disallow: /syllabus
+Disallow: /test
 
 Sitemap: https://www.easewithexam.com/sitemap.xml

@@ -6,6 +6,63 @@ shipped in a degraded state. The narrative of what changed and why lives in
 
 ---
 
+## OPEN — three SEO items need you, not me (2026-08-11)
+
+### 1. Apply the nginx 404 block — needs a maintenance window
+
+Until this is applied, **the site answers HTTP 200 to every path that does not
+exist**. The React 404 page ships with the next normal deploy and fixes the UX,
+but the status code can only come from the server.
+
+`deploy/nginx-easewithexam.conf` is generated and ready. Full procedure,
+including the `nginx -t` gate and the four verification curls, is in
+`docs/DEPLOY.md` under "One-time — the nginx change that makes 404s real".
+
+**Risk if done carelessly:** a wrong `try_files` 404s the entire site. Back up
+the vhost first and never reload without `nginx -t` passing. Note the conf is
+generated from `src/App.jsx` — if a route is ever added, run
+`npm run nginx:routes` and reapply rather than hand-editing the server.
+
+### 2. Confirm the sitemap is submitted in Search Console
+
+You said the property is already verified. Worth confirming the sitemap is
+actually submitted, since nothing in the repo can check it:
+
+> Search Console → your property → **Sitemaps** → enter `sitemap.xml` → Submit
+
+While there, read **Pages** (previously "Coverage"). It will tell you how many
+of the five public URLs Google currently has indexed. That number is the honest
+baseline for whether any of this worked, and I could not obtain it — GSC data is
+not reachable from the repo. If it reads 1, that is consistent with the canonical
+bug that was just fixed, and it should climb once the fix is deployed.
+
+Re-submit the sitemap after deploying, since `lastmod` changed.
+
+### 3. Decide on analytics
+
+No vendor is wired — `src/lib/analytics.js` is a working no-op with both paths
+documented. Search Console gives you queries and impressions; it does **not**
+tell you whether anyone who lands stays. Pick one when you want that:
+
+- **GA4** — free, links to Search Console, but sets cookies and so has to be
+  gated behind the existing consent banner.
+- **Plausible** — ~1KB, no cookies, no consent gate needed, ~$9/mo.
+
+Set `VITE_GA4_ID` or `VITE_PLAUSIBLE_DOMAIN` and fill in `initAnalytics()`.
+
+### Not done, deliberately — the two things that actually cap rankings
+
+Recorded so they are not mistaken for oversights. Both are Tier 2, both are real
+projects, and neither should be rushed before launch:
+
+- **The site serves a blank page to crawlers.** Pure client-side React; a
+  Googlebot fetch returns `<div id="root"></div>`. Needs prerendering.
+- **There is almost nothing to index.** Five public URLs. Every study note,
+  syllabus chapter and PYQ is behind auth. This caps rankings harder than
+  rendering does — metadata cannot make pages that do not exist rank.
+
+---
+
 ## RESOLVED 2026-08-11 — 10 stale Class 8 Mathematics syllabus rows deactivated
 
 **Owner's decision: deactivate, don't delete.** Reversible was the right call

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { usePlatformSettings } from '../../hooks/usePlatformSettings';
+import { isSeoManagedPage } from '../../lib/seo';
 
 const DISMISS_KEY = 'ewe_cookie_consent_v1';
 
@@ -11,10 +13,25 @@ const DISMISS_KEY = 'ewe_cookie_consent_v1';
 export default function PlatformChrome() {
   const { platform_name, cookie_banner_enabled, cookie_banner_text, loaded } = usePlatformSettings();
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(DISMISS_KEY) === '1');
+  const { pathname } = useLocation();
 
+  // The public pages own their own <title> via useSeo() — each one is a tuned,
+  // keyword-led string, and Google indexes the RENDERED title. This effect used
+  // to run unconditionally and overwrite whatever was there with the bare
+  // platform name, so every public page rendered as "EaseWithExam" and the
+  // titles in index.html and seo.js never survived to be indexed.
+  //
+  // isSeoManagedPage() reads a marker the mounted page sets, rather than testing
+  // pathname against PAGE_SEO: the 404 matches no fixed path, so a lookup would
+  // miss it and clobber its title once settings finish loading.
+  //
+  // Inside the app the rename is still the point: an admin who sets a custom
+  // platform_name expects the tab to say so.
   useEffect(() => {
-    if (loaded && platform_name) document.title = platform_name;
-  }, [loaded, platform_name]);
+    if (!loaded || !platform_name) return;
+    if (isSeoManagedPage()) return;
+    document.title = platform_name;
+  }, [loaded, platform_name, pathname]);
 
   if (!loaded || dismissed || cookie_banner_enabled !== 'true') return null;
 

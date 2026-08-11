@@ -1,8 +1,10 @@
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Sparkles } from 'lucide-react';
 import { PublicNavBar, PublicFooter } from '../components/layout/PublicChrome';
+import { useSeo } from '../lib/seo';
 
 export default function AboutPage() {
+  useSeo('/about');
   const navigate = useNavigate();
 
   return (

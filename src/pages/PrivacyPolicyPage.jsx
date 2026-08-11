@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Shield } from 'lucide-react';
 import { PublicNavBar, PublicFooter } from '../components/layout/PublicChrome';
+import { useSeo } from '../lib/seo';
 
 const LAST_UPDATED = 'August 4, 2026';
 
@@ -20,6 +21,7 @@ function Section({ title, children }) {
  * business to review/adapt, not a substitute for actual legal review.
  */
 export default function PrivacyPolicyPage() {
+  useSeo('/privacy');
   const navigate = useNavigate();
 
   return (

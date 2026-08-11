@@ -95,6 +95,67 @@ ssh easewithexam 'tar xzf ~/deploy-backups/webroot-<TIMESTAMP>.tar.gz \
 ssh easewithexam 'find ~/htdocs/www.easewithexam.com -type f -exec chmod 644 {} +'
 ```
 
+## One-time — the nginx change that makes 404s real
+
+**Not yet applied. Prepared 2026-08-11, needs a maintenance window.**
+
+The site currently answers **HTTP 200 to every path**, including ones that do
+not exist. Nothing serves a 404, so a stale backlink or a typo returns homepage
+content under a bogus URL, and Google reads an unbounded set of duplicate
+homepages.
+
+The React half of the fix ships in the bundle (`src/pages/NotFoundPage.jsx`) and
+takes effect on the next normal deploy. It renders a proper 404 page — but under
+a 200, because nginx has already answered by the time React runs. **Only the
+server can send the status code.**
+
+`deploy/nginx-easewithexam.conf` holds the replacement block. It is **generated**
+from the routes in `src/App.jsx` by `npm run nginx:routes`, and the test suite
+fails if the two drift — otherwise adding a route to the app would silently make
+that route 404 in production.
+
+### Applying it
+
+```bash
+# 1. Confirm the conf matches the app's routes
+npm run nginx:check
+
+# 2. Back up the live vhost FIRST — a bad try_files 404s the whole site
+ssh easewithexam 'sudo cp /etc/nginx/sites-available/www.easewithexam.com \
+  ~/deploy-backups/nginx-$(date +%Y%m%d%H%M%S).conf'
+
+# 3. Replace the catch-all `location / { try_files $uri $uri/ /index.html; }`
+#    with the contents of deploy/nginx-easewithexam.conf
+
+# 4. Validate BEFORE reloading. `nginx -t` is the entire safety net here.
+ssh easewithexam 'sudo nginx -t'
+
+# 5. Reload only if step 4 passed
+ssh easewithexam 'sudo systemctl reload nginx'
+```
+
+### Verify
+
+```bash
+curl -o /dev/null -w '%{http_code}\n' https://www.easewithexam.com/            # 200
+curl -o /dev/null -w '%{http_code}\n' https://www.easewithexam.com/about       # 200
+curl -o /dev/null -w '%{http_code}\n' https://www.easewithexam.com/dashboard   # 200
+curl -o /dev/null -w '%{http_code}\n' https://www.easewithexam.com/no-such-page # 404
+curl -s https://www.easewithexam.com/no-such-page | grep -o '<title>[^<]*'      # 404 page
+```
+
+All four must match. A 404 on `/dashboard` means the route alternation is
+missing a prefix — regenerate and reapply rather than hand-patching the server.
+
+### Why both a static and a React 404
+
+`public/404.html` is what nginx returns for a direct hit on a bad URL — a
+crawler, a stale link. It is standalone HTML because nginx serves it without the
+bundle. `NotFoundPage.jsx` handles a bad route reached by *client-side*
+navigation, where no request is made and nginx is never consulted. Returning
+users with the service worker active also take that path, since the worker
+serves `index.html` from cache. Keep the two visually in step.
+
 ## When a deploy is paired with a migration
 
 Some migrations are **breaking** — a changed RPC signature means the old bundle

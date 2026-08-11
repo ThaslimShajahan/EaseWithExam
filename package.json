@@ -12,6 +12,9 @@
     "test:watch": "vitest",
     "landing:shots": "node scripts/landing-shots.mjs",
     "landing:assets": "node scripts/landing-assets.mjs",
+    "og:image": "node scripts/og-image.mjs",
+    "nginx:routes": "node scripts/gen-nginx-routes.mjs",
+    "nginx:check": "node scripts/gen-nginx-routes.mjs --check",
     "pilot": "node scripts/run-pilot.mjs",
     "fixture:scan": "node scripts/make-scanned-fixture.mjs"
   },

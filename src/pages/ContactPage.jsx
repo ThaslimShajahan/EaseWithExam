@@ -1,8 +1,10 @@
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Mail, MessageCircle, Phone } from 'lucide-react';
 import { PublicNavBar, PublicFooter } from '../components/layout/PublicChrome';
+import { useSeo } from '../lib/seo';
 
 export default function ContactPage() {
+  useSeo('/contact');
   const navigate = useNavigate();
 
   return (

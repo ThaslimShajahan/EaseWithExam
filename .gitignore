@@ -38,3 +38,14 @@ public/_pilot/
 
 # Answer-quality benchmark run state (regenerable, not source)
 .benchmark/
+
+# Scratch HTML that scripts/og-image.mjs renders through Playwright. Only the
+# result, public/og-image.png, is committed.
+.og-build/
+
+# Ad-hoc SEO verification harnesses, run from the repo root so they can resolve
+# playwright. Not part of the suite — the committed assertions live in
+# src/lib/__tests__/seoRoutes.test.js.
+.verify-seo.mjs
+.shot404.mjs
+.shot-*.png

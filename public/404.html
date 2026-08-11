@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, follow">
+<title>Page Not Found | EaseWithExam</title>
+<!--
+  Served by nginx with a genuine HTTP 404 for paths that match no app route
+  (see deploy/nginx-easewithexam.conf). Standalone on purpose: nginx returns
+  this file directly, so it must render with no bundle, no framework and no
+  network requests beyond the logo.
+
+  src/pages/NotFoundPage.jsx is the React twin of this page, and both are
+  needed. This one answers a direct hit on a bad URL — a stale backlink, a
+  typo, a crawler. That one answers a bad route reached by client-side
+  navigation, where nginx is never consulted because no request is made.
+  Keep the two visually in step.
+-->
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{
+    --green:#21A375; --green-dk:#1B8660;
+    --slate-900:#0f172a; --slate-600:#475569; --slate-500:#64748b;
+    --slate-200:#e2e8f0; --slate-50:#f8fafc;
+  }
+  html,body{height:100%}
+  body{
+    font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+    background:var(--slate-50); color:var(--slate-900);
+    display:flex; flex-direction:column; min-height:100%;
+    -webkit-font-smoothing:antialiased;
+  }
+  header{
+    background:rgba(255,255,255,.9); border-bottom:1px solid #f1f5f9;
+    padding:0 24px; height:72px; display:flex; align-items:center;
+  }
+  header a{display:flex; align-items:center; gap:10px; text-decoration:none}
+  header img{height:36px; width:auto}
+  header span{font-size:17px; font-weight:700; color:var(--slate-900); letter-spacing:-.02em}
+  main{
+    flex:1; display:flex; align-items:center; justify-content:center;
+    padding:64px 24px; text-align:center;
+  }
+  .box{max-width:460px}
+  .badge{
+    width:64px; height:64px; margin:0 auto 28px; border-radius:22px;
+    background:#EFFFFA; display:flex; align-items:center; justify-content:center;
+  }
+  .kicker{
+    font-size:13px; font-weight:700; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--green);
+  }
+  h1{
+    margin-top:12px; font-size:clamp(28px,5vw,36px); font-weight:800;
+    letter-spacing:-.025em; line-height:1.15;
+  }
+  p.lede{margin-top:16px; font-size:15px; line-height:1.65; color:var(--slate-500)}
+  .actions{margin-top:32px; display:flex; flex-wrap:wrap; gap:12px; justify-content:center}
+  .btn{
+    display:inline-flex; align-items:center; gap:8px; text-decoration:none;
+    padding:14px 24px; border-radius:16px; font-weight:600; font-size:15px;
+    transition:background-color .15s, border-color .15s;
+  }
+  .btn-primary{background:var(--green); color:#fff}
+  .btn-primary:hover{background:var(--green-dk)}
+  .btn-ghost{border:1px solid var(--slate-200); color:var(--slate-900); background:transparent}
+  .btn-ghost:hover{background:#fff}
+  .more{margin-top:40px; padding-top:32px; border-top:1px solid var(--slate-200)}
+  .more-label{
+    font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.08em;
+    color:#94a3b8; margin-bottom:16px;
+  }
+  .more-links{display:flex; flex-wrap:wrap; gap:24px; justify-content:center}
+  .more-links a{
+    font-size:14px; font-weight:500; color:var(--slate-600); text-decoration:none;
+  }
+  .more-links a:hover{color:var(--green-dk)}
+  footer{
+    padding:24px; text-align:center; font-size:13px; color:#94a3b8;
+    border-top:1px solid #f1f5f9;
+  }
+  footer a{color:var(--slate-600); text-decoration:none}
+  footer a:hover{color:var(--green-dk)}
+</style>
+</head>
+<body>
+  <header>
+    <a href="/">
+      <img src="/ewe_nav_icon.svg" alt="">
+      <span>EaseWithExam</span>
+    </a>
+  </header>
+
+  <main>
+    <div class="box">
+      <div class="badge">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#21A375"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"></circle>
+          <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon>
+        </svg>
+      </div>
+
+      <p class="kicker">Error 404</p>
+      <h1>We couldn&rsquo;t find that page</h1>
+      <p class="lede">
+        The link may be broken, or the page may have moved.
+        Nothing you did went wrong.
+      </p>
+
+      <div class="actions">
+        <a class="btn btn-primary" href="/">Go to homepage</a>
+        <a class="btn btn-ghost" href="javascript:history.back()">Go back</a>
+      </div>
+
+      <div class="more">
+        <p class="more-label">Try instead</p>
+        <div class="more-links">
+          <a href="/about">About EaseWithExam</a>
+          <a href="/contact">Contact support</a>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <a href="/">EaseWithExam</a> — AI-powered NEET, JEE &amp; CBSE exam preparation
+  </footer>
+</body>
+</html>

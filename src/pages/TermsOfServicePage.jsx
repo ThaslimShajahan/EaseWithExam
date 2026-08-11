@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, FileText } from 'lucide-react';
 import { PublicNavBar, PublicFooter } from '../components/layout/PublicChrome';
+import { useSeo } from '../lib/seo';
 
 const LAST_UPDATED = 'August 5, 2026';
 
@@ -18,6 +19,7 @@ function Section({ title, children }) {
  * review/adapt, not a substitute for actual legal review.
  */
 export default function TermsOfServicePage() {
+  useSeo('/terms');
   const navigate = useNavigate();
 
   return (
