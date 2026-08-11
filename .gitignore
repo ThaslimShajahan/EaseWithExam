@@ -51,3 +51,7 @@ public/_pilot/
 .count-users.mjs
 .shot404.mjs
 .shot-*.png
+
+# Transient output of scripts/audit-admin-rpc-grants.mjs introspection runs.
+.admin-rpcs.json
+.admin-rpc-audit.json
