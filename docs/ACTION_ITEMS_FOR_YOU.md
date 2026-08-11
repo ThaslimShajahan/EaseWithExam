@@ -6,6 +6,60 @@ shipped in a degraded state. The narrative of what changed and why lives in
 
 ---
 
+## ⏰ 14 AUGUST — re-enable payments (2026-08-11)
+
+Payments are gated behind the `payments_enabled` feature flag, seeded **OFF**.
+
+### To turn payments back on
+
+> **Admin → Platform → Feature Flags → `payments_enabled` → ON**
+
+That is the whole procedure. No deploy, no code change, takes effect on the
+student's next page load (flags are cached per session).
+
+**Before you flip it, confirm both of these**, or checkout will fail exactly as
+it does today:
+
+1. **The bank account is live in Razorpay.**
+2. **`create-razorpay-order` is deployed.** It is currently in source but *not*
+   deployed and returns HTTP 404 — verified against production on 2026-08-11.
+   Check with `npx supabase functions list`, deploy with
+   `npx supabase functions deploy create-razorpay-order`.
+
+Item 2 is the one most likely to be missed. The flag being ON with that
+function still missing puts the site back to the broken state this work removed.
+
+### If the toggle is not in the admin panel
+
+The panel lists rows that exist in `feature_flags`. If the migration has not
+been applied, there is no row and therefore no toggle. Either apply it:
+
+```bash
+npx supabase db push        # 20260811120000_payments_enabled_flag.sql
+```
+
+…or insert directly:
+
+```sql
+insert into public.feature_flags (key, enabled, description)
+values ('payments_enabled', false, 'Master switch for Razorpay checkout.')
+on conflict (key) do nothing;
+```
+
+**Blocking does not depend on the row existing** — a missing flag reads as
+`false`, so payments stay off either way. The row only matters for being able to
+turn them back *on* from the UI.
+
+### What a student sees while it is off
+
+- **Pricing page** — an amber "Payments open on 14 August" notice; paid plans
+  read "Opens 14 August" and are not clickable. The free plan is untouched.
+- **Paywall modal** (shown on hitting a quota wall) — the same notice plus a
+  "Keep using the free plan" button, with the plan list still visible.
+- **Nothing is charged, and no Razorpay script loads.**
+
+---
+
 ## OPEN — three SEO items need you, not me (2026-08-11)
 
 ### 1. Apply the nginx 404 block — needs a maintenance window

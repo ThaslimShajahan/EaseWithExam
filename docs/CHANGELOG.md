@@ -4,6 +4,34 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-11 (session 27) — payments gated behind `payments_enabled` until 14 August
+
+Ahead of campaign traffic, with the bank account not yet active.
+
+**Payments were already blocked — just badly.** `create-razorpay-order`, the first server call in checkout, is present in source but **not deployed**: it returns HTTP 404, verified against production. So no payment could complete, and a student clicking a paid plan got *"Could not start checkout. Please try again."* — a message that reads as a transient glitch and invites retries. The exposure was never a bad transaction; it was a confusing one.
+
+`src/lib/paymentsGate.js` is the single source of truth, consumed at the three points that matter:
+
+- **`initiateRazorpayPayment()`** returns before `loadRazorpayScript()`, so a gated site issues no third-party request and renders no checkout chrome. Backstop for any path reaching checkout anyway — a stale tab, a direct call, a future caller.
+- **`PricingPage`** shows a dated notice; paid CTAs read "Opens 14 August" and are inert. The free plan is untouched.
+- **`PaywallModal`** swaps its Pay button for the notice plus "Keep using the free plan". It fires when a student hits a quota wall — their most frustrated moment — so it has to explain rather than fail.
+
+Both UIs treat *flag-loading* as closed, so a live purchase button never flashes for a frame before the flag resolves and withdraws it.
+
+### The flag is `payments_enabled`, not `payments_disabled`
+
+`getFeatureFlag()` resolves a missing row, an unreachable `feature_flags` table, or a failed fetch to **false**. Naming the flag for the enabled state makes "we could not read the flag" and "payments are off" the same answer, so every failure mode leaves payments off — the safe direction for money. `payments_disabled` would invert it: a transient DB blip would read as "not disabled" and re-open a checkout that cannot complete.
+
+This is the same reasoning as `answer_verification_off`, not a departure from it. That flag is opt-OUT because the safe default is verification ON; this one is opt-IN because the safe default is payments OFF.
+
+The migration seeds the row disabled with `on conflict (key) do nothing`, so re-running it can never silently re-close payments after the 14th. The row also has to exist for the admin toggle to appear at all — `AdminFeatureFlags` lists existing rows via `admin_get_feature_flags` — though **blocking does not depend on it**, since a missing flag already reads as false.
+
+**Re-enable on the 14th:** Admin → Platform → Feature Flags → `payments_enabled` → ON. Procedure and the two pre-flight checks are in `ACTION_ITEMS_FOR_YOU.md`.
+
+7 new tests, 211 pass. Deliberately touches no SEO file. **Not deployed** — the gate has no effect on the live site until the bundle ships.
+
+---
+
 ## 2026-08-11 (session 26) — SEO Tier 0 + Tier 1, and a 404 that is actually a 404
 
 An SEO audit found two things that made the rest of the work conditional, both recorded here because they bound what any of this can achieve:
