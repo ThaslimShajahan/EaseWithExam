@@ -843,6 +843,87 @@ policy except convenience, and the blast radius is the whole corpus.
 
 ---
 
+## OPEN — 472 questions sit under an exam type the syllabus has never heard of
+
+Reported 2026-08-12: content visible in Content Library does not appear in
+Syllabus. Investigated the same night; the cause is not what the symptom
+suggests.
+
+### The measurement
+
+31 chapters carry PYQ content with no matching active `syllabus_nodes` row:
+
+| exam_type | subject | orphan chapters | questions | first seen |
+|---|---|---|---|---|
+| Kerala State Class 10 | Mathematics | **29** | **472** | 2026-08-11 |
+| NEET | Chemistry | 1 (`Atoms`) | 2 | 2026-08-10 |
+| NEET | Biology | 1 (`Enzymes`) | 1 | 2026-08-10 |
+
+### Answering the three questions as asked
+
+**1. Is it content uploaded after the seeding ran?** Timing-wise yes — all 29
+Kerala chapters arrived with tonight's three Class X maths papers. But timing is
+not the cause, and re-running the seeder in a different order would not have
+helped.
+
+**2. Chapters missed by a seeding batch?** Closer, but the unit is wrong. This
+is not "some chapters were skipped" — it is **an entire exam type that no batch
+has ever covered**. `Kerala State Class 10` has:
+
+- **0** rows in `syllabus_nodes`
+- **0** chunks in `knowledge_base`
+- 472 questions in `pyq_questions`
+
+The seeder is driven by an explicit exam+subject list (`--preset`, the Tier 1
+array in `scripts/seed-syllabus-from-corpus.mjs`), and Kerala has never been in
+it. Everything currently seeded is CBSE Class 8/9/10/11 and NEET.
+
+The two NEET rows are a different, genuine instance of the reported symptom:
+per-chapter near-misses that `matchSyllabusChapter()` failed to snap. `Atoms`
+should be `Structure of Atom`; `Enzymes` is a topic inside `Biomolecules`. Three
+questions total, so cosmetic — but they are the honest example of "a chapter
+slipped through", and worth using as the test case for any snapping improvement.
+
+**3. Auto-sync, or periodic re-seeding?** Neither works as posed, and one of
+them would actively cause harm:
+
+- **Re-running the seeder does nothing for Kerala.** It reads chapter names from
+  `knowledge_base`, and there is no Kerala corpus there. It would find zero
+  chapters and insert zero rows. A Kerala Class 10 textbook corpus has to be
+  loaded *first*; only then can the exam type be seeded like any other.
+- **Auto-seeding `syllabus_nodes` from `pyq_questions` would be backwards.**
+  Those chapter strings are the model's guesses. `matchSyllabusChapter()` exists
+  precisely to snap guesses onto a curated list — seeding the curated list from
+  the guesses inverts that and would launder hallucinated chapter names into the
+  vocabulary meant to correct them. `Atoms` and `Enzymes` above are exactly the
+  values that would get enshrined.
+
+### What would actually help
+
+1. **A drift report, not an auto-sync.** The query used here (normalised
+   left-join of distinct content chapters against active `syllabus_nodes`) is
+   cheap and belongs in Admin → Content Map or as
+   `scripts/audit-syllabus-coverage.mjs`. Surfacing the gap is the useful part;
+   closing it automatically is not.
+2. **Decide what `Kerala State Class 10` should be.** It is a real exam type
+   with real content and no syllabus. Either load its corpus and seed it
+   properly, or map it onto the CBSE Class 10 syllabus if the chapter lists are
+   close enough. That is a content decision, not a code one.
+3. **Note the inverse gap while deciding.** `CBSE Class 11` (77 nodes),
+   `Class 8` (43) and `Class 9` (22) have syllabus rows with **zero** PYQ
+   content — syllabus ahead of content rather than behind it. Harmless, but the
+   same report should show both directions so neither looks like a bug.
+
+### Consequence if left alone
+
+`matchSyllabusChapter()` keeps the raw AI guess when nothing matches, so those
+472 questions are stored and answerable — this is not data loss. What breaks is
+grouping: Blueprint V2 keys `chapterCounts` on the exact chapter string, so
+unsnapped variants of the same chapter split into separate buckets and the
+allocation drifts. Chapter filters in the student UI will not list them either.
+
+---
+
 ## PARKED (post-launch) — `pyq_questions.marks` should be numeric, not integer
 
 Half marks are legitimate on real exam papers. The column is `integer`, so they
