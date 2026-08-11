@@ -65,7 +65,15 @@ const rows = query(`
   order by 1
 `);
 
-const MUTATES = /\b(insert\s+into|update\s+\w|delete\s+from|truncate)\b/i;
+// NOTE the absent trailing \b. An earlier version was
+//   /\b(insert into|update\s+\w|delete from|truncate)\b/i
+// where the closing \b had to match immediately after the single \w of
+// `update\s+\w` — impossible whenever the table name continues with letters.
+// Every function whose only mutation was an UPDATE therefore classified as a
+// harmless "list", including soft-deletes like admin_delete_syllabus_node
+// (UPDATE syllabus_nodes SET is_active = false). Five mutating functions were
+// missed from batch 1 because of it.
+const MUTATES = /\b(insert\s+into|update\s+\w|delete\s+from|truncate\s+\w)/i;
 const PII = /\b(from\s+(public\.)?(users|doubt_messages|doubt_chats|referrals|parent_student_links))\b/i;
 
 function classify(r) {
