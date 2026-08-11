@@ -34,9 +34,25 @@ grep -o 'assets/index-[A-Za-z0-9_-]*\.js' dist/index.html   # note this hash
 ssh easewithexam 'R=~/htdocs/www.easewithexam.com; B=~/deploy-backups; mkdir -p $B; \
   tar czf $B/webroot-$(date +%F-%H%M%S).tar.gz -C $R . && ls -lh $B | tail -2'
 
-# 3. Package and transfer
+# 3. Clear any old tarball FIRST — see gotcha 3. Do this before transferring,
+#    never after, so a failed scp cannot be masked by a stale archive.
+ssh easewithexam 'rm -f ~/ewe-dist.tar.gz'
+
+# 3b. Package. RUN THIS IN GIT BASH, NOT POWERSHELL — PowerShell does not
+#     resolve /tmp, and the tarball silently lands somewhere else (or nowhere).
 tar czf /tmp/ewe-dist.tar.gz -C dist .
+ls -la /tmp/ewe-dist.tar.gz            # must exist and be seconds old
+md5sum /tmp/ewe-dist.tar.gz            # note this
+
+# 3c. Transfer. Do NOT chain with && — you need to see this exit code alone.
 scp /tmp/ewe-dist.tar.gz easewithexam:~/ewe-dist.tar.gz
+echo "scp exit: $?"                    # must be 0
+
+# 3d. Prove the right bytes arrived, and that they are the build you just made
+ssh easewithexam 'md5sum ~/ewe-dist.tar.gz'    # must equal the md5 from 3b
+ssh easewithexam 'tar tzf ~/ewe-dist.tar.gz | grep -oE "assets/index-[A-Za-z0-9_-]+\.js"'
+#   must equal the hash from step 1. `tar tzf` only LISTS — it extracts nothing.
+#   If this shows the OLD hash you are about to redeploy the build already live.
 
 # 4. Extract. EXPECT EXIT 2 — it does not mean failure, see gotcha 1.
 #    --no-overwrite-dir reduces the noise but does NOT prevent it.
@@ -55,7 +71,7 @@ curl -s https://www.easewithexam.com/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js
 #   must equal the hash from step 1
 curl -s -o /dev/null -w '%{http_code}\n' https://www.easewithexam.com/assets/<hash>.js
 
-# 8. Clean up
+# 8. Clean up — belt and braces; step 3 is the one that actually protects you
 ssh easewithexam 'rm -f ~/ewe-dist.tar.gz'
 ```
 
@@ -115,6 +131,56 @@ Step 6 is not optional. Verify with:
 ```bash
 ssh easewithexam 'find ~/htdocs/www.easewithexam.com -type f ! -perm -o=r | wc -l'   # must be 0
 ```
+
+## Gotcha 3 — a failed `scp` produces a deploy that looks completely normal
+
+**Two consecutive deploys on 2026-08-11 changed nothing on the server, and
+nothing in the output said so.** The site served a build ~4 hours older than
+the commits that were supposedly deployed, including a live student-facing
+bug that was believed fixed.
+
+What happened, in order:
+
+1. `tar czf /tmp/ewe-dist.tar.gz` was run in **PowerShell**, which does not
+   resolve `/tmp` — no tarball was produced at that path.
+2. `scp` therefore failed. Its error scrolled past in a multi-command run.
+3. `tar xzf ~/ewe-dist.tar.gz` had nothing to extract and failed.
+4. **Gotcha 1 says exit 2 is normal.** The genuine failure was indistinguishable
+   from the documented-benign one, so it was read as success.
+
+The runbook itself hid the failure — step 8 was the only thing that would have
+revealed it, and it only ran on the happy path.
+
+**Three cheap checks, any one of which catches it. All three are now steps 3–3d.**
+
+| check | catches |
+|---|---|
+| `rm -f ~/ewe-dist.tar.gz` **before** transfer | a stale archive being silently re-extracted |
+| `md5sum` both sides | a truncated or wrong-build transfer |
+| `tar tzf … \| grep index-` | an archive that does not contain the build you think |
+
+Diagnosing it after the fact — worth knowing, because the symptom is "the site
+did not change":
+
+```bash
+# Which build is actually being served? Compare against dist/index.html.
+curl -s https://www.easewithexam.com/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'
+
+# nginx's ETag is "<mtime-hex>-<size-hex>", so the served file's mtime is
+# readable without shell access — decode the first half as a unix timestamp.
+curl -sI https://www.easewithexam.com/index.html | grep -i etag
+```
+
+Two traps when reading timestamps during this: the **server terminal reports
+UTC** while the **CloudPanel file manager reports IST** (+5:30), so the same
+file looks like two different times; and `tar` restores mtimes *from the
+archive*, so an extracted file carries its build time, not its deploy time.
+
+Finally: `~` is the **deploy user's** home. Run any of these as `root` and
+`~/htdocs/...` becomes `/root/htdocs/...`. Use absolute paths when logged in as
+root. (`/home/easewithexam/htdocs/...` and
+`/home/easewithexamdeploy/htdocs/...` are the same directory — verified by
+inode, `2049:3146753` — so either path is fine; they are not two copies.)
 
 ## Rollback
 
