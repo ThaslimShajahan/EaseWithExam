@@ -38,18 +38,24 @@ ssh easewithexam 'R=~/htdocs/www.easewithexam.com; B=~/deploy-backups; mkdir -p 
 tar czf /tmp/ewe-dist.tar.gz -C dist .
 scp /tmp/ewe-dist.tar.gz easewithexam:~/ewe-dist.tar.gz
 
-# 4. Extract — --no-overwrite-dir is REQUIRED, see gotcha 1
+# 4. Extract. EXPECT EXIT 2 — it does not mean failure, see gotcha 1.
+#    --no-overwrite-dir reduces the noise but does NOT prevent it.
 ssh easewithexam 'tar xzf ~/ewe-dist.tar.gz -C ~/htdocs/www.easewithexam.com --no-overwrite-dir'
 
-# 5. Fix permissions — REQUIRED, see gotcha 2
-ssh easewithexam 'find ~/htdocs/www.easewithexam.com -type f -exec chmod 644 {} +'
+# 5. Confirm the extract on disk — this, not tar's exit code, is the signal
+ssh easewithexam 'R=~/htdocs/www.easewithexam.com; grep -o "assets/index-[A-Za-z0-9_-]*\.js" $R/index.html'
+#   must equal the hash from step 1; if it still shows the OLD hash, roll back
 
-# 6. Verify over real HTTP, not by trusting the copy
+# 6. Fix permissions — REQUIRED, see gotcha 2
+ssh easewithexam 'find ~/htdocs/www.easewithexam.com -type f -exec chmod 644 {} +'
+ssh easewithexam 'find ~/htdocs/www.easewithexam.com -type f ! -perm -o=r | wc -l'   # must be 0
+
+# 7. Verify over real HTTP, not by trusting the copy
 curl -s https://www.easewithexam.com/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js'
 #   must equal the hash from step 1
 curl -s -o /dev/null -w '%{http_code}\n' https://www.easewithexam.com/assets/<hash>.js
 
-# 7. Clean up
+# 8. Clean up
 ssh easewithexam 'rm -f ~/ewe-dist.tar.gz'
 ```
 
@@ -57,31 +63,54 @@ Old hashed assets are deliberately **left in place** rather than deleted, so a
 client that already loaded the previous `index.html` can still fetch its chunks
 mid-session. They accumulate slowly; prune occasionally, not per deploy.
 
-## Gotcha 1 — `tar` exits 2 on a normal deploy
+## Gotcha 1 — `tar` exits 2 on a normal deploy, even with `--no-overwrite-dir`
 
 `assets/` and `landing/` are owned by the `easewithexam` *user*, while the
-deploy runs as `easewithexamdeploy`. Plain `tar xzf` tries to restore those
-directories' mode and mtime, cannot, and **exits 2 after extracting the files
-correctly**:
+deploy runs as `easewithexamdeploy`. `tar` tries to restore those directories'
+mode and mtime, cannot, and **exits 2 after extracting every file correctly**.
+
+**An earlier version of this file claimed `--no-overwrite-dir` avoids that. It
+does not.** Corrected 2026-08-11 after a deploy run with the flag still exited
+2:
 
 ```
-tar: ./assets: Cannot utime: Operation not permitted
-tar: ./assets: Cannot change mode to rwxr-x---: Operation not permitted
+tar: .: Cannot change mode to rwxrwx---: Operation not permitted
+tar: ./assets: Cannot change mode to rwxrwx---: Operation not permitted
+tar: ./landing: Cannot change mode to rwxrwx---: Operation not permitted
+tar: Exiting with failure status due to previous errors
 ```
 
-`--no-overwrite-dir` preserves existing directory metadata and avoids this.
-Without it the exit code says "failed" while the deploy actually succeeded —
-which is the worst kind of signal, because it invites either a false rollback or
-an ignored error.
+What the flag actually does is narrower than advertised: it suppresses the
+`Cannot utime` errors, but **not** the `Cannot change mode` ones — and it adds
+the extraction root `.` to the list. Keep using it, because fewer spurious
+errors is still better, but do not treat it as a fix.
+
+**The real safeguard is checking the files on disk.** `tar`'s exit code cannot
+distinguish "nothing was written" from "everything was written and three
+`chmod`s on pre-existing directories were refused", so it must not be the
+signal you act on. Never roll back on exit 2 alone; look first:
+
+```bash
+ssh easewithexam 'R=~/htdocs/www.easewithexam.com; \
+  grep -o "assets/index-[A-Za-z0-9_-]*\.js" $R/index.html; \
+  ls -la $R/assets/index-<HASH>.js'
+```
+
+`index.html` must name the hash from step 1, and that file must exist. If both
+hold, the extract succeeded regardless of the exit code. If `index.html` still
+names the *old* hash, the extract genuinely failed — that is the case to roll
+back on.
 
 ## Gotcha 2 — extracted files are 640 and the site 403s
 
 The tarball carries the build machine's permissions, so files land `-rw-r-----`
 while the previous deploy's were `-rw-r--r--`. Directories are `770`, owned by
 another user, so a web server outside the `easewithexam` group cannot read the
-new files. On 2026-08-11, **199 files** landed unreadable.
+new files. On 2026-08-11 this happened twice: **199 files** on the first deploy
+that day, **201** on the second. It recurs on every deploy — it is the normal
+case, not an anomaly.
 
-Step 5 is not optional. Verify with:
+Step 6 is not optional. Verify with:
 
 ```bash
 ssh easewithexam 'find ~/htdocs/www.easewithexam.com -type f ! -perm -o=r | wc -l'   # must be 0
