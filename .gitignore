@@ -62,3 +62,7 @@ public/_pilot/
 .p05-batch*.sql
 .p05-inventory.json
 .diag-*.mjs
+
+# One-off scratch from the currentUser scope investigation.
+.scan-tmp/
+.scan-scope.mjs

@@ -373,7 +373,11 @@ function CoachingTestsSection({ firebaseUid, onStart, onStartPaper, paperModeEna
 /* ── Previous Year Papers (from uploaded PYQs) ─────────────── */
 function PYQBankSection() {
   const navigate = useNavigate();
-  const { userProfile } = useAuth();
+  // currentUser is used by handleLaunch below. It was missing from this
+  // destructure while GenerateModal and ExamCenterPage both had it, so the
+  // reference resolved to nothing in this scope and every "Start PYQ Practice"
+  // click died with "currentUser is not defined" before the paper was created.
+  const { userProfile, currentUser } = useAuth();
   const [groups,     setGroups]    = useState([]);
   const [loading,    setLoading]   = useState(true);
   const [launching,  setLaunching] = useState(null); // group key being launched
