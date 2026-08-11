@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../aiProxy', () => ({ chatComplete: vi.fn() }));
+// backoffMs/sleep are stubbed rather than mocked away entirely: visionExtractPage
+// paces its parse-retry with them, and the real sleep would add ~1s of wall time
+// per retry test for no added coverage. Returning 0 keeps the call-count
+// assertions honest while the suite stays fast.
+vi.mock('../aiProxy', () => ({
+  chatComplete: vi.fn(),
+  backoffMs:    vi.fn(() => 0),
+  sleep:        vi.fn(() => Promise.resolve()),
+}));
 vi.mock('../pdfAnalyzer', () => ({ loadPdfDocument: vi.fn() }));
 vi.mock('../supabase', () => ({ supabase: { storage: { from: vi.fn() } } }));
 
@@ -116,10 +124,45 @@ describe('visionExtractPage', () => {
     ['no content',     { choices: [{ message: {} }] },                       /empty response/],
   ])('degrades to a FAILED result on %s, carrying the reason', async (_label, response, reason) => {
     chatComplete.mockResolvedValue(response);
-    const r = await visionExtractPage('data:image/jpeg;base64,AAA', '', {});
+    // attempts:1 keeps this focused on the degradation, not the retry.
+    const r = await visionExtractPage('data:image/jpeg;base64,AAA', '', {}, { attempts: 1 });
     expect(r.markdown).toBe('');
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(reason);
+  });
+
+  /* A real upload lost page 9 of a Class X maths paper to "model returned
+   * unparseable JSON" on the first and only attempt. The transport retry in
+   * chatComplete never saw it — a 200 with a bad body is not a transport
+   * failure — so the page was dropped for something a second call would very
+   * likely have fixed. */
+  it('retries an unparseable body and keeps the recovered page', async () => {
+    chatComplete
+      .mockResolvedValueOnce({ choices: [{ message: { content: '{ not json' } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { content: JSON.stringify({ markdown: 'recovered page', equations: [], figures: [] }) } }] });
+
+    const r = await visionExtractPage('data:image/jpeg;base64,AAA', '', {});
+    expect(chatComplete).toHaveBeenCalledTimes(2);
+    expect(r.ok).toBe(true);
+    expect(r.markdown).toBe('recovered page');
+  });
+
+  it('gives up after the retry and says how many attempts it made', async () => {
+    chatComplete.mockResolvedValue({ choices: [{ message: { content: 'still not json' } }] });
+    const r = await visionExtractPage('data:image/jpeg;base64,AAA', '', {});
+    expect(chatComplete).toHaveBeenCalledTimes(2);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/unparseable JSON \(after 2 attempts\)/);
+  });
+
+  /* chatComplete has already spent its own 3 attempts on a transport failure.
+   * Retrying here too would turn one dead page into 6 calls. */
+  it('does NOT retry a transport failure, which aiProxy already retried', async () => {
+    chatComplete.mockRejectedValue(new Error('AI request timed out after 90s'));
+    const r = await visionExtractPage('data:image/jpeg;base64,AAA', '', {});
+    expect(chatComplete).toHaveBeenCalledTimes(1);
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('AI request timed out after 90s');
   });
 
   it('reports the underlying error when the call itself throws', async () => {

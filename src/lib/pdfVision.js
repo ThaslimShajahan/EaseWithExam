@@ -25,7 +25,7 @@
  * rather than failing somewhere confusing downstream.
  */
 
-import { chatComplete } from './aiProxy';
+import { chatComplete, backoffMs, sleep } from './aiProxy';
 import { loadPdfDocument, getPdfjs } from './pdfAnalyzer';
 import { supabase } from './supabase';
 
@@ -292,9 +292,48 @@ Return "equations": [] and "figures": [] when there are none.`;
  * A caller abort still throws: cancelling means stop the document, whereas a
  * timeout (which aiProxy raises as AiRequestError, not AbortError) means fail
  * this page and carry on.
+ *
+ * WHY THERE IS A RETRY HERE AS WELL AS IN aiProxy
+ * The retry in chatComplete is TRANSPORT-level: 429, 5xx, timeouts, network
+ * drops. A 200 response carrying a malformed body is none of those, so it never
+ * reached that logic — and on 2026-08-12 a real upload lost page 9 of a Class X
+ * maths paper to "model returned unparseable JSON" on the first and only
+ * attempt. The model is asked for response_format:json_object at temperature 0;
+ * a bad body is variance, not a deterministic failure, so one more attempt very
+ * likely succeeds. Same backoff as the transport layer, imported rather than
+ * reinvented.
+ *
+ * Deliberately narrow: a transport failure returns immediately instead of
+ * retrying again, because chatComplete has already spent its attempts on it.
+ * Retrying here too would multiply 3 x 2 into 6 calls for one dead page.
  */
-export async function visionExtractPage(dataUri, textLayer, ctx = {}, { signal } = {}) {
+
+/** Attempts at getting a PARSEABLE body. Initial + 1 retry. */
+export const VISION_PARSE_ATTEMPTS = 2;
+
+export async function visionExtractPage(
+  dataUri, textLayer, ctx = {}, { signal, attempts = VISION_PARSE_ATTEMPTS } = {},
+) {
   const empty = { markdown: '', equations: [], figures: [], ok: false, error: null };
+  let lastError = null;
+
+  for (let n = 1; n <= attempts; n++) {
+    const outcome = await visionAttempt(dataUri, textLayer, ctx, signal, empty);
+    if (outcome.ok || outcome.fatal) return outcome.result;
+
+    lastError = outcome.result.error;
+    // Only a parse/empty failure reaches here, and only it is worth repeating.
+    if (n < attempts) await sleep(backoffMs(n), signal);
+  }
+
+  return {
+    ...empty,
+    error: attempts > 1 ? `${lastError} (after ${attempts} attempts)` : lastError,
+  };
+}
+
+/** One attempt. `fatal` marks a failure the caller must not repeat. */
+async function visionAttempt(dataUri, textLayer, ctx, signal, empty) {
   try {
     const resp = await chatComplete({
       model: 'gpt-4o',
@@ -316,21 +355,27 @@ export async function visionExtractPage(dataUri, textLayer, ctx = {}, { signal }
     }, { signal });
 
     const raw = resp?.choices?.[0]?.message?.content;
-    if (!raw) return { ...empty, error: 'model returned an empty response' };
+    if (!raw) {
+      return { ok: false, fatal: false, result: { ...empty, error: 'model returned an empty response' } };
+    }
 
     let parsed;
     try {
       parsed = JSON.parse(raw);
     } catch {
-      return { ...empty, error: 'model returned unparseable JSON' };
+      return { ok: false, fatal: false, result: { ...empty, error: 'model returned unparseable JSON' } };
     }
 
     return {
-      markdown:  typeof parsed.markdown === 'string' ? parsed.markdown : '',
-      equations: Array.isArray(parsed.equations) ? parsed.equations.filter((e) => e?.latex) : [],
-      figures:   Array.isArray(parsed.figures)   ? parsed.figures   : [],
-      ok:        true,
-      error:     null,
+      ok: true,
+      fatal: false,
+      result: {
+        markdown:  typeof parsed.markdown === 'string' ? parsed.markdown : '',
+        equations: Array.isArray(parsed.equations) ? parsed.equations.filter((e) => e?.latex) : [],
+        figures:   Array.isArray(parsed.figures)   ? parsed.figures   : [],
+        ok:        true,
+        error:     null,
+      },
     };
   } catch (e) {
     // An aborted request is the caller cancelling or navigating away —
@@ -338,8 +383,9 @@ export async function visionExtractPage(dataUri, textLayer, ctx = {}, { signal }
     // rest of the document.
     if (e?.name === 'AbortError') throw e;
     // Everything else (timeout, 429 past its retries, 5xx, network) is this
-    // page's failure alone.
-    return { ...empty, error: e?.message || 'vision call failed' };
+    // page's failure alone — and chatComplete has ALREADY retried it, so this
+    // is fatal for the page rather than something to attempt again.
+    return { ok: false, fatal: true, result: { ...empty, error: e?.message || 'vision call failed' } };
   }
 }
 

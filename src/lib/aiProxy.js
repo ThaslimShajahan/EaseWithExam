@@ -112,13 +112,19 @@ export function isRetryableStatus(status) {
 
 /** Exponential backoff with jitter: ~1s, ~2s. Jitter matters when a batch of
  *  pages hits the same TPM ceiling — without it they all wake together and
- *  re-trigger it. */
-function backoffMs(attempt) {
+ *  re-trigger it.
+ *
+ *  Exported so callers that retry at a HIGHER layer than transport — see
+ *  visionExtractPage, which retries a 200 response carrying an unparseable
+ *  body — pace themselves identically instead of inventing a second policy. */
+export function backoffMs(attempt) {
   const base = 1000 * 2 ** (attempt - 1);
   return base + Math.floor(Math.random() * 250);
 }
 
-const sleep = (ms, signal) => new Promise((resolve, reject) => {
+/** Abort-aware sleep. Exported alongside backoffMs so a higher-layer retry
+ *  still cancels instantly when the operator hits Cancel. */
+export const sleep = (ms, signal) => new Promise((resolve, reject) => {
   const timer = setTimeout(done, ms);
   function done() { cleanup(); resolve(); }
   function onAbort() { cleanup(); reject(signal.reason ?? new DOMException('Aborted', 'AbortError')); }

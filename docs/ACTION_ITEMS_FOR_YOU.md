@@ -798,13 +798,68 @@ were not audited at all. Scans are safe (Finding 5).
 
 ---
 
+## ⚠ OPEN — anyone with the anon key can rewrite or delete the whole question bank
+
+Found 2026-08-12 while checking whether an archive script could write via the
+public key. It can — and so can anyone else.
+
+```
+pyq_questions   RLS enabled, 3 policies
+  pyq_open           cmd=ALL     roles={public}          qual=true  with_check=true
+  pyq_insert_update  cmd=ALL     roles={authenticated}   qual=true  with_check=true
+  pyq_select         cmd=SELECT  roles={anon,authenticated}
+```
+
+`pyq_open` grants **ALL** commands to **public** with `qual = true`. RLS is
+enabled, which makes the table look protected in any audit that only checks
+`relrowsecurity` — but a policy of `true` for `public` is no protection at all.
+`DELETE FROM pyq_questions` with nothing but the anon key (which ships in the
+client bundle and is public by design) would destroy the entire corpus:
+**~1,800 rows, six years of NEET papers plus the Class X maths sets**, and the
+`chapter_pattern_stats` blueprint that is derived from them.
+
+This is the same class as the four tables closed in
+`20260811160000_lock_open_student_tables.sql`, and it is worse than those: those
+were per-user rows, this is the shared content asset the product is built on.
+
+**Severity is destructive, not confidential** — the content is meant to be
+readable. `pyq_select` for `{anon,authenticated}` is correct and should stay.
+Only the write path needs closing.
+
+**Shape of the fix** (mirrors 20260811160000):
+
+1. Drop `pyq_open` and `pyq_insert_update`. Keep `pyq_select`.
+2. Route the writers through `SECURITY DEFINER` RPCs carrying
+   `assert_verified_admin`. Known writers: `savePYQRows`
+   (`AdminContentIntake.jsx:79`), `deletePYQ`, `clearPYQQuestions`, the
+   `status` updates in Admin → Content Review, and
+   `scripts/archive-duplicate-pyq-batch.mjs`.
+3. Both halves as usual: anon INSERT/UPDATE/DELETE must go 2xx → 401, and a
+   real admin upload must still save. Reuse the shape of
+   `scripts/audit-student-table-rls.mjs`.
+
+Do this before the 14th if there is room. Nothing depends on the current
+policy except convenience, and the blast radius is the whole corpus.
+
+---
+
 ## PARKED (post-launch) — `pyq_questions.marks` should be numeric, not integer
 
 Half marks are legitimate on real exam papers. The column is `integer`, so they
 cannot be stored. As of 2026-08-11 `normaliseMarks` rounds them and reports the
 adjustment — that stops a 0.5 destroying a 40-question insert, but it is a
-stopgap: a paper with four ½-mark questions now stores 2 marks more than the
+stopgap: a paper with four ½-mark questions would store 2 marks more than the
 paper is worth, and every total derived from the column inherits that.
+
+**DOWNGRADED 2026-08-12 — robustness improvement, not a data-fidelity fix.**
+Re-uploading the same three Class X maths papers after the fix produced **zero**
+marks adjustments across 268 saved questions. `normaliseMarks` reports every
+adjustment it makes, so a clean run proves no fractional marks were returned.
+The `0.5` that originally broke the insert was therefore **model output
+variance, not a property of the paper** — this corpus has no real half-marks.
+So the integer column is not currently losing fidelity on anything; it is only
+one bad model response away from another all-or-nothing insert failure, which
+`normaliseMarks` already absorbs. Keep it parked.
 
 **Why it was not done immediately:** it is a scoring-adjacent change three days
 before launch, and it has one non-obvious trap (below). Nothing is being lost
