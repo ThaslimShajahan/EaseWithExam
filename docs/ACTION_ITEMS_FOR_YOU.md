@@ -798,6 +798,62 @@ were not audited at all. Scans are safe (Finding 5).
 
 ---
 
+## PARKED (post-launch) — `pyq_questions.marks` should be numeric, not integer
+
+Half marks are legitimate on real exam papers. The column is `integer`, so they
+cannot be stored. As of 2026-08-11 `normaliseMarks` rounds them and reports the
+adjustment — that stops a 0.5 destroying a 40-question insert, but it is a
+stopgap: a paper with four ½-mark questions now stores 2 marks more than the
+paper is worth, and every total derived from the column inherits that.
+
+**Why it was not done immediately:** it is a scoring-adjacent change three days
+before launch, and it has one non-obvious trap (below). Nothing is being lost
+that cannot be re-derived — the source PDFs are kept.
+
+### What the change actually involves
+
+```sql
+drop view public.chapter_pattern_stats;              -- only dependent object
+alter table public.pyq_questions
+  alter column marks type numeric(4,2);              -- existing 1-5 cast cleanly
+-- then recreate the view from 20260810050000_chapter_pattern_stats.sql
+```
+
+`chapter_pattern_stats` is the **only** object depending on the column
+(confirmed 2026-08-11 via `pg_depend`).
+
+### Two things checked so they do not have to be re-checked
+
+1. **PostgREST returns `numeric` as an unquoted JSON number, not a string.**
+   Verified directly against `/rest/v1/chapter_pattern_stats` — `avg_marks`
+   comes back as `3.00`, not `"3.00"`. This matters because
+   `MockTestEngine.computeResults` gates negative marking on
+   `typeof q.marks === 'number'`; had numerics arrived as strings, that check
+   would have flipped and every board paper would silently have gained negative
+   marking. **It does not.** (Note the `supabase db query` CLI *does* quote
+   numerics — do not use it to judge client behaviour.)
+
+2. **THE TRAP — `by_marks` keys change shape.** The view builds its
+   distribution with `coalesce(marks::text, 'unknown')`. Under `numeric(4,2)`
+   that yields `"4.00"`, while `patternStats.scorePaperAgainstPattern` tallies
+   the generated paper with `String(q.marks)` → `"4"`. The two key sets would
+   be disjoint, so `distributionMatch` returns **0** and the headline
+   "PYQ-pattern match" silently collapses by a third. Fix in the view with
+   `trim_scale(marks)::text` (PG14+) or `(marks::float8)::text`, and assert it
+   with a test that scores a known paper before and after.
+
+### Also worth doing at the same time
+
+`savePYQRows` inserts all rows in **one statement**, so any single bad field
+still discards the whole file — `marks` is fixed, but `has_diagram` (boolean,
+NOT NULL) and `year` (integer) are the same shape of risk. `has_diagram` is
+lower risk because the extraction schema pins it as a literal `false`/`true`
+and models are reliable there; `year` is already `parseInt`-ed from a form
+field. Either widen the normalisation to every typed column, or chunk the
+insert so one bad row loses one row.
+
+---
+
 ## PARKED (post-launch) — three AI helpers still have no timeout or retry
 
 `chatComplete` was hardened on 2026-08-11 (commit `d5ac587`) after a PYQ upload

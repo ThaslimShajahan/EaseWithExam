@@ -38,6 +38,69 @@ const chapterTokens = (s) => String(s ?? '')
   // Crude stem so "reproduce"/"reproduction" and "identities"/"identity" meet.
   .map((w) => w.replace(/(ies|ing|ion|ions|es|s)$/, ''));
 
+/* ── Marks normalisation ──────────────────────────────────────────────
+ *
+ * `pyq_questions.marks` is an INTEGER column and savePYQRows used to pass the
+ * model's value straight into it. A Class X maths model paper came back with a
+ * 0.5 and Postgres rejected the whole statement:
+ *
+ *   invalid input syntax for type integer: "0.5"   (SQLSTATE 22P02)
+ *
+ * The insert is one multi-row statement, so ONE bad field discarded all ~40
+ * questions in the file. That blast radius is the real bug — the 0.5 itself is
+ * just the trigger, and any non-integer the model ever returns would do it.
+ *
+ * Half marks ARE legitimate on real papers, so this is a stopgap, not a verdict:
+ * the honest fix is a numeric column, tracked in
+ * docs/ACTION_ITEMS_FOR_YOU.md. Until then we round rather than reject, and —
+ * critically — every adjustment is REPORTED to the operator. Silently rewriting
+ * a mark would be the same silent-degradation pattern that made the vision hang
+ * undiagnosable.
+ */
+
+/** A single question worth more than this is a model artefact (typically the
+ *  paper's total_marks leaking into a question), not a real mark. */
+export const MAX_PLAUSIBLE_QUESTION_MARKS = 25;
+
+const FRACTION_GLYPHS = { '½': 0.5, '¼': 0.25, '¾': 0.75, '⅓': 1 / 3, '⅔': 2 / 3 };
+
+/**
+ * Coerces whatever the model returned for `marks` into something the integer
+ * column accepts.
+ *
+ * Returns `{ value, note }`. `note` is non-null ONLY when the stored value
+ * differs from what was extracted, so callers can surface exactly the rows a
+ * human should re-check and nothing else.
+ */
+export function normaliseMarks(raw) {
+  const clean = (v) => ({ value: v, note: null });
+  if (raw === null || raw === undefined || raw === '') return clean(null);
+
+  let n;
+  if (typeof raw === 'number') {
+    n = raw;
+  } else {
+    const s = String(raw).trim();
+    // "½" and "1½" both appear in Indian board papers and their marking schemes.
+    const m = s.match(/^(\d+)?\s*([½¼¾⅓⅔])$/);
+    if (m) n = (m[1] ? Number(m[1]) : 0) + FRACTION_GLYPHS[m[2]];
+    else n = Number(s.replace(/[^0-9.]/g, ''));
+  }
+
+  const shown = JSON.stringify(raw);
+  if (!Number.isFinite(n)) return { value: null, note: `unreadable marks ${shown} → left blank` };
+  if (n <= 0)              return { value: null, note: `non-positive marks ${shown} → left blank` };
+  if (n > MAX_PLAUSIBLE_QUESTION_MARKS) {
+    return { value: null, note: `implausible marks ${shown} → left blank` };
+  }
+  if (Number.isInteger(n)) return clean(n);
+
+  // Round rather than drop: a half-mark question is still a real question, and
+  // floor()ing 0.5 to 0 would make it worth nothing. Math.round takes 0.5 up.
+  const rounded = Math.max(1, Math.round(n));
+  return { value: rounded, note: `marks ${n} → ${rounded}` };
+}
+
 export function matchSyllabusChapter(guess, chapterNames) {
   if (!guess || !chapterNames?.length) return guess;
   const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -201,6 +264,10 @@ ${isMixed ? '\nThis paper covers multiple subjects. For each question, also iden
 
 For CBSE/board papers, section marks: A=1, B=2, C=3, D=5, E=4-5.
 For NEET/JEE: all MCQ, 4 marks correct, -1 wrong.
+"marks" is the TOTAL for the whole question. Marking schemes award part-marks
+step by step ("½ mark for the formula, 1 mark for the substitution") — those are
+steps within an answer, never the question's own value. Sum them, or use the
+mark printed against the question.
 
 Extract every question. For each include:
 - Full question text

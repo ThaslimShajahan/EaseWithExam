@@ -14,7 +14,7 @@ import { fetchPdfBuffer } from '../lib/pdfAnalyzer';
 import { extractPagesWithVision, MAX_VISION_PAGES } from '../lib/pdfVision';
 import {
   runPYQExtraction, runNotesExtraction, buildKbRows, buildFigureRows, figuresForLesson,
-  matchSyllabusChapter,
+  matchSyllabusChapter, normaliseMarks,
 } from '../lib/contentExtraction';
 import { getSubjectsForExam, BOARDS, CLASS_LEVELS, EXAM_TYPE_GROUPS } from '../lib/categories';
 import { getChapters } from '../lib/syllabus';
@@ -79,23 +79,34 @@ function cleanChapterGuess(filename) {
 export async function savePYQRows({ questions, examType, subject, year, source, isMixed, syllabusChapters }) {
   const reviewQueueOn = await getFeatureFlag(FLAGS.CONTENT_REVIEW_QUEUE);
 
-  const rows = questions.map((q) => ({
-    exam_type:      examType,
-    subject:        isMixed ? (q.subject || 'Mixed') : subject,
-    chapter:        matchSyllabusChapter(q.chapter, syllabusChapters) || null,
-    question_text:  q.question_text,
-    options:        q.options?.length ? q.options : null,
-    correct_answer: q.correct_answer || null,
-    explanation:    q.explanation || null,
-    year:           year ? parseInt(year) : null,
-    question_type:  q.type || 'MCQ',
-    difficulty:     'Medium',
-    marks:          q.marks ?? null,
-    section:        q.section || null,
-    has_diagram:    q.has_diagram ?? false,
-    source,
-    ...(reviewQueueOn && { status: 'in_review' }),
-  }));
+  // Every adjustment normaliseMarks makes is collected so the operator sees it.
+  // `marks` is an integer column and this used to be a raw `q.marks ?? null`
+  // pass-through, so a single 0.5 from the model failed the whole multi-row
+  // insert and lost every question in the file.
+  const marksAdjusted = [];
+
+  const rows = questions.map((q, i) => {
+    const marks = normaliseMarks(q.marks);
+    if (marks.note) marksAdjusted.push(`Q${i + 1}: ${marks.note}`);
+
+    return {
+      exam_type:      examType,
+      subject:        isMixed ? (q.subject || 'Mixed') : subject,
+      chapter:        matchSyllabusChapter(q.chapter, syllabusChapters) || null,
+      question_text:  q.question_text,
+      options:        q.options?.length ? q.options : null,
+      correct_answer: q.correct_answer || null,
+      explanation:    q.explanation || null,
+      year:           year ? parseInt(year) : null,
+      question_type:  q.type || 'MCQ',
+      difficulty:     'Medium',
+      marks:          marks.value,
+      section:        q.section || null,
+      has_diagram:    q.has_diagram ?? false,
+      source,
+      ...(reviewQueueOn && { status: 'in_review' }),
+    };
+  });
 
   const { data: saved, error } = await supabase
     .from('pyq_questions')
@@ -104,10 +115,15 @@ export async function savePYQRows({ questions, examType, subject, year, source, 
   if (error) throw new Error(error.message);
 
   logChange(ENTITY.PYQ_QUESTION, 'bulk', ACTION.CREATE,
-    { count: rows.length, examType, subject, source },
-    `Content Intake: ${rows.length} PYQ questions from ${source}`);
+    { count: rows.length, examType, subject, source, marksAdjusted: marksAdjusted.length },
+    `Content Intake: ${rows.length} PYQ questions from ${source}`
+      + (marksAdjusted.length ? ` (${marksAdjusted.length} marks value(s) adjusted)` : ''));
 
-  return saved ?? [];
+  // Carried as a property on the returned array rather than by changing the
+  // return type, because scripts/bulk-load-pyq.mjs consumes this as an array.
+  const out = saved ?? [];
+  out.marksAdjusted = marksAdjusted;
+  return out;
 }
 
 // Saves to knowledge_base (AI doubt-tutor retrieval) AND upserts one study_notes
@@ -530,13 +546,21 @@ export default function AdminContentIntake() {
             );
             if (figErr) console.warn('[intake] content_figures insert failed:', figErr.message);
           }
+          // An adjusted mark means the stored data differs from the paper, so
+          // the file is flagged for a human even though every row saved.
+          const adjusted  = rows.marksAdjusted ?? [];
+          const marksNote = adjusted.length
+            ? ` · ${adjusted.length} marks value(s) ADJUSTED (${adjusted.slice(0, 3).join('; ')}${adjusted.length > 3 ? `; +${adjusted.length - 3} more` : ''})`
+            : '';
+
           setStepMsg({
-            status: failedPages?.length ? 'partial' : 'done',
+            status: (failedPages?.length || adjusted.length) ? 'partial' : 'done',
             savedRows: rows,
             message: `${rows.length} questions saved`
               + (visionPageCount ? ` · ${visionPageCount} page(s) read by vision` : '')
               + (figures.length ? ` · ${figures.length} figure(s)` : '')
-              + failNote,
+              + failNote
+              + marksNote,
           });
         } else {
           // Each page is prefixed with a [[PAGE N]] marker so the AI can point back
