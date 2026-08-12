@@ -126,6 +126,18 @@ export function normaliseMarks(raw) {
  *   'Kerala State Class 10'          every subject is SCERT Part 1 only
  *   'CBSE Class 8::Social Science'   Exploring Society: India and Beyond, Part 1
  *   'CBSE Class 9::Social Science'   Understanding Society: India and Beyond, Part 1
+ *   'CBSE Class 9::English'          Kaveri, seeded at UNIT level — see below
+ *
+ * `CBSE Class 9::English` is here for a different reason from the others: the
+ * book is complete, but it is the one book of the 26 that prints no contents
+ * page, so only its 8 UNIT names could be verified (from NCERT's own audio
+ * transcript appendix). Each unit holds 2-3 individual texts, and a font-size
+ * heading scan could not establish them reliably — a 20pt threshold silently
+ * missed a text in six of eight units, and "Weigh Your Words" reads as an
+ * activity heading from the page start and as a poem from the heading itself.
+ * So the seeded list is deliberately coarser than the content, which is exactly
+ * the condition this gate exists for. Stage F reconciles the per-text rows from
+ * what the loader actually found, and this entry comes out then.
  *
  * Remove an entry the moment its Part 2 is seeded, or the model keeps guessing
  * chapter names it did not need to guess.
@@ -134,6 +146,7 @@ export const PARTIAL_SYLLABUS = new Set([
   'Kerala State Class 10',
   'CBSE Class 8::Social Science',
   'CBSE Class 9::Social Science',
+  'CBSE Class 9::English',
 ]);
 
 /**

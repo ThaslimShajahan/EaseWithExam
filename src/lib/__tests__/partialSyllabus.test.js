@@ -30,9 +30,18 @@ describe('isPartialSyllabus', () => {
     ['CBSE Class 9', 'Mathematics'],
     ['CBSE Class 9', 'Science'],
     ['CBSE Class 8', 'English'],
-    ['CBSE Class 9', 'English'],
   ])('does NOT exempt %s %s, which shares the exam type', (examType, subject) => {
     expect(isPartialSyllabus(examType, subject)).toBe(false);
+  });
+
+  /* Class 9 English is exempt for a DIFFERENT reason from the Part 1 books: the
+   * book is complete, but Kaveri prints no contents page, so only its 8 unit
+   * names could be verified and the seeded list is coarser than the content.
+   * Same gate, same effect, different cause — and Class 8 English is NOT exempt,
+   * because Poorvi's index gives all 15 of its texts. */
+  it('exempts Class 9 English, whose seeded list is unit-level only', () => {
+    expect(isPartialSyllabus('CBSE Class 9', 'English')).toBe(true);
+    expect(isPartialSyllabus('CBSE Class 8', 'English')).toBe(false);
   });
 
   /* Kerala predates the subject dimension and every one of its subjects is
