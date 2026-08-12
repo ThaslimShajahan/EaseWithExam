@@ -810,8 +810,30 @@ Found 2026-08-12 while checking whether the bulk-load scripts still work. The
 | `content_figures` | INSERT/UPDATE/DELETE each **{public}** | 89 figure rows |
 | `study_notes` | SELECT only, writes via `admin_upsert_study_note` | ✅ already correct |
 
-`sn_admin_write` is worth calling out by name: it *reads* as an admin-only
-policy and is granted to `anon`. Nothing about the name suggests the hole.
+### ⚠ NAMING TRAP — do not trust a policy name
+
+**`sn_admin_write` is granted to `{anon, authenticated}`.** The name says
+"admin_write"; the policy lets anyone holding the public anon key write to
+`syllabus_nodes`. Nothing about reading the name suggests the hole, and an
+audit that greps for "admin" in policy names would score it as safe.
+
+This is the third distinct way this vulnerability has hidden in plain sight:
+
+1. **RLS enabled, policy `true`** — `pyq_open`, `knowledge_base_open`. Passes
+   any check that only looks at `relrowsecurity`.
+2. **A reassuring name** — `sn_admin_write`. Passes any check that reads names
+   rather than `roles` and `qual`.
+3. **A grant that goes nowhere** — the P0 lockdown on 2026-08-11 granted
+   `EXECUTE` to `authenticated`, a role no request in this project ever has.
+   Looked like a lockdown, was a lockout.
+
+**The only reliable check is reading `cmd`, `roles` and `qual` together**, per
+policy, from `pg_policies` — never the name, never `relrowsecurity` alone:
+
+```sql
+select tablename, policyname, cmd, roles::text, qual
+from pg_policies where schemaname = 'public' order by tablename;
+```
 
 `study_notes` shows the target shape — public read, writes behind a
 `SECURITY DEFINER` RPC with `assert_verified_admin`.

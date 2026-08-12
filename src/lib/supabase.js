@@ -349,6 +349,83 @@ export async function adminSavePaper(paper) {
 
 /* Embed rows in batches of 20, one retry per item on failure.
    Returns { rows: rows-with-embeddings-where-possible, failedCount }. */
+/* ── Batched insert with timeout backoff ──────────────────────────────────
+ *
+ * Every request in this project arrives as the `anon` Postgres role, which
+ * carries `statement_timeout = 3s`. A knowledge_base row also carries a
+ * 1536-float embedding and hits an HNSW index on insert, so a wide INSERT is
+ * the most likely statement in the app to run out of budget.
+ *
+ * A batch that times out is RETRIED AT HALF THE SIZE rather than failing the
+ * whole document. That works regardless of what the underlying cause turns out
+ * to be — which matters, because on 2026-08-12 a real upload (PART 1.pdf) was
+ * killed by a statement timeout that could NOT be reproduced afterwards:
+ * measured against the live table and its index, 20 rows insert in ~46ms.
+ * Rather than ship a fix for an unproven cause, this halves on contact and
+ * records the payload size so the next occurrence explains itself.
+ *
+ * The reduced size STICKS for the rest of the document. If one batch was too
+ * heavy, the next probably is too, and creeping back up just pays the timeout
+ * again.
+ */
+export const INSERT_BATCH = 20;
+const MIN_INSERT_BATCH = 1;
+
+/** Postgres cancels a statement over its timeout with SQLSTATE 57014. */
+export function isStatementTimeout(error) {
+  if (!error) return false;
+  return error.code === '57014'
+    || /canceling statement due to statement timeout/i.test(error.message ?? '');
+}
+
+const sliceWeight = (slice) => {
+  let bytes = -1;
+  try { bytes = JSON.stringify(slice).length; } catch { /* circular/huge — leave -1 */ }
+  return { rowCount: slice.length, bytes };
+};
+
+/**
+ * Inserts `rows` through `insertFn(slice)`, halving the batch on a statement
+ * timeout. Returns `{ inserted, error, failedSlice, failedAt }` rather than
+ * throwing, so the caller owns the rollback decision.
+ *
+ * `insertFn` returns supabase-js's `{ data, error }`.
+ */
+export async function insertInBatches(rows, insertFn, {
+  batchSize = INSERT_BATCH, minBatchSize = MIN_INSERT_BATCH, onRetry = null,
+} = {}) {
+  const inserted = [];
+  let i = 0;
+  let size = batchSize;
+
+  while (i < rows.length) {
+    const slice = rows.slice(i, i + size);
+    const { data: part, error } = await insertFn(slice);
+
+    if (!error) {
+      inserted.push(...(part ?? []));
+      i += slice.length;
+      continue;
+    }
+
+    if (isStatementTimeout(error) && slice.length > minBatchSize) {
+      const next = Math.max(minBatchSize, Math.floor(slice.length / 2));
+      const w = sliceWeight(slice);
+      (onRetry ?? console.warn)(
+        `[knowledge_base] statement timeout on ${w.rowCount} row(s) (~${Math.round(w.bytes / 1024)} KB)`
+        + ` — retrying with ${next}`,
+      );
+      size = next;
+      continue;   // same i, smaller slice
+    }
+
+    // Either not a timeout, or already down to one row — genuinely stuck.
+    return { inserted, error, failedSlice: sliceWeight(slice), failedAt: i };
+  }
+
+  return { inserted, error: null, failedSlice: null, failedAt: -1 };
+}
+
 async function _addEmbeddings(rows) {
   const BATCH = 20;
   const out = rows.map((r) => ({ ...r }));
@@ -390,31 +467,34 @@ export async function adminSaveKnowledgeChunks(chunks) {
   // Postgres's statement_timeout and is cancelled outright — the whole chapter
   // lost after all the extraction work was already paid for (seen on
   // keph104.pdf, "Laws of Motion", 51 rows). 20 matches _addEmbeddings above.
-  const INSERT_BATCH = 20;
-  const inserted = [];
-  for (let i = 0; i < rows.length; i += INSERT_BATCH) {
-    const { data: part, error } = await supabase
-      .from('knowledge_base')
-      .insert(rows.slice(i, i + INSERT_BATCH))
-      .select('id');
+  const { inserted, error, failedSlice, failedAt } =
+    await insertInBatches(rows, (slice) =>
+      supabase.from('knowledge_base').insert(slice).select('id'));
 
-    if (error) {
-      // Batching costs the all-or-nothing guarantee a single statement gave us:
-      // without this, a failure midway leaves earlier batches committed, and a
-      // retry (the bulk loader re-runs whatever it didn't checkpoint) would
-      // insert those rows a second time. Undo what this call wrote so a retry
-      // starts from clean ground.
-      let cleanupNote = '';
-      if (inserted.length) {
-        const { error: delErr } = await supabase
-          .from('knowledge_base').delete().in('id', inserted.map((r) => r.id));
-        cleanupNote = delErr
-          ? ` — WARNING: ${inserted.length} row(s) from this batch remain in knowledge_base, cleanup failed (${delErr.message})`
-          : ` — rolled back ${inserted.length} row(s) already inserted`;
-      }
-      throw new Error(`${error.message} (batch ${i / INSERT_BATCH + 1} of ${Math.ceil(rows.length / INSERT_BATCH)})${cleanupNote}`);
+  if (error) {
+    // Batching costs the all-or-nothing guarantee a single statement gave us:
+    // without this, a failure midway leaves earlier batches committed, and a
+    // retry (the bulk loader re-runs whatever it didn't checkpoint) would
+    // insert those rows a second time. Undo what this call wrote so a retry
+    // starts from clean ground.
+    let cleanupNote = '';
+    if (inserted.length) {
+      const { error: delErr } = await supabase
+        .from('knowledge_base').delete().in('id', inserted.map((r) => r.id));
+      cleanupNote = delErr
+        ? ` — WARNING: ${inserted.length} row(s) from this batch remain in knowledge_base, cleanup failed (${delErr.message})`
+        : ` — rolled back ${inserted.length} row(s) already inserted`;
     }
-    inserted.push(...(part ?? []));
+    // Diagnostics, not just "it failed". The PART 1.pdf timeout on 2026-08-12
+    // could not be reproduced afterwards precisely because nothing recorded how
+    // big the failing payload actually was — measuring later showed 20 rows
+    // inserting in ~46ms, a 65x margin under anon's 3s statement_timeout, so
+    // row count was NOT the mechanism and the real cause is still unknown.
+    // Whatever it is, the next occurrence should identify itself.
+    throw new Error(
+      `${error.message} (rows ${failedAt + 1}-${failedAt + failedSlice.rowCount} of ${rows.length}, `
+      + `${failedSlice.rowCount} row(s), ~${Math.round(failedSlice.bytes / 1024)} KB)${cleanupNote}`,
+    );
   }
   const data = inserted;
 
