@@ -879,7 +879,7 @@ client — `syllabus.js` selects `book` and PostgREST rejects a select for a
 missing column. The reverse order is safe (the old client never asks for it), so
 unlike `20260810070000` these do **not** have to ship in one window.
 
-### 🔄 Stage B — 22 of 26 books verified (2026-08-12)
+### ✅ Stage B — all 26 books verified (2026-08-12)
 
 Every line below was read from the book's OWN contents page via
 `scripts/read-book-contents.mjs`, then **reconciled against the file count**.
@@ -910,10 +910,65 @@ No chapter name is web-sourced or inferred from a filename.
 | India and the Contemporary World II | `India and the Contemporary World II` | 5 | `jess301-305` |
 | Democratic Politics II | `Democratic Politics II` | 5 in 4 units | `jess401-405` |
 
-**Still to read: 4 books** — Class 9 English, Class 9 Social, Class 8 English
-(Poorvi), Class 8 Social. None has NCERT prelims, but all ship an INDEX PDF
-(`CLASS 8 ENGLISH POORVI INDEX.pdf`, `INDEX.pdf`, …). Use those; the filenames
-in those folders are hand-typed and are not a source of truth.
+| Poorvi | `Poorvi` | 5 units × 3 texts = **15** | 5 UNIT PDFs |
+| Exploring Society: India and Beyond | `Exploring Society: India and Beyond` | 7 in themes A·B·D·E | 7 THEME PDFs |
+| Kaveri | `Kaveri` | 8 units, multi-text | 8 numbered PDFs |
+| Understanding Society: India and Beyond | `Understanding Society: India and Beyond` | 9 by discipline | 9 numbered PDFs |
+
+**All 26 books read.** The four Class 8/9 books are the NEP-2020 editions
+(Poorvi May 2025, Exploring Society July 2025, Understanding Society June 2026),
+so none of them matches any pre-2023 chapter list.
+
+#### Class 8 Social — theme/chapter structure confirmed from the index, not assumed
+
+The index reads: Theme A → ch 1 · Theme B → ch 2, 3, 4 · Theme D → ch 5, 6 ·
+Theme E → ch 7. Three things follow, and only the first was guessable:
+
+- The `THEME x CHAPTER n` filenames **do** match the index. Verified, not
+  assumed — and worth checking, because `KRITHIKA 2/` and `full unit.pdf` are
+  both cases where this corpus's names were wrong.
+- **Theme C does not exist in this book.** The index jumps B → D. That is not a
+  missing file; this is Part 1 and Theme C is in the absent Part 2.
+- **Chapter numbering is continuous 1–7 ACROSS themes**, so themes are a `unit`,
+  not a `book`. A theme-per-book reading would have restarted numbering and
+  invented a collision that the book does not have.
+
+#### Class 9 English has no contents page anywhere — unit names came from NCERT prose
+
+`Kaveri.pdf` is the front matter and prints no contents page; `full unit.pdf` is
+an **audio-transcript appendix**, not the book. The 8 unit names were recovered
+from that appendix's own headings ("Unit 2 The Pot Maker", …), which is NCERT
+text rather than a filename — and it corrects the hand-typed casing
+(`CARRIER OF WORDS.pdf` → *Carrier of Words*; `8 Follow that dream.pdf` →
+*Follow That Dream*).
+
+Its units are multi-text like Poorvi's: unit 1 contains a second text, *Bharat
+Our Land*, starting page 23. So **per-text titles for Class 9 English need a
+third method** — an in-file large-font heading scan — since there is neither a
+contents page nor one file per text. Stage C should do that scan before seeding
+Class 9 English, and it is the only book of the 26 that needs it.
+
+#### The retired Class 8 English rows were half right
+
+The four rows deactivated last session were *The Wit that Won Hearts*, *A
+Concrete Example*, *Wisdom Paves the Way* and *Wit and Wisdom*. Poorvi's index
+now shows the first three are genuine texts and the fourth is their **unit**. So
+only the unit-as-chapter row was wrong. Seed the full 15 fresh rather than
+reactivating three of them — but do not treat all four as junk.
+
+#### ⚠ Class 8 and Class 9 Social are PART 1 only, and the partial-syllabus gate cannot express that
+
+Both ship Part 1; Part 2 is absent. That is the same situation as Kerala, where
+`PARTIAL_SYLLABUS_EXAM_TYPES` disables the closed-list rule so the model is not
+forced to file Part 2 questions into Part 1 chapters.
+
+**But that set is keyed by `exam_type` alone.** Adding `CBSE Class 8` would also
+disable the closed list for Class 8 **Mathematics and Science**, whose syllabi
+are complete and correct. The partial-ness here is per *subject*, and the gate
+has no subject dimension. Widening it to `(exam_type, subject)` is a small change
+to `contentExtraction.js` and its call site — **do it before seeding Class 8/9
+Social**, or accept that those two subjects load with the closed list on and
+mis-file every Part 2 question later.
 
 #### ⚠ Class 10 History: three chapters exist in the syllabus but NOT in the book
 
@@ -927,21 +982,26 @@ They are not in the book and not in the corpus. **Do not seed them.** This is th
 same edition-mismatch that produced the 10 stale Class 8 Maths rows — and every
 third-party chapter list on the web still shows all eight.
 
-#### Open design question — Words and Expressions II duplicates First Flight
+#### RESOLVED — Words and Expressions II attaches to First Flight (Option 2)
 
 The workbook's 9 units are named **identically** to First Flight's 9 chapters
-(Unit 1 *A Letter to God*, … Unit 9 *The Proposal*). It is exercises keyed to the
-same texts, not a separate set of texts. Two options, and this needs deciding
-before Stage C seeds anything:
+(Unit 1 *A Letter to God*, … Unit 9 *The Proposal*) because it is exercises on
+those texts, not a separate set of texts. **Owner decision 2026-08-12: it gets no
+chapter rows of its own** — its content lands on First Flight's chapters as
+`content_type: exercise`. The rejected option (its own book rows) was one line of
+config and would have shown the student every Class 10 English title twice.
 
-1. **Its own `book` rows.** Simple and consistent, but the student's English
-   chapter list then shows every title twice.
-2. **No rows; its content attaches to First Flight's chapters**, distinguished by
-   `content_type: exercise`. Cleaner for the student, but the loader must map a
-   `jewe2*` file onto a `First Flight` chapter — book-aware matching that does
-   not exist yet.
+Built properly rather than worked around: `src/lib/corpusMapping.js` resolves any
+corpus path to `(exam_type, subject, book)` and carries `attachesTo` +
+`contentTypeOverride` for the workbook case, with `workbookUnitFor()` mapping
+`jewe20N.pdf` to reader unit N.
 
-Leaning 2, because 1 puts a visible duplicate in front of the student.
+**Mapping is ordinal, not by title, and unit 3 is why.** Title matching works for
+8 of the 9 and fails silently on unit 3, whose printed title *Two Stories about
+Flying* matches **neither** of the two chapter rows it split into. That unit
+returns BOTH candidates (`His First Flight`, `Black Aeroplane`) for
+`matchSyllabusChapter` to choose between — taking `chapters[0]` would file every
+Black Aeroplane exercise under His First Flight.
 
 #### Numbering styles vary, so keys must come from titles
 
