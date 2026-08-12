@@ -22,7 +22,9 @@
  *
  *   INSERT  sends question_text: null, a NOT NULL column — the row can never be
  *           written whatever RLS decides. 23502 means RLS LET IT THROUGH.
- *   UPDATE  and DELETE filter on a random UUID that matches nothing.
+ *   UPDATE  and DELETE act on a throwaway row the audit creates and removes
+ *           itself, and assert on the ROW rather than the status code — see
+ *           the long comment at the probe. A random-UUID filter cannot work.
  *   RPCs    are called with an EMPTY id array, which returns 0 and touches
  *           nothing while still running the full assert_verified_admin check.
  *
@@ -96,6 +98,17 @@ async function mintIdToken(uid) {
 (async () => {
   console.log(`\nTarget: ${BASE}\n`);
 
+  /* ── Permit + cross ──────────────────────────────────────────────────── */
+  let adminToken, nobodyToken;
+  try {
+    adminToken  = await mintIdToken(ADMIN);
+    nobodyToken = await mintIdToken(NOBODY);
+    console.log(`\nMinted tokens for admin ${ADMIN} and non-admin ${NOBODY}\n`);
+  } catch (e) {
+    record('mint tokens', false, e.message);
+    return summarise();
+  }
+
   /* ── Deny: direct table writes as anon ───────────────────────────────── */
   console.log('--- DENY: direct table writes, anon key only ---');
   {
@@ -107,17 +120,67 @@ async function mintIdToken(uid) {
     const v = rlsRefused(r);
     record('anon INSERT is refused', v.ok, v.detail);
   }
-  {
-    const r = await call(`/rest/v1/pyq_questions?id=eq.${NO_MATCH}`, {
-      method: 'PATCH', body: { status: 'archived' },
+  /* UPDATE and DELETE need a row that REALLY EXISTS.
+   *
+   * The first version of this audit filtered on a random UUID and asserted on
+   * the status code. That CANNOT work, and it reported 13/15 on a lockdown
+   * that was actually complete. RLS on UPDATE/DELETE is a row FILTER, not an
+   * error: with no permissive policy the visible set is empty, the statement
+   * touches zero rows, and PostgREST returns 204 — byte-identical to a filter
+   * that simply matched nothing. It returned 204 before the migration and 204
+   * after, and proved nothing either time.
+   *
+   * INSERT is the exception, which is why that probe worked: a `with check`
+   * violation is a genuine error.
+   *
+   * So assert on the ROW, not the status. Create a throwaway row through the
+   * admin RPC, try to change and delete it as anon, read it back.
+   * Non-destructive to real data — the audit owns this row and removes it in
+   * the finally block. */
+  let probeId = null;
+  try {
+    const created = await call('/rest/v1/rpc/admin_insert_pyq_rows', {
+      method: 'POST', token: adminToken,
+      body: { p_caller: ADMIN, p_rows: [{
+        exam_type: '__probe__', subject: '__probe__', question_text: 'rls write probe',
+        question_type: 'MCQ', status: 'archived', source: '__probe__',
+      }] },
     });
-    const v = rlsRefused(r);
-    record('anon UPDATE is refused', v.ok, v.detail);
-  }
-  {
-    const r = await call(`/rest/v1/pyq_questions?id=eq.${NO_MATCH}`, { method: 'DELETE' });
-    const v = rlsRefused(r);
-    record('anon DELETE is refused', v.ok, v.detail);
+    probeId = created.payload?.[0]?.id ?? null;
+
+    if (!probeId) {
+      record('create probe row for UPDATE/DELETE checks', false,
+        `HTTP ${created.status} ${JSON.stringify(created.payload).slice(0, 140)}`);
+    } else {
+      // Prefer: return=representation makes the filtering visible — [] means
+      // RLS removed the row from the statement's scope.
+      const upd = await fetch(`${BASE}/rest/v1/pyq_questions?id=eq.${probeId}`, {
+        method: 'PATCH',
+        headers: {
+          apikey: ANON, Authorization: `Bearer ${ANON}`,
+          'Content-Type': 'application/json', Prefer: 'return=representation',
+        },
+        body: JSON.stringify({ subject: '__SHOULD_NOT_APPLY__' }),
+      });
+      const updBody = (await upd.text()).trim();
+      const updBlocked = updBody === '[]' || upd.status === 401 || upd.status === 403;
+      record('anon UPDATE is refused', updBlocked,
+        `HTTP ${upd.status} body=${updBody.slice(0, 40) || '(empty)'}`
+        + (updBlocked ? ' — row not in scope' : '  <-- ROW WAS MODIFIED'));
+
+      const del   = await call(`/rest/v1/pyq_questions?id=eq.${probeId}`, { method: 'DELETE' });
+      const after = await call(`/rest/v1/pyq_questions?select=id,subject&id=eq.${probeId}`);
+      const survived = Array.isArray(after.payload) && after.payload.length === 1;
+      record('anon DELETE is refused', survived,
+        `HTTP ${del.status} — row still present: ${survived}`
+        + (survived ? `, subject=${after.payload[0].subject}` : '  <-- ROW WAS DELETED'));
+    }
+  } finally {
+    if (probeId) {
+      await call('/rest/v1/rpc/admin_delete_pyq_rows', {
+        method: 'POST', token: adminToken, body: { p_caller: ADMIN, p_ids: [probeId] },
+      });
+    }
   }
 
   /* ── Keep: read must survive ─────────────────────────────────────────── */
@@ -144,16 +207,6 @@ async function mintIdToken(uid) {
     record(`${fn} refuses anon`, v.ok, v.detail);
   }
 
-  /* ── Permit + cross ──────────────────────────────────────────────────── */
-  let adminToken, nobodyToken;
-  try {
-    adminToken  = await mintIdToken(ADMIN);
-    nobodyToken = await mintIdToken(NOBODY);
-    console.log(`\nMinted tokens for admin ${ADMIN} and non-admin ${NOBODY}\n`);
-  } catch (e) {
-    record('mint tokens', false, e.message);
-    return summarise();
-  }
 
   console.log('--- DENY: signed in, but not an admin ---');
   for (const [fn, args] of RPCS) {
