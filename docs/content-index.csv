@@ -1,0 +1,442 @@
+src,exam_type,subject,chapter,chunks,sort_order,is_active
+knowledge_base,CBSE Class 10,Mathematics,Areas Related to Circles,7,,
+knowledge_base,CBSE Class 10,Mathematics,Arithmetic Progressions,29,,
+knowledge_base,CBSE Class 10,Mathematics,Circles,11,,
+knowledge_base,CBSE Class 10,Mathematics,Coordinate Geometry,16,,
+knowledge_base,CBSE Class 10,Mathematics,Introduction to Trigonometry,26,,
+knowledge_base,CBSE Class 10,Mathematics,Pair of Linear Equations in Two Variables,18,,
+knowledge_base,CBSE Class 10,Mathematics,Polynomials,12,,
+knowledge_base,CBSE Class 10,Mathematics,Probability — A Theoretical Approach,25,,
+knowledge_base,CBSE Class 10,Mathematics,Quadratic Equations,15,,
+knowledge_base,CBSE Class 10,Mathematics,Real Numbers,16,,
+knowledge_base,CBSE Class 10,Mathematics,Some Applications of Trigonometry,10,,
+knowledge_base,CBSE Class 10,Mathematics,Statistics,28,,
+knowledge_base,CBSE Class 10,Mathematics,Surface Areas and Volumes,15,,
+knowledge_base,CBSE Class 10,Mathematics,Triangles,26,,
+syllabus_nodes,CBSE Class 10,Mathematics,Real Numbers,,1,true
+syllabus_nodes,CBSE Class 10,Mathematics,Polynomials,,2,true
+syllabus_nodes,CBSE Class 10,Mathematics,Pair of Linear Equations in Two Variables,,3,true
+syllabus_nodes,CBSE Class 10,Mathematics,Quadratic Equations,,4,true
+syllabus_nodes,CBSE Class 10,Mathematics,Arithmetic Progressions,,5,true
+syllabus_nodes,CBSE Class 10,Mathematics,Triangles,,6,true
+syllabus_nodes,CBSE Class 10,Mathematics,Coordinate Geometry,,7,true
+syllabus_nodes,CBSE Class 10,Mathematics,Introduction to Trigonometry,,8,true
+syllabus_nodes,CBSE Class 10,Mathematics,Some Applications of Trigonometry,,9,true
+syllabus_nodes,CBSE Class 10,Mathematics,Circles,,10,true
+syllabus_nodes,CBSE Class 10,Mathematics,Areas Related to Circles,,11,true
+syllabus_nodes,CBSE Class 10,Mathematics,Surface Areas and Volumes,,12,true
+syllabus_nodes,CBSE Class 10,Mathematics,Statistics,,13,true
+syllabus_nodes,CBSE Class 10,Mathematics,Probability — A Theoretical Approach,,14,true
+knowledge_base,CBSE Class 10,Science,"Acids, Bases and Salts",32,,
+knowledge_base,CBSE Class 10,Science,Carbon and its Compounds,28,,
+knowledge_base,CBSE Class 10,Science,Chemical Reactions and Equations,26,,
+knowledge_base,CBSE Class 10,Science,Control and Coordination,16,,
+knowledge_base,CBSE Class 10,Science,Electricity,41,,
+knowledge_base,CBSE Class 10,Science,Heredity,10,,
+knowledge_base,CBSE Class 10,Science,How do Organisms Reproduce?,29,,
+knowledge_base,CBSE Class 10,Science,Life Processes,35,,
+knowledge_base,CBSE Class 10,Science,Light – Reflection and Refraction,41,,
+knowledge_base,CBSE Class 10,Science,Magnetic Effects of Electric Current,20,,
+knowledge_base,CBSE Class 10,Science,Metals and Non-metals,31,,
+knowledge_base,CBSE Class 10,Science,Our Environment,15,,
+knowledge_base,CBSE Class 10,Science,The Human Eye and the Colourful World,21,,
+syllabus_nodes,CBSE Class 10,Science,Chemical Reactions and Equations,,1,true
+syllabus_nodes,CBSE Class 10,Science,"Acids, Bases and Salts",,2,true
+syllabus_nodes,CBSE Class 10,Science,Metals and Non-metals,,3,true
+syllabus_nodes,CBSE Class 10,Science,Carbon and its Compounds,,4,true
+syllabus_nodes,CBSE Class 10,Science,Life Processes,,5,true
+syllabus_nodes,CBSE Class 10,Science,Control and Coordination,,6,true
+syllabus_nodes,CBSE Class 10,Science,How do Organisms Reproduce?,,7,true
+syllabus_nodes,CBSE Class 10,Science,Heredity,,8,true
+syllabus_nodes,CBSE Class 10,Science,Light – Reflection and Refraction,,9,true
+syllabus_nodes,CBSE Class 10,Science,The Human Eye and the Colourful World,,10,true
+syllabus_nodes,CBSE Class 10,Science,Electricity,,11,true
+syllabus_nodes,CBSE Class 10,Science,Magnetic Effects of Electric Current,,12,true
+syllabus_nodes,CBSE Class 10,Science,Our Environment,,13,true
+knowledge_base,CBSE Class 11,Biology,Anatomy of Flowering Plants,11,,
+knowledge_base,CBSE Class 11,Biology,Animal Kingdom,28,,
+knowledge_base,CBSE Class 11,Biology,Biological Classification,26,,
+knowledge_base,CBSE Class 11,Biology,Biomolecules,22,,
+knowledge_base,CBSE Class 11,Biology,Body Fluids and Circulation,21,,
+knowledge_base,CBSE Class 11,Biology,Breathing and Exchange of Gases,19,,
+knowledge_base,CBSE Class 11,Biology,Cell Cycle and Cell Division,21,,
+knowledge_base,CBSE Class 11,Biology,Cell: The Unit of Life,25,,
+knowledge_base,CBSE Class 11,Biology,Chemical Coordination and Integration,21,,
+knowledge_base,CBSE Class 11,Biology,Excretory Products and their Elimination,18,,
+knowledge_base,CBSE Class 11,Biology,Locomotion and Movement,12,,
+knowledge_base,CBSE Class 11,Biology,Morphology of Flowering Plants,21,,
+knowledge_base,CBSE Class 11,Biology,Neural Control and Coordination,13,,
+knowledge_base,CBSE Class 11,Biology,Photosynthesis in Higher Plants,32,,
+knowledge_base,CBSE Class 11,Biology,Plant Growth and Development,20,,
+knowledge_base,CBSE Class 11,Biology,Plant Kingdom,22,,
+knowledge_base,CBSE Class 11,Biology,Respiration in Plants,19,,
+knowledge_base,CBSE Class 11,Biology,Skeletal System,7,,
+knowledge_base,CBSE Class 11,Biology,Structural Organisation in Animals,12,,
+knowledge_base,CBSE Class 11,Biology,The Living World,16,,
+syllabus_nodes,CBSE Class 11,Biology,The Living World,,1,true
+syllabus_nodes,CBSE Class 11,Biology,Biological Classification,,2,true
+syllabus_nodes,CBSE Class 11,Biology,Plant Kingdom,,3,true
+syllabus_nodes,CBSE Class 11,Biology,Animal Kingdom,,4,true
+syllabus_nodes,CBSE Class 11,Biology,Morphology of Flowering Plants,,5,true
+syllabus_nodes,CBSE Class 11,Biology,Anatomy of Flowering Plants,,6,true
+syllabus_nodes,CBSE Class 11,Biology,Structural Organisation in Animals,,7,true
+syllabus_nodes,CBSE Class 11,Biology,Cell: The Unit of Life,,8,true
+syllabus_nodes,CBSE Class 11,Biology,Biomolecules,,9,true
+syllabus_nodes,CBSE Class 11,Biology,Cell Cycle and Cell Division,,10,true
+syllabus_nodes,CBSE Class 11,Biology,Photosynthesis in Higher Plants,,11,true
+syllabus_nodes,CBSE Class 11,Biology,Respiration in Plants,,12,true
+syllabus_nodes,CBSE Class 11,Biology,Plant Growth and Development,,13,true
+syllabus_nodes,CBSE Class 11,Biology,Breathing and Exchange of Gases,,14,true
+syllabus_nodes,CBSE Class 11,Biology,Body Fluids and Circulation,,15,true
+syllabus_nodes,CBSE Class 11,Biology,Excretory Products and their Elimination,,16,true
+syllabus_nodes,CBSE Class 11,Biology,Locomotion and Movement,,17,true
+syllabus_nodes,CBSE Class 11,Biology,Skeletal System,,18,true
+syllabus_nodes,CBSE Class 11,Biology,Neural Control and Coordination,,19,true
+syllabus_nodes,CBSE Class 11,Biology,Chemical Coordination and Integration,,20,true
+knowledge_base,CBSE Class 11,Biotechnology,Basic Principles of Inheritance,22,,
+knowledge_base,CBSE Class 11,Biotechnology,Biomolecules,41,,
+knowledge_base,CBSE Class 11,Biotechnology,Cell Cycle,18,,
+knowledge_base,CBSE Class 11,Biotechnology,Cellular Organelles,36,,
+knowledge_base,CBSE Class 11,Biotechnology,Chapter 1: Introduction,28,,
+knowledge_base,CBSE Class 11,Biotechnology,Cheminformatics,13,,
+knowledge_base,CBSE Class 11,Biotechnology,Chromosomal Abnormalities and Syndromes,6,,
+knowledge_base,CBSE Class 11,Biotechnology,DNA as the Genetic Material,5,,
+knowledge_base,CBSE Class 11,Biotechnology,DNA Replication,10,,
+knowledge_base,CBSE Class 11,Biotechnology,Enzymes and Bioenergetics,20,,
+knowledge_base,CBSE Class 11,Biotechnology,Gene Expression,17,,
+knowledge_base,CBSE Class 11,Biotechnology,Gene Mutation,7,,
+knowledge_base,CBSE Class 11,Biotechnology,Introduction to Bioinformatics,32,,
+knowledge_base,CBSE Class 11,Biotechnology,Metabolic Pathways,22,,
+knowledge_base,CBSE Class 11,Biotechnology,Monogenic Disorders and Pedigree Mapping,11,,
+knowledge_base,CBSE Class 11,Biotechnology,Prokaryotic and Eukaryotic Gene Organization,4,,
+knowledge_base,CBSE Class 11,Biotechnology,Protein Informatics,8,,
+knowledge_base,CBSE Class 11,Biotechnology,Regulation of Gene Expression,12,,
+knowledge_base,CBSE Class 11,Biotechnology,Systems Biology,10,,
+knowledge_base,CBSE Class 11,Biotechnology,Tools and Techniques,47,,
+syllabus_nodes,CBSE Class 11,Biotechnology,Chapter 1: Introduction,,1,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Cellular Organelles,,2,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Biomolecules,,3,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Enzymes and Bioenergetics,,4,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Metabolic Pathways,,5,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Cell Cycle,,6,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Basic Principles of Inheritance,,7,true
+syllabus_nodes,CBSE Class 11,Biotechnology,DNA as the Genetic Material,,8,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Prokaryotic and Eukaryotic Gene Organization,,9,true
+syllabus_nodes,CBSE Class 11,Biotechnology,DNA Replication,,10,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Gene Expression,,11,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Gene Mutation,,12,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Regulation of Gene Expression,,13,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Chromosomal Abnormalities and Syndromes,,14,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Monogenic Disorders and Pedigree Mapping,,15,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Introduction to Bioinformatics,,16,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Protein Informatics,,17,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Cheminformatics,,18,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Systems Biology,,19,true
+syllabus_nodes,CBSE Class 11,Biotechnology,Tools and Techniques,,20,true
+knowledge_base,CBSE Class 11,Chemistry,Chemical Bonding and Molecular Structure,72,,
+knowledge_base,CBSE Class 11,Chemistry,Classification of Elements and Periodicity in Properties,50,,
+knowledge_base,CBSE Class 11,Chemistry,Discovery of Sub-Atomic Particles,81,,
+knowledge_base,CBSE Class 11,Chemistry,Equilibrium,93,,
+knowledge_base,CBSE Class 11,Chemistry,Hydrocarbons,54,,
+knowledge_base,CBSE Class 11,Chemistry,Organic Chemistry – Some Basic Principles and Techniques,73,,
+knowledge_base,CBSE Class 11,Chemistry,Redox Reactions,40,,
+knowledge_base,CBSE Class 11,Chemistry,Some Basic Concepts of Chemistry,56,,
+knowledge_base,CBSE Class 11,Chemistry,Thermodynamics,57,,
+syllabus_nodes,CBSE Class 11,Chemistry,Some Basic Concepts of Chemistry,,1,true
+syllabus_nodes,CBSE Class 11,Chemistry,Discovery of Sub-Atomic Particles,,2,true
+syllabus_nodes,CBSE Class 11,Chemistry,Classification of Elements and Periodicity in Properties,,3,true
+syllabus_nodes,CBSE Class 11,Chemistry,Chemical Bonding and Molecular Structure,,4,true
+syllabus_nodes,CBSE Class 11,Chemistry,Thermodynamics,,5,true
+syllabus_nodes,CBSE Class 11,Chemistry,Equilibrium,,6,true
+syllabus_nodes,CBSE Class 11,Chemistry,Redox Reactions,,7,true
+syllabus_nodes,CBSE Class 11,Chemistry,Organic Chemistry – Some Basic Principles and Techniques,,8,true
+syllabus_nodes,CBSE Class 11,Chemistry,Hydrocarbons,,9,true
+knowledge_base,CBSE Class 11,Mathematics,Binomial Theorem,13,,
+knowledge_base,CBSE Class 11,Mathematics,Complex Numbers and Quadratic Equations,14,,
+knowledge_base,CBSE Class 11,Mathematics,Conic Sections,38,,
+knowledge_base,CBSE Class 11,Mathematics,Introduction to Three Dimensional Geometry,14,,
+knowledge_base,CBSE Class 11,Mathematics,Limits and Derivatives,49,,
+knowledge_base,CBSE Class 11,Mathematics,Linear Inequalities,14,,
+knowledge_base,CBSE Class 11,Mathematics,Permutations and Combinations,33,,
+knowledge_base,CBSE Class 11,Mathematics,Probability,34,,
+knowledge_base,CBSE Class 11,Mathematics,Relations and Functions,27,,
+knowledge_base,CBSE Class 11,Mathematics,Sequences and Series,23,,
+knowledge_base,CBSE Class 11,Mathematics,Sets,35,,
+knowledge_base,CBSE Class 11,Mathematics,Statistics,34,,
+knowledge_base,CBSE Class 11,Mathematics,Straight Lines,30,,
+knowledge_base,CBSE Class 11,Mathematics,Trigonometric Functions,36,,
+syllabus_nodes,CBSE Class 11,Mathematics,Sets,,1,true
+syllabus_nodes,CBSE Class 11,Mathematics,Relations and Functions,,2,true
+syllabus_nodes,CBSE Class 11,Mathematics,Trigonometric Functions,,3,true
+syllabus_nodes,CBSE Class 11,Mathematics,Complex Numbers and Quadratic Equations,,4,true
+syllabus_nodes,CBSE Class 11,Mathematics,Linear Inequalities,,5,true
+syllabus_nodes,CBSE Class 11,Mathematics,Permutations and Combinations,,6,true
+syllabus_nodes,CBSE Class 11,Mathematics,Binomial Theorem,,7,true
+syllabus_nodes,CBSE Class 11,Mathematics,Sequences and Series,,8,true
+syllabus_nodes,CBSE Class 11,Mathematics,Straight Lines,,9,true
+syllabus_nodes,CBSE Class 11,Mathematics,Conic Sections,,10,true
+syllabus_nodes,CBSE Class 11,Mathematics,Introduction to Three Dimensional Geometry,,11,true
+syllabus_nodes,CBSE Class 11,Mathematics,Limits and Derivatives,,12,true
+syllabus_nodes,CBSE Class 11,Mathematics,Statistics,,13,true
+syllabus_nodes,CBSE Class 11,Mathematics,Probability,,14,true
+knowledge_base,CBSE Class 11,Physics,Gravitation,38,,
+knowledge_base,CBSE Class 11,Physics,Kinetic Theory,34,,
+knowledge_base,CBSE Class 11,Physics,Laws of Motion,50,,
+knowledge_base,CBSE Class 11,Physics,Mechanical Properties of Fluids,47,,
+knowledge_base,CBSE Class 11,Physics,Mechanical Properties of Solids,27,,
+knowledge_base,CBSE Class 11,Physics,Motion in a Plane,41,,
+knowledge_base,CBSE Class 11,Physics,Motion in a Straight Line,24,,
+knowledge_base,CBSE Class 11,Physics,Oscillations,34,,
+knowledge_base,CBSE Class 11,Physics,Systems of Particles and Rotational Motion,65,,
+knowledge_base,CBSE Class 11,Physics,Thermal Properties of Matter,52,,
+knowledge_base,CBSE Class 11,Physics,Thermodynamics,33,,
+knowledge_base,CBSE Class 11,Physics,Units and Measurement,26,,
+knowledge_base,CBSE Class 11,Physics,Waves,48,,
+knowledge_base,CBSE Class 11,Physics,"Work, Energy and Power",50,,
+syllabus_nodes,CBSE Class 11,Physics,Units and Measurement,,1,true
+syllabus_nodes,CBSE Class 11,Physics,Motion in a Straight Line,,2,true
+syllabus_nodes,CBSE Class 11,Physics,Motion in a Plane,,3,true
+syllabus_nodes,CBSE Class 11,Physics,Laws of Motion,,4,true
+syllabus_nodes,CBSE Class 11,Physics,"Work, Energy and Power",,5,true
+syllabus_nodes,CBSE Class 11,Physics,Systems of Particles and Rotational Motion,,6,true
+syllabus_nodes,CBSE Class 11,Physics,Gravitation,,7,true
+syllabus_nodes,CBSE Class 11,Physics,Mechanical Properties of Solids,,8,true
+syllabus_nodes,CBSE Class 11,Physics,Mechanical Properties of Fluids,,9,true
+syllabus_nodes,CBSE Class 11,Physics,Thermal Properties of Matter,,10,true
+syllabus_nodes,CBSE Class 11,Physics,Thermodynamics,,11,true
+syllabus_nodes,CBSE Class 11,Physics,Kinetic Theory,,12,true
+syllabus_nodes,CBSE Class 11,Physics,Oscillations,,13,true
+syllabus_nodes,CBSE Class 11,Physics,Waves,,14,true
+syllabus_nodes,CBSE Class 8,English,The Wit that Won Hearts,,1,false
+syllabus_nodes,CBSE Class 8,English,A Concrete Example,,2,false
+syllabus_nodes,CBSE Class 8,English,Wisdom Paves the Way,,3,false
+syllabus_nodes,CBSE Class 8,English,Wit and Wisdom,,4,false
+knowledge_base,CBSE Class 8,Mathematics,A Square and A Cube,33,,
+knowledge_base,CBSE Class 8,Mathematics,A Story of Numbers,39,,
+knowledge_base,CBSE Class 8,Mathematics,Algebra Play,12,,
+knowledge_base,CBSE Class 8,Mathematics,Area,21,,
+knowledge_base,CBSE Class 8,Mathematics,Cubes and Cube Roots,3,,
+knowledge_base,CBSE Class 8,Mathematics,Experiencing the Power Play,40,,
+knowledge_base,CBSE Class 8,Mathematics,Exploring Some Geometric Themes,23,,
+knowledge_base,CBSE Class 8,Mathematics,Fractions as Percentages,37,,
+knowledge_base,CBSE Class 8,Mathematics,Number Play,45,,
+knowledge_base,CBSE Class 8,Mathematics,Proportional Reasoning,34,,
+knowledge_base,CBSE Class 8,Mathematics,Proportional Reasoning–2,14,,
+knowledge_base,CBSE Class 8,Mathematics,Quadrilaterals,39,,
+knowledge_base,CBSE Class 8,Mathematics,The Balancing Act,31,,
+knowledge_base,CBSE Class 8,Mathematics,The Baudhāyana-Pythagoras Theorem,19,,
+knowledge_base,CBSE Class 8,Mathematics,Understanding Perfect Squares,3,,
+knowledge_base,CBSE Class 8,Mathematics,"We Distribute, Yet Things Multiply",34,,
+syllabus_nodes,CBSE Class 8,Mathematics,Rational Numbers,,1,false
+syllabus_nodes,CBSE Class 8,Mathematics,Understanding Perfect Squares,,1,true
+syllabus_nodes,CBSE Class 8,Mathematics,Linear Equations in One Variable,,2,false
+syllabus_nodes,CBSE Class 8,Mathematics,A Story of Numbers,,3,true
+syllabus_nodes,CBSE Class 8,Mathematics,Understanding Quadrilaterals,,3,false
+syllabus_nodes,CBSE Class 8,Mathematics,Practical Geometry,,4,false
+syllabus_nodes,CBSE Class 8,Mathematics,Quadrilaterals,,4,true
+syllabus_nodes,CBSE Class 8,Mathematics,A Square and A Cube,,5,true
+syllabus_nodes,CBSE Class 8,Mathematics,Data Handling,,5,false
+syllabus_nodes,CBSE Class 8,Mathematics,Experiencing the Power Play,,6,true
+syllabus_nodes,CBSE Class 8,Mathematics,Squares and Square Roots,,6,false
+syllabus_nodes,CBSE Class 8,Mathematics,Cubes and Cube Roots,,7,true
+syllabus_nodes,CBSE Class 8,Mathematics,Number Play,,7,true
+syllabus_nodes,CBSE Class 8,Mathematics,Algebraic Expressions and Identities,,8,false
+syllabus_nodes,CBSE Class 8,Mathematics,"We Distribute, Yet Things Multiply",,8,true
+syllabus_nodes,CBSE Class 8,Mathematics,Mensuration,,9,false
+syllabus_nodes,CBSE Class 8,Mathematics,Proportional Reasoning,,9,true
+syllabus_nodes,CBSE Class 8,Mathematics,Fractions as Percentages,,10,true
+syllabus_nodes,CBSE Class 8,Mathematics,Introduction to Graphs,,10,false
+syllabus_nodes,CBSE Class 8,Mathematics,Playing with Numbers,,11,false
+syllabus_nodes,CBSE Class 8,Mathematics,The Baudhāyana-Pythagoras Theorem,,11,true
+syllabus_nodes,CBSE Class 8,Mathematics,Proportional Reasoning–2,,12,true
+syllabus_nodes,CBSE Class 8,Mathematics,Exploring Some Geometric Themes,,13,true
+syllabus_nodes,CBSE Class 8,Mathematics,The Balancing Act,,14,true
+syllabus_nodes,CBSE Class 8,Mathematics,Algebra Play,,15,true
+syllabus_nodes,CBSE Class 8,Mathematics,Area,,16,true
+knowledge_base,CBSE Class 8,Science,Electricity: Magnetic and Heating Effects,21,,
+knowledge_base,CBSE Class 8,Science,Exploring Forces,18,,
+knowledge_base,CBSE Class 8,Science,Exploring the Investigative World of Science,15,,
+knowledge_base,CBSE Class 8,Science,Health: The Ultimate Treasure,28,,
+knowledge_base,CBSE Class 8,Science,How Nature Works in Harmony,32,,
+knowledge_base,CBSE Class 8,Science,Keeping Time with the Skies,29,,
+knowledge_base,CBSE Class 8,Science,Light: Mirrors and Lenses,18,,
+knowledge_base,CBSE Class 8,Science,"Nature of Matter: Elements, Compounds, and Mixtures",23,,
+knowledge_base,CBSE Class 8,Science,"Our Home: Earth, a Unique Life Sustaining Planet",32,,
+knowledge_base,CBSE Class 8,Science,Particulate Nature of Matter,23,,
+knowledge_base,CBSE Class 8,Science,"Pressure, Winds, Storms, and Cyclones",27,,
+knowledge_base,CBSE Class 8,Science,"The Amazing World of Solutes, Solvents, and Solutions",24,,
+knowledge_base,CBSE Class 8,Science,The Invisible Living World: Beyond Our Naked Eye,31,,
+syllabus_nodes,CBSE Class 8,Science,Exploring the Investigative World of Science,,1,true
+syllabus_nodes,CBSE Class 8,Science,Light: Mirrors and Lenses,,2,true
+syllabus_nodes,CBSE Class 8,Science,Keeping Time with the Skies,,3,true
+syllabus_nodes,CBSE Class 8,Science,How Nature Works in Harmony,,4,true
+syllabus_nodes,CBSE Class 8,Science,"Our Home: Earth, a Unique Life Sustaining Planet",,5,true
+syllabus_nodes,CBSE Class 8,Science,The Invisible Living World: Beyond Our Naked Eye,,6,true
+syllabus_nodes,CBSE Class 8,Science,Health: The Ultimate Treasure,,7,true
+syllabus_nodes,CBSE Class 8,Science,Electricity: Magnetic and Heating Effects,,8,true
+syllabus_nodes,CBSE Class 8,Science,Exploring Forces,,9,true
+syllabus_nodes,CBSE Class 8,Science,"Pressure, Winds, Storms, and Cyclones",,10,true
+syllabus_nodes,CBSE Class 8,Science,Particulate Nature of Matter,,11,true
+syllabus_nodes,CBSE Class 8,Science,"Nature of Matter: Elements, Compounds, and Mixtures",,12,true
+syllabus_nodes,CBSE Class 8,Science,"The Amazing World of Solutes, Solvents, and Solutions",,13,true
+knowledge_base,CBSE Class 9,Mathematics,Exploring Algebraic Identities,25,,
+knowledge_base,CBSE Class 9,Mathematics,"I’m Up and Down, and Round and Round",25,,
+knowledge_base,CBSE Class 9,Mathematics,Introduction to Linear Polynomials,27,,
+knowledge_base,CBSE Class 9,Mathematics,Measuring Space: Perimeter and Area,39,,
+knowledge_base,CBSE Class 9,Mathematics,Orienting Yourself: The Use of Coordinates,14,,
+knowledge_base,CBSE Class 9,Mathematics,Predicting What Comes Next: Exploring Sequences and Progressions,29,,
+knowledge_base,CBSE Class 9,Mathematics,The Mathematics of Maybe: Introduction to Probability,24,,
+knowledge_base,CBSE Class 9,Mathematics,The World of Numbers,31,,
+syllabus_nodes,CBSE Class 9,Mathematics,Orienting Yourself: The Use of Coordinates,,1,true
+syllabus_nodes,CBSE Class 9,Mathematics,Introduction to Linear Polynomials,,2,true
+syllabus_nodes,CBSE Class 9,Mathematics,The World of Numbers,,3,true
+syllabus_nodes,CBSE Class 9,Mathematics,Exploring Algebraic Identities,,4,true
+syllabus_nodes,CBSE Class 9,Mathematics,"I’m Up and Down, and Round and Round",,5,true
+syllabus_nodes,CBSE Class 9,Mathematics,Measuring Space: Perimeter and Area,,6,true
+syllabus_nodes,CBSE Class 9,Mathematics,The Mathematics of Maybe: Introduction to Probability,,7,true
+syllabus_nodes,CBSE Class 9,Mathematics,Predicting What Comes Next: Exploring Sequences and Progressions,,8,true
+knowledge_base,CBSE Class 9,Science,Atomic Foundations of Matter,32,,
+knowledge_base,CBSE Class 9,Science,Cell: The Building Block of Life,44,,
+knowledge_base,CBSE Class 9,Science,Describing Motion Around Us,51,,
+knowledge_base,CBSE Class 9,Science,"Earth as a System: Energy, Matter, and Life",32,,
+knowledge_base,CBSE Class 9,Science,Exploration,21,,
+knowledge_base,CBSE Class 9,Science,Exploration: Entering the World of Secondary Science,16,,
+knowledge_base,CBSE Class 9,Science,Exploring Mixtures and their Separation,39,,
+knowledge_base,CBSE Class 9,Science,How Forces Affect Motion,44,,
+knowledge_base,CBSE Class 9,Science,Journey Inside the Atom,33,,
+knowledge_base,CBSE Class 9,Science,Patterns in Life: Diversity and Classification,46,,
+knowledge_base,CBSE Class 9,Science,Reproduction: How Life Continues,42,,
+knowledge_base,CBSE Class 9,Science,Sound Waves: Characteristics and Applications,38,,
+knowledge_base,CBSE Class 9,Science,Tissues in Action,41,,
+knowledge_base,CBSE Class 9,Science,"Work, Energy, and Simple Machines",43,,
+syllabus_nodes,CBSE Class 9,Science,Exploration: Entering the World of Secondary Science,,1,true
+syllabus_nodes,CBSE Class 9,Science,Sound Waves: Characteristics and Applications,,2,true
+syllabus_nodes,CBSE Class 9,Science,Reproduction: How Life Continues,,3,true
+syllabus_nodes,CBSE Class 9,Science,Patterns in Life: Diversity and Classification,,4,true
+syllabus_nodes,CBSE Class 9,Science,"Earth as a System: Energy, Matter, and Life",,5,true
+syllabus_nodes,CBSE Class 9,Science,Cell: The Building Block of Life,,6,true
+syllabus_nodes,CBSE Class 9,Science,Tissues in Action,,7,true
+syllabus_nodes,CBSE Class 9,Science,Describing Motion Around Us,,8,true
+syllabus_nodes,CBSE Class 9,Science,Exploring Mixtures and their Separation,,9,true
+syllabus_nodes,CBSE Class 9,Science,How Forces Affect Motion,,10,true
+syllabus_nodes,CBSE Class 9,Science,"Work, Energy, and Simple Machines",,11,true
+syllabus_nodes,CBSE Class 9,Science,Journey Inside the Atom,,12,true
+syllabus_nodes,CBSE Class 9,Science,Atomic Foundations of Matter,,13,true
+syllabus_nodes,CBSE Class 9,Science,Exploration,,14,true
+syllabus_nodes,Kerala State Class 10,Biology,Genetics of Life,,1,true
+syllabus_nodes,Kerala State Class 10,Biology,Paths of Evolution,,2,true
+syllabus_nodes,Kerala State Class 10,Biology,Behind Sensations,,3,true
+syllabus_nodes,Kerala State Class 10,Chemistry,Nomenclature of Organic Compounds and Isomerism,,1,true
+syllabus_nodes,Kerala State Class 10,Chemistry,Chemical Reactions of Organic Compounds,,2,true
+syllabus_nodes,Kerala State Class 10,Chemistry,Periodic Table and Electron Configuration,,3,true
+syllabus_nodes,Kerala State Class 10,Chemistry,Gas Laws and Mole Concept,,4,true
+syllabus_nodes,Kerala State Class 10,Mathematics,Arithmetic Sequences,,1,true
+syllabus_nodes,Kerala State Class 10,Mathematics,Circles and Angles,,2,true
+syllabus_nodes,Kerala State Class 10,Mathematics,Arithmetic Sequences and Algebra,,3,true
+syllabus_nodes,Kerala State Class 10,Mathematics,Mathematics of Chance,,4,true
+syllabus_nodes,Kerala State Class 10,Mathematics,Second Degree Equations,,5,true
+syllabus_nodes,Kerala State Class 10,Mathematics,Trigonometry,,6,true
+syllabus_nodes,Kerala State Class 10,Mathematics,Coordinates,,7,true
+syllabus_nodes,Kerala State Class 10,Physics,Sound Waves,,1,true
+syllabus_nodes,Kerala State Class 10,Physics,Lenses,,2,true
+syllabus_nodes,Kerala State Class 10,Physics,The World of Colours and Vision,,3,true
+syllabus_nodes,Kerala State Class 10,Physics,Magnetic Effect of Electric Current,,4,true
+syllabus_nodes,NEET,Biology,The Living World,,1,true
+syllabus_nodes,NEET,Biology,Biological Classification,,2,true
+syllabus_nodes,NEET,Biology,Plant Kingdom,,3,true
+syllabus_nodes,NEET,Biology,Animal Kingdom,,4,true
+syllabus_nodes,NEET,Biology,Morphology of Flowering Plants,,5,true
+syllabus_nodes,NEET,Biology,Anatomy of Flowering Plants,,6,true
+syllabus_nodes,NEET,Biology,Structural Organisation in Animals,,7,true
+syllabus_nodes,NEET,Biology,Cell: The Unit of Life,,8,true
+syllabus_nodes,NEET,Biology,Biomolecules,,9,true
+syllabus_nodes,NEET,Biology,Cell Cycle and Cell Division,,10,true
+syllabus_nodes,NEET,Biology,Photosynthesis in Higher Plants,,11,true
+syllabus_nodes,NEET,Biology,Respiration in Plants,,12,true
+syllabus_nodes,NEET,Biology,Plant Growth and Development,,13,true
+syllabus_nodes,NEET,Biology,Breathing and Exchange of Gases,,14,true
+syllabus_nodes,NEET,Biology,Body Fluids and Circulation,,15,true
+syllabus_nodes,NEET,Biology,Excretory Products and their Elimination,,16,true
+syllabus_nodes,NEET,Biology,Locomotion and Movement,,17,true
+syllabus_nodes,NEET,Biology,Skeletal System,,18,true
+syllabus_nodes,NEET,Biology,Neural Control and Coordination,,19,true
+syllabus_nodes,NEET,Biology,Chemical Coordination and Integration,,20,true
+syllabus_nodes,NEET,Biology,Sexual Reproduction in Flowering Plants,,100,true
+syllabus_nodes,NEET,Biology,Human Reproduction,,101,true
+syllabus_nodes,NEET,Biology,Reproductive Health,,102,true
+syllabus_nodes,NEET,Biology,Principles of Inheritance and Variation,,103,true
+syllabus_nodes,NEET,Biology,Molecular Basis of Inheritance,,104,true
+syllabus_nodes,NEET,Biology,Evolution,,105,true
+syllabus_nodes,NEET,Biology,Human Health and Disease,,106,true
+syllabus_nodes,NEET,Biology,Microbes in Human Welfare,,107,true
+syllabus_nodes,NEET,Biology,Biotechnology: Principles and Processes,,108,true
+syllabus_nodes,NEET,Biology,Biotechnology and its Applications,,109,true
+syllabus_nodes,NEET,Biology,Organisms and Populations,,110,true
+syllabus_nodes,NEET,Biology,Ecosystem,,111,true
+syllabus_nodes,NEET,Biology,Biodiversity and Conservation,,112,true
+syllabus_nodes,NEET,Biology,Transport in Plants,,900,true
+syllabus_nodes,NEET,Biology,Mineral Nutrition,,901,true
+syllabus_nodes,NEET,Biology,Digestion and Absorption,,902,true
+syllabus_nodes,NEET,Biology,Reproduction in Organisms,,950,true
+syllabus_nodes,NEET,Biology,Strategies for Enhancement in Food Production,,951,true
+syllabus_nodes,NEET,Biology,Environmental Issues,,952,true
+syllabus_nodes,NEET,Chemistry,Some Basic Concepts of Chemistry,,1,true
+syllabus_nodes,NEET,Chemistry,Discovery of Sub-Atomic Particles,,2,true
+syllabus_nodes,NEET,Chemistry,Classification of Elements and Periodicity in Properties,,3,true
+syllabus_nodes,NEET,Chemistry,Chemical Bonding and Molecular Structure,,4,true
+syllabus_nodes,NEET,Chemistry,Thermodynamics,,5,true
+syllabus_nodes,NEET,Chemistry,Equilibrium,,6,true
+syllabus_nodes,NEET,Chemistry,Redox Reactions,,7,true
+syllabus_nodes,NEET,Chemistry,Organic Chemistry – Some Basic Principles and Techniques,,8,true
+syllabus_nodes,NEET,Chemistry,Hydrocarbons,,9,true
+syllabus_nodes,NEET,Chemistry,Solutions,,100,true
+syllabus_nodes,NEET,Chemistry,Electrochemistry,,101,true
+syllabus_nodes,NEET,Chemistry,Chemical Kinetics,,102,true
+syllabus_nodes,NEET,Chemistry,The d- and f-Block Elements,,103,true
+syllabus_nodes,NEET,Chemistry,Coordination Compounds,,104,true
+syllabus_nodes,NEET,Chemistry,Haloalkanes and Haloarenes,,105,true
+syllabus_nodes,NEET,Chemistry,"Alcohols, Phenols and Ethers",,106,true
+syllabus_nodes,NEET,Chemistry,"Aldehydes, Ketones and Carboxylic Acids",,107,true
+syllabus_nodes,NEET,Chemistry,Amines,,108,true
+syllabus_nodes,NEET,Chemistry,Biomolecules,,109,true
+syllabus_nodes,NEET,Chemistry,States of Matter,,900,true
+syllabus_nodes,NEET,Chemistry,Hydrogen,,901,true
+syllabus_nodes,NEET,Chemistry,The s-Block Elements,,902,true
+syllabus_nodes,NEET,Chemistry,The p-Block Elements,,903,true
+syllabus_nodes,NEET,Chemistry,Environmental Chemistry,,904,true
+syllabus_nodes,NEET,Chemistry,The Solid State,,950,true
+syllabus_nodes,NEET,Chemistry,Surface Chemistry,,951,true
+syllabus_nodes,NEET,Chemistry,General Principles and Processes of Isolation of Elements,,952,true
+syllabus_nodes,NEET,Chemistry,The p-Block Elements,,953,true
+syllabus_nodes,NEET,Chemistry,Polymers,,954,true
+syllabus_nodes,NEET,Chemistry,Chemistry in Everyday Life,,955,true
+syllabus_nodes,NEET,Physics,Units and Measurement,,1,true
+syllabus_nodes,NEET,Physics,Motion in a Straight Line,,2,true
+syllabus_nodes,NEET,Physics,Motion in a Plane,,3,true
+syllabus_nodes,NEET,Physics,Laws of Motion,,4,true
+syllabus_nodes,NEET,Physics,"Work, Energy and Power",,5,true
+syllabus_nodes,NEET,Physics,Systems of Particles and Rotational Motion,,6,true
+syllabus_nodes,NEET,Physics,Gravitation,,7,true
+syllabus_nodes,NEET,Physics,Mechanical Properties of Solids,,8,true
+syllabus_nodes,NEET,Physics,Mechanical Properties of Fluids,,9,true
+syllabus_nodes,NEET,Physics,Thermal Properties of Matter,,10,true
+syllabus_nodes,NEET,Physics,Thermodynamics,,11,true
+syllabus_nodes,NEET,Physics,Kinetic Theory,,12,true
+syllabus_nodes,NEET,Physics,Oscillations,,13,true
+syllabus_nodes,NEET,Physics,Waves,,14,true
+syllabus_nodes,NEET,Physics,Electric Charges and Fields,,100,true
+syllabus_nodes,NEET,Physics,Electrostatic Potential and Capacitance,,101,true
+syllabus_nodes,NEET,Physics,Current Electricity,,102,true
+syllabus_nodes,NEET,Physics,Moving Charges and Magnetism,,103,true
+syllabus_nodes,NEET,Physics,Magnetism and Matter,,104,true
+syllabus_nodes,NEET,Physics,Electromagnetic Induction,,105,true
+syllabus_nodes,NEET,Physics,Alternating Current,,106,true
+syllabus_nodes,NEET,Physics,Electromagnetic Waves,,107,true
+syllabus_nodes,NEET,Physics,Ray Optics and Optical Instruments,,108,true
+syllabus_nodes,NEET,Physics,Wave Optics,,109,true
+syllabus_nodes,NEET,Physics,Dual Nature of Radiation and Matter,,110,true
+syllabus_nodes,NEET,Physics,Atoms,,111,true
+syllabus_nodes,NEET,Physics,Nuclei,,112,true
+syllabus_nodes,NEET,Physics,"Semiconductor Electronics: Materials, Devices and Simple Circuits",,113,true
+syllabus_nodes,NEET,Physics,Physical World,,900,true
+syllabus_nodes,NEET,Physics,Communication Systems,,950,true

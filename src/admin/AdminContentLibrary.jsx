@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ClipboardList, BookOpen, Trash2, ChevronDown, ChevronUp,
@@ -109,7 +109,7 @@ function PYQBank() {
   const [deleting,    setDeleting]    = useState(null);
 
   const [examOptions,    setExamOptions]    = useState(['All']);
-  const [subjectOptions, setSubjectOptions] = useState(['All']);
+  const [filterPairs, setFilterPairs] = useState([]);
 
   const load = async () => {
     setLoading(true);
@@ -120,19 +120,47 @@ function PYQBank() {
 
   useEffect(() => { load(); }, [examFilter, subjFilter]);
 
-  // Filter pill options must come from the FULL dataset, not the currently-filtered
-  // `rows` — otherwise picking one exam type hides every other exam pill (and picking
-  // a subject hides every other subject pill), making it impossible to switch filters.
+  // Filter pill options come from the FULL dataset, fetched once — never from
+  // the currently-filtered `rows`, or picking one exam type would hide every
+  // other exam pill and make the filter impossible to change.
   useEffect(() => {
     supabase.from('pyq_questions').select('exam_type, subject').neq('question_type', 'KB_NOTE').limit(5000)
       .then(({ data }) => {
-        setExamOptions(['All', ...sortExamTypes(new Set((data ?? []).map((r) => r.exam_type).filter(Boolean)))]);
-        setSubjectOptions(['All', ...[...new Set((data ?? []).map((r) => r.subject).filter(Boolean))].sort()]);
+        const pairs = (data ?? []).filter((r) => r.exam_type || r.subject);
+        setFilterPairs(pairs);
+        setExamOptions(['All', ...sortExamTypes(new Set(pairs.map((r) => r.exam_type).filter(Boolean)))]);
       });
   }, []);
 
-  const allExams    = examOptions;
-  const allSubjects = subjectOptions;
+  const allExams = examOptions;
+
+  /* SUBJECT options are scoped by the selected exam type; EXAM options are NOT
+   * scoped by the selected subject. That asymmetry is the whole fix.
+   *
+   * Both lists used to come from the entire corpus, so selecting Class 8
+   * offered "Biotechnology" — a Class 11 subject with 369 chunks, correctly
+   * tagged, that simply has nothing to do with Class 8. The data was never
+   * mis-tagged; the pill list just was not scoped.
+   *
+   * Scoping BOTH directions is the trap the original comment was avoiding:
+   * once a subject is picked, cross-filtering the exam pills would strand you
+   * on that combination with no way back. Keeping the exam axis unscoped means
+   * changing class is always possible, and the subject list then follows it. */
+  const allSubjects = useMemo(() => {
+    const inScope = examFilter === 'All'
+      ? filterPairs
+      : filterPairs.filter((r) => r.exam_type === examFilter);
+    return ['All', ...[...new Set(inScope.map((r) => r.subject).filter(Boolean))].sort()];
+  }, [filterPairs, examFilter]);
+
+  /* A subject that just went out of scope must not stay silently applied — it
+   * would filter every row away and read as "no content" rather than "wrong
+   * filter". Reset to All when the selected subject is not offered any more. */
+  useEffect(() => {
+    if (subjFilter !== 'All' && filterPairs.length && !allSubjects.includes(subjFilter)) {
+      setSubjFilter('All');
+    }
+  }, [allSubjects, subjFilter, filterPairs.length]);
 
   // Decompose the flat examFilter string ("CBSE Class 8", "NEET", …) into
   // separate board/class/competitive picks so they can be filtered independently
@@ -418,7 +446,7 @@ function KnowledgeBaseViewer() {
   const [clsSel,         setClsSel]         = useState(null);
   const [competitiveSel, setCompetitiveSel] = useState(null);
 
-  const [subjectOptions, setSubjectOptions] = useState(['All']);
+  const [kbPairs, setKbPairs] = useState([]);
   const [examTagOptions, setExamTagOptions] = useState(['All']);
 
   const load = async () => {
@@ -443,14 +471,31 @@ function KnowledgeBaseViewer() {
         const existing = subjByKey.get(key);
         if (!existing || (/^[a-z]/.test(existing) && /^[A-Z]/.test(c.subject))) subjByKey.set(key, c.subject);
       });
-      setSubjectOptions(['All', ...[...subjByKey.values()].sort()]);
+      setKbPairs((data ?? []).filter((c) => c.subject || c.exam_type));
       setExamTagOptions(['All', ...sortExamTypes(new Set(
         (data ?? []).map((c) => c.exam_type).filter(Boolean)
       ))]);
     });
   }, []);
 
-  const allSubjects = subjectOptions;
+  /* Same asymmetry as PYQBank: subjects scoped by the selected exam tag, exam
+   * tags never scoped by subject. Without this, selecting Class 8 offered
+   * Class 11 subjects like Biotechnology. Case-insensitive dedupe is retained
+   * — "Hindi" and "hindi" both occur and would otherwise split into two
+   * useless pills. */
+  const allSubjects = useMemo(() => {
+    const inScope = examTagFilter === 'All'
+      ? kbPairs
+      : kbPairs.filter((c) => c.exam_type === examTagFilter);
+    const byKey = new Map();
+    for (const c of inScope) {
+      if (!c.subject) continue;
+      const key = c.subject.toLowerCase();
+      const existing = byKey.get(key);
+      if (!existing || (/^[a-z]/.test(existing) && /^[A-Z]/.test(c.subject))) byKey.set(key, c.subject);
+    }
+    return ['All', ...[...byKey.values()].sort()];
+  }, [kbPairs, examTagFilter]);
   const allExamTags = examTagOptions;
   const competitiveTags = allExamTags.filter((t) => t !== 'All' && !/\sClass\s\d+$/i.test(t));
 
