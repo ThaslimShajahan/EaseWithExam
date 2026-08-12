@@ -798,6 +798,172 @@ were not audited at all. Scans are safe (Finding 5).
 
 ---
 
+## OPEN — the Kerala `Question Paper` corpus: audited 2026-08-12, none of it loadable yet
+
+125 PDFs at `OneDrive/Documents/ewe_data/Question Paper`, verified by opening
+them (page-1 text via pdfjs), not by trusting filenames. All 645 files in
+`ewe_data` are fully downloaded — no OneDrive placeholders (`du` reports 1.7 GB
+actually on disk).
+
+### Three collections, and they are NOT the same thing
+
+| collection | what it actually is | files |
+|---|---|---|
+| Model 10th PYQ | SCERT Kerala **Summative Assessment III 2025-26 MODEL papers**, Std X | 42 |
+| SSLC Exam 2026 | Kerala **SSLC annual board exam**, March 2026, Class 10 | 28 |
+| Plus Two Exam 2026 | **Second Year Higher Secondary Exam**, March 2026, Class 12 | 55 |
+
+Model 10th are practice papers (`© State Assessment Cell, SCERT Kerala`), not
+past board papers. They need a different `exam_type` from the SSLC annuals or
+`chapter_pattern_stats` will blend practice with real exams.
+
+### Machine-measured across all 125
+
+```
+errors: 0
+SCANNED, no text layer (needs forceVision):  30
+MALAYALAM script >=20% of page 1:            26
+separate ANSWER KEY files:                   45
+```
+
+Almost every SSLC/Plus Two **question paper is scanned** while its **answer key
+is clean text**. The papers you most want cost the most to ingest.
+
+### THE FOLDER IS AUTHORITATIVE, NOT THE FILENAME
+
+`Model 10th PYQ/Chemistry(EM)/General_Set_A_Eng.pdf` opens as
+`SUMMATIVE ASSESSMENT III … CHEMISTRY Std : X`. The filename says "General";
+the folder says Chemistry; the folder is right. All 27 files that looked
+ambiguous by name resolved once the folder was read alongside them. Any
+metadata detector must weight folder path above filename.
+
+### ⚠ CORRECTION TO THE DAY 0.5 MEDIUM DESIGN
+
+`MALAYALAM Kerala Padavali/MALAYALAM AT SET - A.pdf` is 100% Malayalam script —
+and it is the Malayalam **language subject**, not a Malayalam-medium science
+paper. **Script detection alone cannot tell those apart**, and would have
+mis-tagged 26 files.
+
+The detector must combine script WITH subject:
+
+```
+Malayalam script + subject in {Malayalam, Hindi, Arabic, Urdu}  -> language SUBJECT, medium not implied
+Malayalam script + subject in {Maths, Physics, Chemistry, ...}  -> Malayalam MEDIUM
+```
+
+(AT = Kerala Padavali, BT = Adisthana Padavali — the two Malayalam papers.)
+
+### Blockers, per file
+
+| blocker | files |
+|---|---|
+| Separate answer key — must pair as `preamble`, never ingest as questions | 45 |
+| Malayalam medium — hold until the medium column exists | ~20 |
+| Scanned — needs `forceVision`, real token cost | 30 |
+| Exam type with no `syllabus_nodes` (SSLC, Plus Two) | all 125 |
+| Non-STEM (Urdu, Arabic, Journalism, Geology, Sociology…) — no syllabus, likely out of scope | ~30 |
+| Already loaded (3 Maths(EM) files, as `drive:*`) | 3 |
+
+**Nearest-ready slice:** Model 10th PYQ English-medium STEM only — Physics(EM),
+Chemistry(EM), Biology(EM), Mathematics(EM) minus the 3 already in — **9 files**,
+clean text, no vision cost, no medium blocker. Still needs the Kerala syllabus.
+
+---
+
+## OPEN — seeding a Kerala syllabus needs a source of truth we do not have
+
+`seed-syllabus-from-corpus.mjs` reads chapter names from `knowledge_base`, and
+there are **zero** Kerala chunks there. Run against Kerala it finds nothing and
+inserts nothing. It is not a quick win.
+
+**Why it matters** — the 472 existing `Kerala State Class 10` orphans show what
+happens without it. One chapter, four names:
+
+```
+Arithmetic Sequences    59   <- the real SCERT name
+Arithmetic Progressions 37   <- CBSE vocabulary applied to a Kerala paper
+Sequences and Series    13
+Sequences                1
+```
+
+Another, five ways: `Circles` 67 · `Geometry` 58 · `Geometry - Circles` 26 ·
+`Geometry - Angles in Circles` 5 · `Circle Geometry` 2. Thirteen of 32 names
+carry an invented `Geometry - ` prefix, and the tail (`Geometry - Inradius`,
+`Mensuration - Cones`) are sub-topics, not chapters.
+
+Blueprint V2 keys `chapterCounts` on the exact string, so one chapter splits
+across five buckets and the allocation is meaningless.
+
+**Two viable routes, neither quick:**
+
+1. Obtain SCERT Kerala Class 10 textbooks, load as corpus, seed with the
+   existing pattern. No new design — but `ewe_data` has papers, not books.
+2. Enter the official chapter list by hand (~10-11 per subject). Legitimate
+   curation, ~15 minutes of content work.
+
+**DO NOT derive it from the orphan names above.** That canonicalises
+`Geometry - Inradius` and is the same inversion argued against for
+`pyq_questions` generally — `matchSyllabusChapter` exists to correct guesses,
+not to be seeded from them.
+
+Prefer fixing at write time. Re-snapping afterwards means a backfill over rows
+already fragmented five ways.
+
+---
+
+## OPEN — answer-key pairing: the widest blocker in the Kerala corpus
+
+45 of 125 files are standalone answer keys. Loaded as-is you get 53 papers with
+no answers PLUS 45 files of keys ingested as though they were questions.
+
+`runPYQExtraction` already accepts a `preamble` for exactly this — the NEET
+2025 load used it for a paper whose key sat on one page. What is missing is
+**pairing**: nothing associates a key file with its paper.
+
+### Three key layouts observed, all in this one corpus
+
+1. **Separate file** — `…Chemistry Question Paper (EM).pdf` +
+   `…Chemistry Answer Key (EM).pdf`. Most common.
+2. **Embedded** — `English_Set_A_General Schol Qn _ Ans.pdf`, questions and
+   answers in one document.
+3. **Multiple competing keys** — SSLC Maths has FOUR, by different authors
+   (Prathap Sir, Seema Sugathan, Raveendranath Sir, Sarath Sir). One must be
+   chosen; they will not agree everywhere.
+
+### Proposed design
+
+**Pair on (folder, subject, medium, set), not on filename similarity.** The
+folder already scopes subject and medium; within it, classify each file:
+
+```
+key      /answer[ _]?key|^KEY |detailed (answer|solution)/i
+paper    /question paper|ModelQn|Qn/i
+both     filename carries BOTH markers (layout 2) -> no pairing needed
+```
+
+Then match `Set-A` to `Set-A`, `(EM)` to `(EM)`. Where several keys match one
+paper (layout 3), **do not guess** — surface the choice to the admin, defaulting
+to the one whose extracted answer count matches the paper's question count.
+
+**Verification is the interesting part.** A key paired to the wrong paper is
+worse than no key: it silently mis-marks every question, and
+`toEngineFormat`'s `parseAnswerLetter` will happily accept a full set of wrong
+letters. So the pairing must ASSERT before saving:
+
+- answer count == question count (the strongest single signal)
+- section/marks structure agrees where both are present
+- a mismatch blocks the pair and reports, rather than saving a plausible-looking
+  paper with a wrong key
+
+That check is also what makes layout 3 tractable: the key with the matching
+answer count is almost certainly the right one.
+
+**Effort:** ~1 day including the assertion harness. Blocks all 125 Kerala files
+regardless of medium, so it comes before the medium work for THIS corpus even
+though medium is cheaper.
+
+---
+
 ## ⚠ OPEN — three MORE anon-writable content tables (extends the pyq lockdown)
 
 Found 2026-08-12 while checking whether the bulk-load scripts still work. The
