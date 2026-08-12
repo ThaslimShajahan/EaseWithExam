@@ -58,6 +58,17 @@ const arg = (name, dflt) => {
 const DRY_RUN     = process.argv.includes('--dry-run');
 const RESET       = process.argv.includes('--reset');
 const LIMIT       = Number(arg('limit', Infinity));
+/* Run the corpus in class-sized batches rather than one long unattended pass.
+ * A 229-file run is hours of paid model calls, and a fault 180 files in is
+ * discovered far too late -- batching gives a natural sample-check point and
+ * bounds what a bad batch can cost. The checkpoint makes batches resumable and
+ * non-overlapping. */
+const ONLY_CLASS  = arg('class', null);
+/* Spot-load specific files by path substring. Exists so a taxonomy change can be
+ * proven on files CHOSEN to exercise it before a full batch is paid for: two
+ * conceptual chapters landing in 'prose' cannot distinguish "these chapters are
+ * prose" from "the new content types never fire". */
+const ONLY_MATCH  = arg('match', null);
 
 // Default 1, not 4. OpenAI charges `max_tokens` as RESERVED against the TPM
 // budget, not just what a call actually consumes — the structuring call
@@ -344,7 +355,11 @@ async function processFile(page, job, corpusOrigin) {
 
 const { jobs, skipped } = buildQueue();
 const done  = loadDone();
-const queue = jobs.filter((j) => !done.has(j.rel)).slice(0, LIMIT);
+const queue = jobs
+  .filter((j) => !done.has(j.rel))
+  .filter((j) => !ONLY_CLASS || j.classLevel === String(ONLY_CLASS))
+  .filter((j) => !ONLY_MATCH || j.rel.toLowerCase().includes(ONLY_MATCH.toLowerCase()))
+  .slice(0, LIMIT);
 
 console.log(`\ncorpus       : ${CORPUS}`);
 console.log(`mapped files : ${jobs.length}   (skipped: ${skipped.hindi} Hindi (deferred), ${skipped.unmapped} unmapped, ${skipped.frontMatter} front-matter, ${skipped.unknownClass} unknown-class)`);
@@ -353,7 +368,7 @@ if (skipped.unmappedFiles.length) {
   for (const f of skipped.unmappedFiles) console.log(`   ${f}`);
 }
 console.log(`already done : ${done.size}`);
-console.log(`to process   : ${queue.length}   concurrency=${CONCURRENCY}   figures=OFF`);
+console.log(`to process   : ${queue.length}${ONLY_CLASS ? `   (filtered to Class ${ONLY_CLASS})` : ''}   concurrency=${CONCURRENCY}   figures=OFF`);
 
 /* Grouped by class so the queue can be reviewed and run in class-sized batches,
  * and by book so a multi-book subject is visibly two lines rather than one
