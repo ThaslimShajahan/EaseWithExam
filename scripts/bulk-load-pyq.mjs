@@ -36,7 +36,10 @@ import { fileURLToPath } from 'node:url';
 import { getAuth } from './firebaseAdmin.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const PYQ  = resolve(ROOT, 'easy with exam/PYQ');
+/* Corpus root. Overridable because the papers live outside the repo (gitignored,
+ * ~1.6GB) and have already moved once. `file` in a job is resolved relative to
+ * this and MAY contain subdirectories. */
+const PYQ  = process.env.PYQ_DIR ? resolve(process.env.PYQ_DIR) : resolve(ROOT, 'easy with exam/PYQ');
 const BASE = process.env.BASE_URL || 'http://localhost:5173';
 
 /**
@@ -50,6 +53,20 @@ const BASE = process.env.BASE_URL || 'http://localhost:5173';
  *   ADMIN_UID=<uid> BASE_URL=http://localhost:5175 node scripts/bulk-load-pyq.mjs
  */
 const ADMIN_UID = process.env.ADMIN_UID;
+
+/* Exam type for jobs that do not name their own. NEET is the default purely
+ * because the original manifest was all NEET; a job's `examType` always wins. */
+const DEFAULT_EXAM_TYPE = 'NEET';
+
+/* Synthetic, neutral source key — never the filename (several PDFs are
+ * coaching-institute releases). Slugging the exam type keeps NEET's key
+ * byte-identical to what the 14 loaded jobs already wrote:
+ *   'NEET' -> pyq:neet-2021-physics        (unchanged)
+ *   'Kerala State Class 10' -> pyq:kerala-state-class-10-2026-physics
+ */
+const sourceKey = (examType, year, subject) =>
+  `pyq:${examType.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`
+  + `-${year ?? 'na'}-${subject.toLowerCase()}`;
 const CHECKPOINT = resolve(ROOT, '.pyq-load-checkpoint.json');
 
 const arg = (n, d) => { const h = process.argv.find((a) => a.startsWith(`--${n}=`)); return h ? h.split('=').slice(1).join('=') : d; };
@@ -117,6 +134,29 @@ const JOBS = [
   { id: '2026-physics',   file: 'original (2).pdf',                                     subject: 'Physics',   year: 2026, forceVision: true }, // 119 ch/pg
   { id: '2026-chemistry', file: 'original (3).pdf',                                     subject: 'Chemistry', year: 2026, forceVision: true }, //  77 ch/pg
   { id: '2026-biology',   file: 'original (4).pdf',                                     subject: 'Biology',   year: 2026, forceVision: true }, //  27 ch/pg
+
+  /* ── Kerala SCERT Standard X model papers (Summative Assessment III 2025-26) ──
+   * PYQ_DIR must point at ".../ewe_data/Question Paper" for these; `file` is a
+   * path relative to it. All nine have clean text layers (verified by pdfjs), so
+   * no forceVision and no vision cost.
+   *
+   * Mathematics(EM) is DELIBERATELY ABSENT: its three Set-A/B/C files are already
+   * in the database as drive:00/01/02_Std_X_ModelQn_Maths_*, loaded through the
+   * admin UI. Adding them here would create a third duplicate batch.
+   *
+   * exam_type matches the existing rows and the seeded syllabus_nodes exactly.
+   * Kerala is in PARTIAL_SYLLABUS_EXAM_TYPES, so these chapters are snapped
+   * post-hoc but the closed list does NOT constrain the model — the SCERT Part 2
+   * textbooks are missing. */
+  { id: 'kl10-2026-physics-a',   file: 'Model 10th PYQ/Physics(EM)/1_X_Physics_Eng_Set_A.pdf',            subject: 'Physics',     year: 2026, examType: 'Kerala State Class 10' },
+  { id: 'kl10-2026-physics-b',   file: 'Model 10th PYQ/Physics(EM)/3_X_Physics_Eng_Set_B.pdf',            subject: 'Physics',     year: 2026, examType: 'Kerala State Class 10' },
+  { id: 'kl10-2026-physics-c',   file: 'Model 10th PYQ/Physics(EM)/5_X_Physics_Eng_Set_C.pdf',            subject: 'Physics',     year: 2026, examType: 'Kerala State Class 10' },
+  { id: 'kl10-2026-chemistry-a', file: 'Model 10th PYQ/Chemistry(EM)/General_Set_A_Eng.pdf',              subject: 'Chemistry',   year: 2026, examType: 'Kerala State Class 10' },
+  { id: 'kl10-2026-chemistry-b', file: 'Model 10th PYQ/Chemistry(EM)/General_Set_B_Eng.pdf',              subject: 'Chemistry',   year: 2026, examType: 'Kerala State Class 10' },
+  { id: 'kl10-2026-chemistry-c', file: 'Model 10th PYQ/Chemistry(EM)/General_Set_C_Eng.pdf',              subject: 'Chemistry',   year: 2026, examType: 'Kerala State Class 10' },
+  { id: 'kl10-2026-biology-a',   file: 'Model 10th PYQ/Biology(EM)/02 Biology Set A Eng New.pdf',         subject: 'Biology',     year: 2026, examType: 'Kerala State Class 10' },
+  { id: 'kl10-2026-biology-b',   file: 'Model 10th PYQ/Biology(EM)/04 Biology _X (Gen) Set B (English.pdf', subject: 'Biology',   year: 2026, examType: 'Kerala State Class 10' },
+  { id: 'kl10-2026-biology-c',   file: 'Model 10th PYQ/Biology(EM)/06 Biology_X (Gen) Set C Eng.pdf',     subject: 'Biology',     year: 2026, examType: 'Kerala State Class 10' },
 ];
 
 /* ── Checkpoint ───────────────────────────────────────────────────────────── */
@@ -142,7 +182,7 @@ function startPyqServer() {
 
 /* ── The per-file pipeline, run inside the browser ────────────────────────── */
 async function processFile(page, job, origin, adminUid) {
-  return page.evaluate(async ({ url, subject, year, forceVision, pageRange, keyPage, source, adminUid }) => {
+  return page.evaluate(async ({ url, subject, year, examType, forceVision, pageRange, keyPage, source, adminUid }) => {
     const [{ extractPagesWithVision }, ce, { getChapters }, { savePYQRows }] = await Promise.all([
       import('/src/lib/pdfVision.js'),
       import('/src/lib/contentExtraction.js'),
@@ -178,7 +218,7 @@ async function processFile(page, job, origin, adminUid) {
 
     // extractFigures:false — a PYQ load wants question TEXT; figure cropping is
     // off by default anyway and would add a vision call per figure-bearing page.
-    const ex = await extractPagesWithVision(buf, { subject: isMixed ? undefined : subject, examType: 'NEET' },
+    const ex = await extractPagesWithVision(buf, { subject: isMixed ? undefined : subject, examType },
       { extractFigures: false, forceVision: !!forceVision });
 
     /* pageRange: some papers print the full solutions AFTER the questions. The
@@ -195,7 +235,7 @@ async function processFile(page, job, origin, adminUid) {
     // Closed chapter list, per subject. For a Mixed paper the model must be
     // able to pick from all three subjects' chapters at once.
     const subjects = isMixed ? ['Physics', 'Chemistry', 'Biology'] : [subject];
-    const chapterSets = await Promise.all(subjects.map((s) => getChapters('NEET', s)));
+    const chapterSets = await Promise.all(subjects.map((s) => getChapters(examType, s)));
     const syllabusChapters = [...new Set(chapterSets.flat().map((c) => c.name))];
 
     // A whole-paper answer key on its own page must reach every batch, not just
@@ -203,7 +243,7 @@ async function processFile(page, job, origin, adminUid) {
     const preamble = keyPage ? stripBranding(ex.pages[keyPage - 1] ?? '').trim() : '';
 
     const { questions, paperTitle, totalMarks } = await ce.runPYQExtraction({
-      rawText, examType: 'NEET', subject, year, syllabusChapters, preamble, onProgress: () => {},
+      rawText, examType, subject, year, syllabusChapters, preamble, onProgress: () => {},
     });
     if (!questions?.length) return { skipped: 'no questions extracted', pages: ex.pageCount, visionCalls: ex.visionPageCount };
 
@@ -216,7 +256,7 @@ async function processFile(page, job, origin, adminUid) {
     // callerUid is explicit: savePYQRows falls back to getCallerUid(), which
     // reads an admin sessionStorage key this page does not have.
     const saved = await savePYQRows({
-      questions: clean, examType: 'NEET', subject, year, source, isMixed, syllabusChapters,
+      questions: clean, examType, subject, year, source, isMixed, syllabusChapters,
       callerUid: adminUid,
     });
 
@@ -237,7 +277,8 @@ async function processFile(page, job, origin, adminUid) {
       bySubject: clean.reduce((a, q) => { const k = isMixed ? (q.subject || 'Mixed') : subject; a[k] = (a[k] ?? 0) + 1; return a; }, {}),
       paperTitle, totalMarks,
     };
-  }, { url: `${origin}/${encodeURIComponent(job.file)}`, subject: job.subject, year: job.year, forceVision: job.forceVision, pageRange: job.pageRange ?? null, keyPage: job.keyPage ?? null, source: `pyq:neet-${job.year}-${job.subject.toLowerCase()}`, adminUid });
+  }, { url: `${origin}/${encodeURIComponent(job.file)}`, subject: job.subject, year: job.year, forceVision: job.forceVision, pageRange: job.pageRange ?? null, keyPage: job.keyPage ?? null, examType: job.examType ?? DEFAULT_EXAM_TYPE,
+       source: sourceKey(job.examType ?? DEFAULT_EXAM_TYPE, job.year, job.subject), adminUid });
 }
 
 /* ── Main ─────────────────────────────────────────────────────────────────── */
