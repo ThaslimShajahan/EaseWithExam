@@ -851,10 +851,22 @@ Owner approved all three recommendations:
    `comprehension_exercise` dropped as near-synonyms of `definition`,
    `solved_example` and `exercise`. Literature narrative is `literary_prose`,
    never `prose`, so the prose-share diagnostic stays readable.
-3. **Hindi A = one book (Kshitij).** `KRITHIKA 2/` and `KSHITIJ 2/` hold the same
-   13 filenames at the same 13 byte sizes; `jhkr` (Kritika's NCERT code) appears
-   nowhere in the 520. **md5-confirm this in Stage B**, then drop 13 duplicate
-   files from the 372.
+3. **Hindi A = one book (Kshitij).** ✅ **md5-confirmed in Stage B: 13/13 pairs
+   identical.** `KRITHIKA 2/` is a byte-identical copy of `KSHITIJ 2/`, and
+   `jhkr` (Kritika's NCERT code) appears nowhere in the 520. Kritika is absent.
+
+4. **Literature granularity applies inside a numbered chapter too.** First Flight
+   ch 3 "Two Stories about Flying" contains two distinct stories — *His First
+   Flight* and *Black Aeroplane*. Owner decision 2026-08-12: **split into two
+   chapter rows**, same treatment as Hornbill's embedded poems (one PDF, two
+   lessons), with "Two Stories about Flying" carried as the `unit` for display
+   grouping. Consistent with per-text granularity rather than an exception to it.
+
+5. **When a subject is known to be multi-book but only ONE book is present, still
+   set `book`.** Class 11 Geography ships only *Fundamentals of Physical
+   Geography* (*India: Physical Environment* is absent). Leaving `book` NULL
+   would cost a chapter_key rewrite when the second book arrives — and
+   chapter_key is what flashcards and the syllabus tracker point at.
 
 Shipped: `20260812040000_syllabus_nodes_book.sql`,
 `20260812050000_content_type_non_stem.sql`, `SUBJECT_FAMILIES` /
@@ -866,6 +878,77 @@ Shipped: `20260812040000_syllabus_nodes_book.sql`,
 client — `syllabus.js` selects `book` and PostgREST rejects a select for a
 missing column. The reverse order is safe (the old client never asks for it), so
 unlike `20260810070000` these do **not** have to ship in one window.
+
+### 🔄 Stage B — 22 of 26 books verified (2026-08-12)
+
+Every line below was read from the book's OWN contents page via
+`scripts/read-book-contents.mjs`, then **reconciled against the file count**.
+No chapter name is web-sourced or inferred from a filename.
+
+| book | `book` label | chapters | files |
+|---|---|---|---|
+| Hornbill | `Hornbill` | Reading 6 prose + 5 poems · Writing 6 | `kehb101-106,111-116` |
+| Woven Words | `Woven Words` | Stories 8 · Poetry 12 · Essays 7 | `keww101-108,111-122,131-137` |
+| Introducing Sociology | `Introducing Sociology` | 5 | `kesy101-105` |
+| Understanding Society | `Understanding Society` | 5 | `kesy201-205` |
+| Psychology | *none* | 8 | `kepy101-108` |
+| Fundamentals of Physical Geography | `Fundamentals of Physical Geography` | 14 in 6 units | `kegy201-214` |
+| Indian Economic Development | `Indian Economic Development` | 8 in 4 units | `keec101-108` |
+| Statistics for Economics | `Statistics for Economics` | 8 | `kest101-108` |
+| Political Theory | `Political Theory` | 8 | `keps101-108` |
+| Indian Constitution at Work | `Constitution at Work` | 10 | `keps201-210` |
+| Themes in World History | *none* | 7 themes in 4 sections | `kehs101-107` |
+| Business Studies | *none* | 11 in 2 parts | `kebs101-111` |
+| Computer Science | *none* | 11 | `kecs101-111` |
+| Informatics Practices | *none* | 8 | `keip101-108` |
+| Accountancy | *none* | **9, continuous across Part I/II** | `ACC 1-7` + `keac201-202` |
+| First Flight | `First Flight` | 9 (ch 3 splits to 2) + interleaved poems | 9 named PDFs |
+| Footprints Without Feet | `Footprints Without Feet` | 9 | `jefp101-109` |
+| Words and Expressions II | `Words and Expressions II` | 9 units, 1:1 with First Flight | `jewe201-209` |
+| Contemporary India II | `Contemporary India II` | 7 | `jess101-107` |
+| Understanding Economic Development | `Understanding Economic Development` | 5 | `jess201-205` |
+| India and the Contemporary World II | `India and the Contemporary World II` | 5 | `jess301-305` |
+| Democratic Politics II | `Democratic Politics II` | 5 in 4 units | `jess401-405` |
+
+**Still to read: 4 books** — Class 9 English, Class 9 Social, Class 8 English
+(Poorvi), Class 8 Social. None has NCERT prelims, but all ship an INDEX PDF
+(`CLASS 8 ENGLISH POORVI INDEX.pdf`, `INDEX.pdf`, …). Use those; the filenames
+in those folders are hand-typed and are not a source of truth.
+
+#### ⚠ Class 10 History: three chapters exist in the syllabus but NOT in the book
+
+`India and the Contemporary World II` prints five chapters and then says three
+more are **QR-code only**, carried over from the previous edition:
+
+> The Nationalist Movement in Indo-China · Work, Life and Leisure ·
+> Novels, Society and History
+
+They are not in the book and not in the corpus. **Do not seed them.** This is the
+same edition-mismatch that produced the 10 stale Class 8 Maths rows — and every
+third-party chapter list on the web still shows all eight.
+
+#### Open design question — Words and Expressions II duplicates First Flight
+
+The workbook's 9 units are named **identically** to First Flight's 9 chapters
+(Unit 1 *A Letter to God*, … Unit 9 *The Proposal*). It is exercises keyed to the
+same texts, not a separate set of texts. Two options, and this needs deciding
+before Stage C seeds anything:
+
+1. **Its own `book` rows.** Simple and consistent, but the student's English
+   chapter list then shows every title twice.
+2. **No rows; its content attaches to First Flight's chapters**, distinguished by
+   `content_type: exercise`. Cleaner for the student, but the loader must map a
+   `jewe2*` file onto a `First Flight` chapter — book-aware matching that does
+   not exist yet.
+
+Leaning 2, because 1 puts a visible duplicate in front of the student.
+
+#### Numbering styles vary, so keys must come from titles
+
+Class 10 History uses Roman numerals (I–V), Class 11 History uses "Theme N",
+Words and Expressions uses "Unit N", the rest use "Chapter N". `chapterKeyFor()`
+already derives from the title and ignores the numeral, which is what makes this
+a non-issue — recorded so nobody reintroduces numeral-based keys.
 
 ### ⏸ DEFERRED — all Hindi books (~90 files): the text layer is not Unicode
 
