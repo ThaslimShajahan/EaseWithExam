@@ -319,7 +319,11 @@ export default function PricingPage() {
         {/* FAQ */}
         <div className="mt-12 text-center text-slate-500 text-sm">
           <p>Questions? Email us at <a href="mailto:info@acenzos.com" className="text-primary-600 hover:underline">info@acenzos.com</a></p>
-          <p className="mt-1">Payments secured by Razorpay · Prices exclude GST · Refund within 7 days if unhappy.</p>
+          {/* "Prices exclude GST" removed: Razorpay is charged exactly the
+              listed amount with nothing added, so the line described a charge
+              that never happened. See ACTION_ITEMS — the tax treatment is
+              unresolved, and no GST claim belongs here until it is settled. */}
+          <p className="mt-1">Payments secured by Razorpay · Refund within 7 days if unhappy.</p>
         </div>
       </div>
     </div>

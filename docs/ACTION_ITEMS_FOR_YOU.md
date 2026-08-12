@@ -21,7 +21,96 @@ integrates with it; it does not compete with it.
 - **Blocked on: API documentation and connection details for the billing
   software.** Owner is obtaining these.
 
-### The three questions cannot be answered from this repo
+### ✅ INVESTIGATED 2026-08-13 — `C:\Users\THASLIM\Billing software\acenzos-billing`
+
+Read-only. Nothing in that codebase was modified.
+
+**It is a client-only Vite + React 19 app writing straight to Firestore.**
+There is **no API, no webhooks, no Cloud Functions, no server of any kind** — no
+`express`/`fastify`/`next`/`firebase-functions` in its dependencies and no
+`functions/`, `api/` or `server/` directory anywhere. So *"call their REST
+endpoint"* is not an option that exists.
+
+| question | answer |
+|---|---|
+| **1. API to call?** | **No.** Client-only. Data path is the Firebase JS SDK → Firestore. Auth is Firebase Auth (email/password, `AuthContext`). No create-invoice or create-customer endpoint exists to call. |
+| **2. Schema?** | Firestore, `users/{ownerUid}/invoices/{id}` and `users/{ownerUid}/customers/{id}` — **per-owner subcollections**, keyed on the logged-in business owner, not per customer. Fields below. |
+| **3. Does it do GST itself?** | **Yes, properly.** It computes CGST+SGST vs IGST from `clientState` vs `COMPANY_STATE`, handles export/LUT zero-rating, keeps per-line `hsnSac` and `taxRate`, and builds an HSN summary. **EaseWithExam must NOT compute tax** — it supplies facts, the billing app derives tax. |
+
+**Its `firestore.rules` are the integration constraint:**
+
+```
+match /users/{userId}/{document=**} {
+  allow read, write: if request.auth != null && request.auth.uid == userId;
+}
+```
+
+Only the owning authenticated user can touch their own subtree. There is no
+service path and no shared collection. **Writing from EaseWithExam therefore
+means the Firebase Admin SDK with a service account** (which bypasses rules),
+plus that owner's UID — not an API key.
+
+`firebase-admin` is already a dependency here, so the mechanism exists.
+
+#### Invoice document fields (from `InvoiceForm.jsx`)
+
+`invoiceNumber` · `invoiceDate` · `dueDate` · `status` ·
+`clientName` `clientEmail` `clientPhone` `clientAddress` `clientGSTIN`
+`clientState` `placeOfSupply` · `poNumber` `irnNumber` ·
+`currency` `exchangeRate` · `isExport` `lutNumber` `iecCode` ·
+`items[]` = `{ description, qty, unit, rate, taxRate, hsnSac }` · `discount` ·
+and the derived `subtotal` `totalTax` `discountAmt` `total` `totalINR`
+`isInterstate` `cgst` `sgst` `igst`.
+
+Customer doc: `name` `email` `phone` `address` `gstin` `contactPerson`.
+
+#### ⚠ Four things found that change the integration design
+
+1. **Invoice numbering is client-side and race-prone.** `nextInvoiceNo()` reads
+   the *already-loaded* invoice list, strips the `ACZ/INV/{FY}/` prefix, and
+   takes `max + 1` (seeded at 1001). Two writers — say the UI and a sync from
+   here — can mint the **same number**, and Rule 46 wants consecutive unique
+   numbers. **Any integration must not allocate numbers independently.** Safest
+   is to write invoices without a number and let a human issue them in the UI,
+   or to move numbering server-side first.
+2. **The company GSTIN is a placeholder.** `src/config/company.js` has
+   `gstin: 'YOUR GSTIN'`, `pan: 'YOUR PAN'` and placeholder bank details. **That
+   system cannot issue a compliant invoice today either**, and it answers the
+   earlier open question: no real GSTIN is configured anywhere. This must be
+   filled in regardless of any integration work.
+3. **Customers have no `state` field, but invoices read `c.state`.**
+   `Customers.jsx` creates `{name,email,phone,address,gstin,contactPerson}` —
+   no `state`. `InvoiceForm` does `clientState: c.state || ''` when picking a
+   customer, so it always comes back empty and the CGST/SGST-vs-IGST decision
+   silently falls back to intrastate. A latent bug in their app, and it lands
+   exactly on the field EaseWithExam would need to supply. Flagged, not fixed.
+4. **Its Supabase client is dead code.** `src/config/supabase.js` creates a
+   client (hardcoded URL + anon key, a *different* project from EaseWithExam's)
+   that is imported nowhere. Not a shared database — do not assume one.
+
+#### Proposed integration — async sync, not inline
+
+Matches the earlier recommendation, and the findings above strengthen it:
+
+- **A scheduled/queued job** reads redeemed `payment_orders` rows that have not
+  yet been exported, and writes a Firestore invoice doc via `firebase-admin`
+  under the owner's UID.
+- **Never inline in `razorpay-verify`.** A Firestore write from a third-party
+  project on the critical path of activation means a student who paid loses
+  access when that project is unreachable. Activation and invoicing must not
+  share a failure domain.
+- **EaseWithExam supplies facts only**: customer name/email/address/state, the
+  line item (plan name, `qty 1`, rate = amount, `taxRate`, `hsnSac`), and the
+  payment reference. **It computes no tax and allocates no invoice number.**
+- **Idempotency**: store the created Firestore doc id back on `payment_orders`
+  (needs a column), so a retry cannot double-issue an invoice.
+
+**Still blocked on**, and only the owner can supply: the billing app's Firebase
+project **service-account credentials**, the **owner UID** whose subtree to
+write under, the **real GSTIN/PAN**, and the **SAC code + tax rate** to use for
+an online-education subscription.
+
+### The three questions as originally recorded
 
 They are questions about the OTHER system, and nothing in this codebase or its
 database can answer them. Recorded here as a precise request so that the moment
@@ -93,27 +182,27 @@ billing system can issue a compliant invoice without the first one.
 - **Still true and still needed:** the missing billing fields above, and the
   pricing-copy problem below.
 
-### ⚠ STILL OPEN, and NOT fixed by the redirection
+### ✅ FIXED 2026-08-13 — the "+ GST" pricing copy is gone
 
-The pricing copy already makes a GST representation that the charge does not
-match:
+The copy claimed a charge that never happened: Razorpay is sent exactly
+`price_paise` — ₹399, nothing added — while the site said **"₹399 + GST"** and
+"Prices exclude GST". Removed on the owner's instruction, ahead of and separate
+from the billing integration:
 
-```
-src/lib/subscription.js:43,73,105   priceSuffix: '+ GST'
-src/pages/LandingPage.jsx:392       "Prices in INR, exclusive of GST."
-src/pages/PricingPage.jsx:322       "Prices exclude GST"
-```
+- `src/lib/subscription.js` — `priceSuffix: '+ GST'` deleted from all three paid
+  plans. The three render sites are guarded by `plan.priceSuffix &&`, so they
+  now render nothing; no component changes were needed.
+- `LandingPage.jsx` — "Prices in INR, exclusive of GST." → "Prices in INR."
+- `PricingPage.jsx` — "Prices exclude GST" clause dropped.
 
-Razorpay is charged exactly `price_paise` — ₹399, with nothing added. So a
-student is told **"₹399 + GST"** and charged **₹399**. If not GST-registered,
-representing that GST is charged is wrong; if registered at 18%, the charge
-should be ₹471, meaning ₹399 is actually GST-*inclusive* and real revenue is
-₹338.
+**Prices are now shown flat, exactly as charged**, which is true whichever way
+the tax question resolves. No GST wording remains anywhere student-facing.
 
-This is **consumer-facing right now** and payments open on the 14th. It is three
-strings, but which way to correct them depends on the registration/exemption
-answer — which is now a question for whoever operates the billing software.
-**This does not go away by integrating with an external system.**
+**This does not settle the tax treatment.** If the company is GST-registered and
+the education exemption does not apply, ₹399 is GST-*inclusive* and real revenue
+is about ₹338 — a pricing decision that is still open, and now sits with whoever
+configures the real GSTIN in the billing app (currently the placeholder
+`YOUR GSTIN`).
 
 ---
 

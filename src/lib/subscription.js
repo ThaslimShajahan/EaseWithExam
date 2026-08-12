@@ -40,7 +40,6 @@ export const PLANS = {
     id: 'premium_monthly',
     name: 'Premium',
     priceLabel: '₹399/month',
-    priceSuffix: '+ GST',
     description: 'Full AI power, no limits',
     razorpayAmount: 39900,
     expiryDays: 30,
@@ -70,7 +69,6 @@ export const PLANS = {
     id: 'premium_yearly',
     name: 'Premium Yearly',
     priceLabel: '₹3,999/year',
-    priceSuffix: '+ GST',
     description: 'Best per-month value',
     razorpayAmount: 399900,
     expiryDays: 365,
@@ -102,7 +100,6 @@ export const PLANS = {
     id: 'neet_complete',
     name: '3-Year Plan',
     priceLabel: '₹4,999 one-time',
-    priceSuffix: '+ GST',
     description: 'Best value — three full years, one payment',
     razorpayAmount: 499900,
     // Was 365 — matched what the checkout/grant paths actually enforced even

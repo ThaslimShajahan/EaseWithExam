@@ -389,7 +389,11 @@ function Pricing({ onSelect }) {
           );
         })}
       </div>
-      <p className="text-center text-xs text-slate-400 mt-6">Prices in INR, exclusive of GST. Cancel any time.</p>
+      {/* No GST wording: Razorpay is charged exactly the listed amount, with
+          nothing added, so "exclusive of GST" told students a price that was
+          never charged. The tax treatment is unresolved — see ACTION_ITEMS —
+          and until it is, the honest copy is the number actually taken. */}
+      <p className="text-center text-xs text-slate-400 mt-6">Prices in INR. Cancel any time.</p>
     </section>
   );
 }

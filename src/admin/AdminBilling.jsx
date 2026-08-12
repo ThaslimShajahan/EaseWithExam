@@ -7,11 +7,11 @@
  * per order permanently, which makes it the only honest source for a history.
  *
  * THIS IS A PAYMENT LOG, NOT A TAX INVOICE. No invoice number, no GSTIN, no tax
- * breakup, no place of supply. Invoicing is pieces 2-5 of the plan in
- * docs/ACTION_ITEMS_FOR_YOU.md and is deliberately not started — whether a GST
- * tax invoice is even the right artefact depends on registration status and the
- * education-exemption question, both of which need a CA's answer first. The
- * banner below says so on screen so nobody mistakes this for one.
+ * breakup, no place of supply. Tax invoices are issued by the separate Acenzos
+ * billing product, which already does GST calculation, HSN/SAC and invoice
+ * numbering — this app will feed it rather than duplicate it. That integration
+ * is not built, so nothing on this screen reaches it automatically. The banner
+ * below says so on screen so nobody mistakes a row here for an issued invoice.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
@@ -133,8 +133,8 @@ export default function AdminBilling() {
         <CircleAlert size={15} className="text-amber-400 mt-0.5 shrink-0" />
         <p className="text-xs text-amber-200/90">
           This is a <strong>payment log</strong>, not a tax invoice — no invoice number, GSTIN, tax
-          breakup or place of supply. GST invoicing is scoped but not built, pending confirmation of
-          registration status and the education-exemption question.
+          breakup or place of supply. Tax invoices are issued by the separate Acenzos billing
+          system; integration with it is not built yet, so nothing here reaches it automatically.
         </p>
       </div>
 
