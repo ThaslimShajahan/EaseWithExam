@@ -6,6 +6,84 @@ shipped in a degraded state. The narrative of what changed and why lives in
 
 ---
 
+## BLOCKED ON A CA — GST tax invoices (pieces 2-5). Piece 1 shipped 2026-08-13.
+
+Admin → Students → **Billing** is live: every payment attempt, newest first,
+with collected total and abandoned-checkout count. `admin_list_payments`
+(`20260813010000`) + `src/admin/AdminBilling.jsx`. **It is a payment log, and the
+screen says so** — no invoice number, GSTIN, tax breakup or place of supply.
+
+### Three answers needed before pieces 2-5 are worth building
+
+**I am not a tax adviser and this needs a CA, not a second opinion from me.**
+Wrong-format invoices issued at scale are worse than none, and the answers change
+*what gets built*, not just when.
+
+1. **Are you GST-registered?** The threshold is ₹20 lakh turnover for services
+   (₹10 lakh in special-category states). **Below it you must not charge GST or
+   issue tax invoices at all** — the correct artefact is a *bill of supply*.
+   Building an invoice generator first would build the wrong thing.
+2. **Does the education exemption apply?** It covers recognised institutions
+   delivering curriculum leading to a recognised qualification. A private
+   exam-prep app very likely **does not qualify**, which puts it at **18%**. If
+   so, the current ₹399 is GST-*inclusive* and real revenue is about ₹338 — a
+   pricing decision, not only an invoicing one.
+3. **Place of supply.** For B2C online services it is the recipient's location,
+   which decides CGST+SGST vs IGST per transaction. **No student's state is
+   captured anywhere today.**
+
+### What already exists, and the trap in it
+
+- **`payment_orders` is the ledger** — `order_id` PK, one row per order, kept
+  forever. Written by `create-razorpay-order`.
+- **`subscriptions` is NOT a ledger.** It upserts `on conflict (user_id)`, so a
+  renewal **overwrites** the previous `razorpay_payment_id` and `amount_paid`.
+  Anything billing-related built on it silently loses all but the latest payment.
+- **Zero payments exist so far** — `create-razorpay-order` is undeployed and
+  `payments_enabled` is off. Nothing to backfill, and the schema can still be
+  changed freely. This is much cheaper now than after real money moves.
+
+### Razorpay does not give you this
+
+- Its **payment confirmation email is a receipt, not a GST tax invoice** — no
+  GSTIN, HSN/SAC, tax breakup or sequential number. It does not satisfy Rule 46.
+- The **"Tax Invoices" in the Razorpay dashboard are Razorpay's invoices to
+  you**, for their fees. Wrong direction.
+- The **Invoices API is invoice-then-collect**, designed to request payment. This
+  app uses Checkout, where payment comes first, so using it means creating a paid
+  invoice retroactively against the product's grain.
+
+Verdict: **build it, don't pull it** — but re-check their current docs first,
+since this assessment has a knowledge cutoff and Razorpay ships features.
+
+### Rule 46 requires (for when it goes ahead)
+
+Supplier name/address/GSTIN · **consecutive serial number, unique per financial
+year, ≤16 chars** · date · recipient name/address (+GSTIN and state code if
+registered) · HSN/SAC · description, taxable value, discount · tax rate and
+amount split CGST+SGST or IGST · place of supply + state code · reverse-charge
+flag · signature.
+
+### Plan, pieces 2-5 — roughly 3-4 days
+
+| # | piece | notes | est. |
+|---|---|---|---|
+| 2 | schema | `invoices` table; **gapless per-FY numbering via a locked counter, NOT a Postgres sequence** — sequences gap on rollback and Rule 46 wants consecutive; billing profile on users incl. **state code** | 0.5-1d |
+| 3 | generation + GST logic | **snapshot supplier details onto each invoice**, never join live: a GSTIN change must not rewrite last year's invoices. CGST/SGST vs IGST by state | 0.5-1d |
+| 4 | PDF | see below | 1-2d |
+| 5 | email + resend | `send-email` exists and uses Resend, which supports attachments — but the function does not implement them yet. Add attachments, an admin resend action, and an audit row per send | 0.5d |
+
+**PDF is NOT already solved in this codebase** — a note, because it was assumed
+to be. `PaperModePage.jsx` uses `@media print` + `window.print()`; there is no
+`jsPDF`, `pdf-lib` or `@react-pdf`. `pdfjs-dist` and `pdf-proxy` *read* PDFs.
+Three routes: HTML + browser print (zero deps, weakest UX, ~0.5d); a client-side
+library (real download, new dep, ~1-1.5d); or server-rendered via headless
+Chromium — **Playwright is already a devDependency and `og-image.mjs` renders
+HTML to an image**, so there is direct precedent, but it cannot run in a Supabase
+Edge Function and would need somewhere else to live.
+
+---
+
 ## ⏰ 14 AUGUST — re-enable payments (2026-08-11)
 
 Payments are gated behind the `payments_enabled` feature flag, seeded **OFF**.
