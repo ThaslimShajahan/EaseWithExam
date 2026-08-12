@@ -25,9 +25,56 @@ function examTypeCandidates(examType, classLevel) {
   return candidates;
 }
 
+/* ── `book` and deploy ordering ───────────────────────────────────────
+ *
+ * `book` names the textbook volume a chapter belongs to, for the subjects taught
+ * from two SEPARATE books that each number chapters from 1 (English Hornbill vs
+ * Woven Words, Hindi Kshitij vs Sparsh, Economics Development vs Statistics).
+ * NULL means the subject has one book — every STEM row.
+ *
+ * SELECTING IT REQUIRES 20260812040000 TO BE APPLIED FIRST. PostgREST rejects a
+ * select naming a column that does not exist, so this client against an
+ * un-migrated database returns an error for every chapter read.
+ *
+ * Unlike 20260810070000 (the text[] signature change) this ordering constraint
+ * runs ONE WAY only, and that asymmetry is the point: applying the migration
+ * without deploying the client is completely safe — the old client simply does
+ * not ask for the column. So apply the migration whenever, deploy the client
+ * after. There is no window in which retrieval is degraded, and no need to pair
+ * them in a single session.
+ */
+
+/**
+ * Builds a chapter_key.
+ *
+ * THIS IS THE MECHANISM THAT CARRIES UNIQUENESS FOR MULTI-BOOK SUBJECTS, not the
+ * `book` column. syllabus_nodes is UNIQUE on (exam_type, subject, chapter_key),
+ * and `book` is deliberately not in that key — it is nullable, and Postgres
+ * treats NULLs as distinct, so including it would stop the index protecting the
+ * 148 single-book STEM rows against duplicates. Folding the book into the KEY
+ * satisfies the existing constraint untouched. See 20260812040000.
+ *
+ * `book` is the SHORT volume label ('Hornbill', not 'ENGLISH HORN BILL'), and
+ * the identical string goes into the syllabus_nodes.book column — one value, two
+ * uses, so the key and the column can never disagree about which book a row is.
+ *
+ *   chapterKeyFor({ classLevel: '11', book: 'Hornbill', chapterName: 'The Portrait of a Lady' })
+ *     -> 'c11_hornbill_the_portrait_of_a_lady'
+ *   chapterKeyFor({ classLevel: '10', chapterName: 'Real Numbers' })
+ *     -> 'c10_real_numbers'          (unchanged: single-book subjects keep today's shape)
+ *
+ * `prefix` exists because Kerala rows use k10_ rather than c10_ — a key that
+ * reads as CBSE inside a Kerala row is a trap for whoever greps for it later.
+ */
+export function chapterKeyFor({ prefix = 'c', classLevel, book = null, chapterName }) {
+  const slug = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  const bookSlug = book ? slug(book) : '';
+  return [`${prefix}${classLevel ?? ''}`, bookSlug, slug(chapterName)].filter(Boolean).join('_');
+}
+
 /**
  * Returns chapters for a given exam + subject.
- * Shape: Array<{ key: string, name: string, class_level?: string }>
+ * Shape: Array<{ key: string, name: string, book?: string|null, class_level?: string }>
  *
  * Always queries syllabus_nodes first; falls back to the hardcoded JS list
  * (NEET/JEE only) if the DB has no active rows for this exam/subject yet.
@@ -37,7 +84,7 @@ export async function getChapters(examType, subject, classLevel = null) {
     try {
       let q = supabase
         .from('syllabus_nodes')
-        .select('chapter_key, chapter_name, class_level, sort_order, subtopics')
+        .select('chapter_key, chapter_name, book, class_level, sort_order, subtopics')
         .eq('exam_type', cand.examType)
         .eq('subject', subject)
         .eq('is_active', true)
@@ -50,6 +97,7 @@ export async function getChapters(examType, subject, classLevel = null) {
         return data.map((r) => ({
           key:         r.chapter_key,
           name:        r.chapter_name,
+          book:        r.book        ?? null,
           class_level: r.class_level ?? null,
           subtopics:   r.subtopics   ?? [],
         }));
@@ -71,7 +119,7 @@ export async function getAllChapters(examType, classLevel = null) {
     try {
       let q = supabase
         .from('syllabus_nodes')
-        .select('subject, chapter_key, chapter_name, class_level, sort_order, subtopics')
+        .select('subject, chapter_key, chapter_name, book, class_level, sort_order, subtopics')
         .eq('exam_type', cand.examType)
         .eq('is_active', true)
         .order('sort_order', { ascending: true });
@@ -86,6 +134,7 @@ export async function getAllChapters(examType, classLevel = null) {
           bySubject[r.subject].push({
             key:         r.chapter_key,
             name:        r.chapter_name,
+            book:        r.book        ?? null,
             class_level: r.class_level ?? null,
             subtopics:   r.subtopics   ?? [],
           });
@@ -191,7 +240,9 @@ function _fromJS(examType, subject, classLevel = null) {
   if (!JS_KNOWN_EXAMS.has(examType)) return [];
   const syllabus = getSyllabusJS(examType);
   const chapters = syllabus?.[subject] ?? [];
-  const mapped = chapters.map((c) => ({ key: c.key, name: c.name, class_level: c.class ?? null, subtopics: [] }));
+  // book: null — the JS fallback covers NEET/JEE only, which are single-book by
+  // nature. Kept in the shape so callers never have to branch on the source.
+  const mapped = chapters.map((c) => ({ key: c.key, name: c.name, book: null, class_level: c.class ?? null, subtopics: [] }));
   if (!classLevel) return mapped;
   return mapped.filter((c) => !c.class_level || c.class_level === String(classLevel));
 }

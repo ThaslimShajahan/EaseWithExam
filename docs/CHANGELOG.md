@@ -4,6 +4,53 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-12 (session 29) — non-STEM Stage A: the `book` dimension and a 21-value taxonomy
+
+Stage A of loading the 372 unloaded non-STEM PDFs. **Design and code only — neither migration is applied and nothing is loaded.** Stage B (reading ~35 contents pages) is next and is the step that must not be skipped.
+
+### `book` is a column, but uniqueness is carried by `chapter_key`
+
+Eight subjects are two *separate textbooks* rather than Part 1/2 of one book — Hindi A/B, Hornbill/Woven Words, Economics Development/Statistics, Political Science ×2, Sociology ×2, Accountancy ×2 — and each numbers its chapters from 1. This is not the multi-PART case: `chemistry part 1` + `part 2` collapse to one `Chemistry` correctly, because that book's numbering is continuous.
+
+The obvious move — add `book` to the UNIQUE key — is wrong, and this is the part worth remembering. `book` is NULL for all 148 existing STEM rows and **Postgres treats NULLs as distinct in a unique index**, so putting it in the key would stop `(exam_type, subject, chapter_key)` protecting single-book subjects against duplicate chapters. It would introduce a bug into the corpus that is currently correct, in order to fix one in the corpus that does not exist yet.
+
+So the two concerns are split: `book` (nullable column) does grouping, display and picker scoping; a **book-scoped `chapter_key`** (`c11_hornbill_*` vs `c11_wovenwords_*`) carries identity under the existing constraint, untouched. `chapterKeyFor()` in `src/lib/syllabus.js` builds it, and the same short book label goes into both the key and the column so they cannot disagree.
+
+Within-book *sections* (Hornbill prose `kehb101-106` then poetry `kehb111-116`; Woven Words stories/poems/essays) restart numbering too, and are handled by banding `sort_order` — prose 1-99, poetry 100-199, essays 200-299 — reusing the convention the NEET rows already use. No third column for a display concern.
+
+### 10 new content_type values, not 14
+
+The existing 11 describe STEM; nothing in them fits a poem, a primary-source extract or a balance-sheet format. Added: `literary_prose`, `poem`, `drama`, `author_note`, `event`, `case_study`, `source_extract`, `map_work`, `procedure`, `format_template`.
+
+Three from the original sketch were **dropped as near-synonyms** — `concept` → `definition`, `worked_problem` → `solved_example`, `comprehension_exercise` → `exercise`. Every redundant value is a coin-flip for the classifier and a split bucket for anything filtering on it.
+
+**`prose` is not reused for literature**, which matters more than it looks. `prose` currently means *"the classifier had nowhere better to put this"* — its 79.8% share on the 4,363-row corpus is what justified adding `exercise`/`activity`/`summary`. If First Flight stories land in it, that number stops distinguishing "the taxonomy has a hole" from "we loaded a lot of literature", and the signal is gone permanently. Hence `literary_prose` as a positive value.
+
+Scoping is **prompt-side**: the CHECK constraint is the flat union of all 21, and `SUBJECT_FAMILIES` decides which subset each subject is offered — same shape as `PARTIAL_SYLLABUS_EXAM_TYPES` scoping the closed-list rule per exam type. `CONTENT_TYPES` is now *derived* from the families rather than hand-maintained, so the JS set can no longer drift from them (`normaliseClassification` nulls anything missing from it, silently, with no error).
+
+`familyForSubject()` deliberately has **no `/science/` rule** — `stem` is the fallback. That removes by construction the ordering hazard that bit `subjectForFolder()`, where a generic match swept up Computer/Political/Social Science and each had to be excluded by hand ahead of it.
+
+### Two carried decisions, as they landed
+
+- **Literature granularity = individual text.** The lesson rule inverts for literature only: a unit ("Wit and Wisdom") goes in `unit` and each story inside it is its own lesson. The default rule would have returned one lesson per unit and buried three texts — the exact shape retired from the Class 8 English syllabus last session.
+- **`techniques` null for non-STEM.** In practice `[]`, which `normaliseClassification` already produces for a missing value, so no schema change.
+
+`runNotesExtraction` now **throws** if a literature file arrives without the `pages` array. Verbatim source text is sliced from the original pages via the `[[PAGE N]]` markers, never from model output (it paraphrases when asked not to), and a literature load that quietly fell back to `rawText` would produce chapters that look complete and cannot support an extract question.
+
+### Verified both halves
+
+40 new tests, **329 pass**, build clean. The STEM half is asserted as *byte-identical* strings, not "equivalent" — the 148 loaded files were classified by those exact words, and a reworded menu silently reclassifies every future load against a corpus labelled by the old one. The collision half asserts that the naive key **does** collide before asserting the scoped one does not, so the test states why the fix works rather than only that it does.
+
+### Corpus finding: Hindi A is one book, not two
+
+`10 HINDI A/KRITHIKA 2/jhks1dd/` and `10 HINDI A/KSHITIJ 2/` hold the **same 13 filenames at the same 13 byte sizes**. `jhks` is NCERT's code for *Kshitij*; *Kritika*'s code is `jhkr` and **no `jhkr` file exists in the 520**. So Kritika is absent from the corpus and that folder is a misfiled second copy of Kshitij — loading both duplicates 13 chapters. To be md5-confirmed in Stage B; plan on 13 files coming off the 372.
+
+### Deploy ordering — one-way, unlike 20260810070000
+
+`syllabus.js` now selects `book`, and PostgREST rejects a select naming a column that does not exist. **Apply `20260812040000` before deploying the client.** The reverse is safe: the migration alone breaks nothing, because the old client does not ask for the column. There is no degraded window and no need to pair them in one session — a genuinely softer constraint than the `text[]` signature change, and worth not conflating with it.
+
+---
+
 ## 2026-08-11 (session 27) — payments gated behind `payments_enabled` until 14 August
 
 Ahead of campaign traffic, with the bank account not yet active.

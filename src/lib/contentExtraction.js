@@ -399,6 +399,21 @@ const NOTES_BATCH_CHARS = 8000;
 const NOTES_MAX_TOKENS = 3000;
 
 export async function runNotesExtraction({ rawText, pages, examType, subject, onProgress }) {
+  const guide = promptGuideFor(subject);
+
+  /* Verbatim source text is REQUIRED for literature: comprehension questions are
+   * generated against the actual passage, and the model paraphrases a passage
+   * even when told not to. The [[PAGE N]] marker path below slices the ORIGINAL
+   * `pages` array rather than trusting model output — but only when the caller
+   * supplies it. A literature load that quietly fell back to rawText would
+   * produce chapters that look complete and cannot support an extract question,
+   * so this fails loudly instead. */
+  if (guide.family === 'literature' && !pages?.length) {
+    throw new Error(
+      'Literature extraction requires the `pages` array — verbatim source text is sliced from it, never taken from model output. Caller passed rawText only.',
+    );
+  }
+
   const batches = splitIntoBatches(rawText, NOTES_BATCH_CHARS);
   const mergedLessons = []; // preserves first-seen order across batches
   let unit = null;
@@ -434,22 +449,7 @@ later section of it. Only introduce a new title if a genuinely new numbered
 chapter starts here.
 ` : ''}
 
-WHAT COUNTS AS A LESSON — read this before splitting anything:
-A lesson is a WHOLE TEXTBOOK CHAPTER, the kind that appears as one line in a
-Contents page ("A Square and A Cube", "Laws of Motion"). It is NOT a section,
-sub-heading, worked-example block or topic within a chapter.
-
-  Most uploads are ONE chapter. Default to returning a SINGLE lesson.
-  Return more than one ONLY if the excerpt genuinely contains two or more
-  separate numbered chapters.
-
-  WRONG: one chapter split into "A Square and A Cube", "Understanding Perfect
-         Squares", "Cubes and Cube Roots" — the last two are sections of the
-         first, and splitting them corrupts chapter-level analytics downstream.
-  RIGHT: one lesson "A Square and A Cube", whose CHUNKS carry those section
-         names in their "heading" field.
-
-Section headings belong in chunk headings. They never create a new lesson.
+${guide.lessonRule}
 
 For each lesson, extract:
 - title: the real chapter title, from the content — not a generic label
@@ -472,27 +472,8 @@ short, so treat this as a hard requirement:
 
 CHUNK CLASSIFICATION — every chunk needs these, they drive retrieval filtering:
 - content_type: exactly one of
-    "theorem"        a named, provable statement
-    "law"            a stated physical/chemical law or principle
-    "formula"        a formula/equation presented for use
-    "definition"     a term being defined
-    "solved_example" a worked problem WITH its solution
-    "derivation"     a step-by-step derivation of a result
-    "diagram"        content whose substance is a figure and its explanation
-    "exercise"       UNSOLVED questions set for the student — a numbered
-                     question list, "Exercises", "Questions", end-of-chapter
-                     problems with no worked solution shown
-    "activity"       a practical procedure to carry out — "Activity 6.3",
-                     an experiment, an observation task
-    "summary"        an end-of-chapter recap of points already covered
-    "prose"          narrative/expository text that fits none of the above
-  "exercise" vs "solved_example": if the solution is shown it is a
-  solved_example; if the student is being asked to do it, it is an exercise.
-  Use "prose" honestly when nothing else fits — do NOT inflate ordinary
-  explanation into "theorem" or "law".
-- technique: array of solving techniques this chunk teaches or uses, as
-  snake_case (e.g. ["dimensional_analysis","vector_resolution"]). Use [] when
-  the chunk teaches no specific technique.
+${guide.contentTypes}
+${guide.techniqueRule}
 - difficulty: "easy" | "medium" | "hard" — relative to the target exam level.
 - confidence: 0.0-1.0, how confident you are in the content_type label. Use a
   low value when the chunk is genuinely mixed rather than forcing a guess.
@@ -526,7 +507,12 @@ Return JSON (the "content" below shows the expected LENGTH and DEPTH — match i
     }
   ]
 }
-
+${guide.family === 'stem' ? '' : `
+NOTE ON THE EXAMPLE ABOVE: it is a mathematics chunk, shown for the LENGTH and
+DEPTH its "content" demonstrates — match that. Its "content_type" and
+"technique" values are NOT available to you. Use only the content_type values
+listed above, and follow the technique rule above.
+`}
 CONTENT:
 ${batches[b]}`,
         },
@@ -584,15 +570,234 @@ ${batches[b]}`,
 
 // chapters becomes 3 study_notes rows sharing the same `unit`, each with its
 // own title and real page range, instead of one flattened blob.
-export const CONTENT_TYPES = new Set([
-  'theorem', 'law', 'formula', 'definition', 'solved_example', 'derivation', 'diagram',
-  // Added after the full corpus load: NCERT spends real page area on unsolved
-  // question sets, practical activities and end-of-chapter recaps, and with no
-  // bucket for them all three were landing in 'prose'.
-  'exercise', 'activity', 'summary',
-  'prose',
-]);
+
+/* ── Subject families ────────────────────────────────────────────────────
+ *
+ * The original content_type list describes STEM. Nothing in it fits a poem, a
+ * primary-source extract or a balance-sheet format, so the 372 non-STEM files
+ * would land almost entirely in 'prose' — the same hole 'exercise'/'activity'/
+ * 'summary' were added to fill, at three times the scale.
+ *
+ * Rather than offer every subject all 21 values, each family gets the subset it
+ * can actually use. A Physics chunk is never a 'poem' and offering the label is
+ * pure downside: more ways to be wrong, and a split bucket for anything that
+ * later filters on content_type.
+ *
+ * Scoping happens HERE, in the prompt, not in the DB. kb_content_type_chk is the
+ * flat union of all four families (20260812050000) because a CHECK constraint
+ * cannot see the row's subject without a much heavier trigger — and the prompt is
+ * where a wrong label is prevented rather than merely rejected. Same shape as
+ * PARTIAL_SYLLABUS_EXAM_TYPES scoping the closed-list rule per exam type.
+ */
+
+// Offered to every family: these describe a chunk's SHAPE, which is not a
+// property of the subject. Every book has definitions, question sets, practical
+// tasks, recaps, figures — and needs an honest catch-all.
+const CORE_TYPES = ['definition', 'exercise', 'activity', 'summary', 'diagram', 'prose'];
+
+export const SUBJECT_FAMILIES = {
+  stem:       [...CORE_TYPES, 'theorem', 'law', 'formula', 'solved_example', 'derivation'],
+  literature: [...CORE_TYPES, 'literary_prose', 'poem', 'drama', 'author_note'],
+  social:     [...CORE_TYPES, 'event', 'case_study', 'source_extract', 'map_work'],
+  // 'formula' and 'solved_example' are shared with stem, not duplicated concepts:
+  // Statistics for Economics computes real means and Accountancy works real
+  // problems. `commerce` names the CONTENT taxonomy, not the academic stream —
+  // Computer Science and Informatics Practices sit here because their chunks are
+  // procedures and worked problems, which is what the label has to describe.
+  commerce:   [...CORE_TYPES, 'formula', 'solved_example', 'procedure', 'format_template'],
+};
+
+/* Derived, never hand-maintained: the union IS the families. A value that exists
+ * in one but not here would be nulled by normaliseClassification() before the
+ * insert — silently, with no error, just a NULL column. Deriving it makes that
+ * class of drift impossible in this direction; the DB CHECK is the other half
+ * and 20260812050000 carries the matching warning. */
+export const CONTENT_TYPES = new Set(Object.values(SUBJECT_FAMILIES).flat());
 export const DIFFICULTIES = new Set(['easy', 'medium', 'hard']);
+
+/**
+ * Which family a subject belongs to.
+ *
+ * Substring matching, most specific first — but note that no rule tests for
+ * "science", because `stem` is the FALLBACK. That is deliberate: it removes the
+ * ordering hazard that bit subjectForFolder(), where "Computer Science",
+ * "Political Science" and "Social Science" were all swept up by a generic
+ * /science/ match and had to be excluded by hand ahead of it.
+ *
+ * Unknown subjects fall to 'stem', which is exactly today's behaviour — this
+ * change must not alter the classification of a single one of the 148 loaded
+ * STEM files.
+ *
+ * AMBIGUOUS, AND LEFT TO STAGE D: Class 10 "Economics" is a book INSIDE Social
+ * Science (jess2*, Understanding Economic Development), not the Class 11
+ * commerce subject. It is Stage D's job to emit subject 'Social Science' with
+ * book 'Economics' for that folder — if it emits 'Economics' this maps it to
+ * commerce, which is the wrong family for a Class 10 social science book.
+ */
+export function familyForSubject(subject) {
+  const s = String(subject ?? '').toLowerCase();
+
+  if (/english|hindi|sanskrit|urdu|arabic|malayalam|tamil|literature/.test(s)) return 'literature';
+  if (/history|geograph|political|sociolog|psycholog|social/.test(s))          return 'social';
+  if (/account|business|economic|commerce|informatic|computer|entrepreneur/.test(s)) return 'commerce';
+
+  return 'stem';
+}
+
+/* ── Per-family prompt blocks ────────────────────────────────────────────
+ *
+ * Three blocks vary by family: the content_type menu, the technique rule, and
+ * what counts as a lesson. The `stem` text is byte-identical to what shipped
+ * before this change — the 148 loaded STEM files must keep classifying exactly
+ * as they did, so the STEM path is not "equivalent", it is the same string.
+ *
+ * Every new value carries a when-NOT-to-use line. That is what stopped 'prose'
+ * swallowing exercises and activities, and the new values have the same failure
+ * mode: a label with no boundary gets applied to everything adjacent to it.
+ */
+
+const LESSON_RULE_DEFAULT = `WHAT COUNTS AS A LESSON — read this before splitting anything:
+A lesson is a WHOLE TEXTBOOK CHAPTER, the kind that appears as one line in a
+Contents page ("A Square and A Cube", "Laws of Motion"). It is NOT a section,
+sub-heading, worked-example block or topic within a chapter.
+
+  Most uploads are ONE chapter. Default to returning a SINGLE lesson.
+  Return more than one ONLY if the excerpt genuinely contains two or more
+  separate numbered chapters.
+
+  WRONG: one chapter split into "A Square and A Cube", "Understanding Perfect
+         Squares", "Cubes and Cube Roots" — the last two are sections of the
+         first, and splitting them corrupts chapter-level analytics downstream.
+  RIGHT: one lesson "A Square and A Cube", whose CHUNKS carry those section
+         names in their "heading" field.
+
+Section headings belong in chunk headings. They never create a new lesson.`;
+
+/* Literature is the one family where the granularity genuinely inverts. A reader
+ * groups texts into units, and the unit is NOT the thing a student picks — the
+ * individual text is. Feeding it LESSON_RULE_DEFAULT would return one lesson per
+ * unit and bury three stories inside it, which is precisely the shape that had to
+ * be retired from the Class 8 English syllabus last session. */
+const LESSON_RULE_LITERATURE = `WHAT COUNTS AS A LESSON — read this before splitting anything:
+A lesson is ONE TEXT: a single story, poem, essay or play — the kind that appears
+as one line in a Contents page ("A Letter to God", "Dust of Snow").
+
+  A literature reader groups its texts into UNITS or SECTIONS ("Wit and Wisdom",
+  "Poetry"). A unit is NOT a lesson. Put its name in the top-level "unit" field
+  and return each text inside it as its OWN lesson.
+
+  WRONG: one lesson "Wit and Wisdom" containing three stories — that buries the
+         three texts a student actually picks between.
+  RIGHT: unit "Wit and Wisdom", and three lessons, one per story, each with its
+         own title and its own page range.
+
+  So: an upload of a single text returns ONE lesson. An upload of a whole unit
+  returns ONE LESSON PER TEXT in it.
+
+Divisions WITHIN a single text (scene numbers, stanza groups, parts) belong in
+chunk headings. They never create a new lesson.`;
+
+const TECHNIQUE_RULE_STEM = `- technique: array of solving techniques this chunk teaches or uses, as
+  snake_case (e.g. ["dimensional_analysis","vector_resolution"]). Use [] when
+  the chunk teaches no specific technique.`;
+
+/* Owner decision, carried from the taxonomy handoff: `techniques` is free-text
+ * STEM problem-solving vocabulary and is meaningless for prose. Left empty
+ * rather than repurposed — an invented "technique" for a poem would be noise in
+ * a column that is a real retrieval filter. normaliseClassification() already
+ * coerces a missing/non-array value to [], so this instruction and the code
+ * agree without a schema change. */
+const TECHNIQUE_RULE_NON_STEM = `- technique: always return []. This field records STEM problem-solving methods
+  and has no meaning for this material. Do not invent one.`;
+
+const CONTENT_TYPE_GUIDES = {
+  stem: `    "theorem"        a named, provable statement
+    "law"            a stated physical/chemical law or principle
+    "formula"        a formula/equation presented for use
+    "definition"     a term being defined
+    "solved_example" a worked problem WITH its solution
+    "derivation"     a step-by-step derivation of a result
+    "diagram"        content whose substance is a figure and its explanation
+    "exercise"       UNSOLVED questions set for the student — a numbered
+                     question list, "Exercises", "Questions", end-of-chapter
+                     problems with no worked solution shown
+    "activity"       a practical procedure to carry out — "Activity 6.3",
+                     an experiment, an observation task
+    "summary"        an end-of-chapter recap of points already covered
+    "prose"          narrative/expository text that fits none of the above
+  "exercise" vs "solved_example": if the solution is shown it is a
+  solved_example; if the student is being asked to do it, it is an exercise.
+  Use "prose" honestly when nothing else fits — do NOT inflate ordinary
+  explanation into "theorem" or "law".`,
+
+  literature: `    "literary_prose" the story or essay text ITSELF — the thing being studied
+    "poem"           the poem text itself, or a stanza of it
+    "drama"          the play text itself — a scene, or a passage of dialogue
+    "author_note"    the "About the author" / "About the poet" box
+    "definition"     a term being defined — a literary device, a glossed word
+    "diagram"        content whose substance is an illustration and its caption
+    "exercise"       UNSOLVED questions set for the student — comprehension
+                     questions, "Thinking about the text", "Talk about it"
+    "activity"       a task to carry out — a speaking, writing or project task
+    "summary"        an end-of-chapter recap PRINTED IN THE BOOK
+    "prose"          editorial text ABOUT the book that fits none of the above —
+                     a preface, a note on how to use the reader
+  THE DISTINCTION THAT MATTERS MOST: "literary_prose" is the text being STUDIED;
+  "prose" is writing ABOUT the book. A story is literary_prose. An editor's
+  foreword is prose. NEVER label the literary text itself as "prose".
+  "summary" means a recap the book prints. If the book prints none, there is
+  none — do not write a plot summary and label it that.`,
+
+  social: `    "event"          a dated historical happening, narrated as such
+    "case_study"     a named, bounded real-world example the chapter reasons
+                     FROM — "The Bhopal Gas Tragedy", "Amul: a cooperative"
+    "source_extract" a PRIMARY SOURCE reproduced in the book — a treaty clause,
+                     a census table, a speech, a letter, an eyewitness account.
+                     Usually boxed and attributed to a person, document or year
+    "map_work"       a map and the geographical reading it is used for
+    "definition"     a term being defined — a concept, an -ism, a technical term
+    "diagram"        content whose substance is a figure, chart or photograph
+                     and its explanation
+    "exercise"       UNSOLVED questions set for the student
+    "activity"       a task to carry out — fieldwork, a survey, a debate
+    "summary"        an end-of-chapter recap of points already covered
+    "prose"          narrative/expository text that fits none of the above
+  "source_extract" vs "prose": a source is the book QUOTING evidence, normally
+  attributed. The textbook's OWN narration is "event" if it is a dated
+  happening, otherwise "prose".
+  "case_study" vs "event": a case study is reasoned from to make a general
+  point; an event is narrated as part of the historical account.`,
+
+  commerce: `    "procedure"       an ordered method to carry out — passing a journal entry,
+                      preparing a bank reconciliation, normalising a table
+    "format_template" a ruled LAYOUT to be reproduced — a trial balance, a
+                      ledger account, a balance sheet skeleton, a table schema
+    "solved_example"  a worked problem WITH its solution
+    "formula"         a formula or ratio presented for use
+    "definition"      a term being defined
+    "diagram"         content whose substance is a figure, chart or screenshot
+                      and its explanation
+    "exercise"        UNSOLVED questions set for the student
+    "activity"        a practical task to carry out
+    "summary"         an end-of-chapter recap of points already covered
+    "prose"           narrative/expository text that fits none of the above
+  "procedure" vs "solved_example": a procedure is the general METHOD with no
+  specific figures attached; a solved_example applies it to real numbers and
+  shows the result.
+  "format_template" is the EMPTY shape — the ruled form itself. Once it is filled
+  with a particular firm's numbers and worked through, it is a solved_example.`,
+};
+
+/** The three prompt blocks that vary by subject family. */
+export function promptGuideFor(subject) {
+  const family = familyForSubject(subject);
+  return {
+    family,
+    contentTypes:  CONTENT_TYPE_GUIDES[family],
+    techniqueRule: family === 'stem' ? TECHNIQUE_RULE_STEM : TECHNIQUE_RULE_NON_STEM,
+    lessonRule:    family === 'literature' ? LESSON_RULE_LITERATURE : LESSON_RULE_DEFAULT,
+  };
+}
 
 /**
  * The classification fields are model output going straight into CHECK-

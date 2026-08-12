@@ -832,10 +832,42 @@ and re-running them would duplicate the entire NEET corpus.
 
 ---
 
-## ⏭ HANDOFF — load ALL non-STEM subjects (372 files). Designed, not started.
+## ⏭ HANDOFF — load ALL non-STEM subjects (372 files). Stage A done, B next.
 
-Priority as of 2026-08-12. Inventory complete, design sketched below, NOTHING
-implemented or loaded. Start here in a fresh session.
+Priority as of 2026-08-12. **Stage A (taxonomy) is complete and tested; not
+committed, neither migration applied, nothing loaded.** Resume at
+Stage B. Full narrative in `docs/CHANGELOG.md` (session 29).
+
+### ✅ Stage A — decided and built (2026-08-12)
+
+Owner approved all three recommendations:
+
+1. **`book` as a nullable column on `syllabus_nodes`, NOT folded into `subject`.**
+   Uniqueness is carried by a book-scoped `chapter_key` (`chapterKeyFor()` in
+   `src/lib/syllabus.js`), because `book` is nullable and Postgres treats NULLs
+   as distinct — putting it in the UNIQUE key would stop that key protecting the
+   148 single-book STEM rows. Column for grouping, key for identity.
+2. **10 new `content_type` values, not 14** — `concept`, `worked_problem` and
+   `comprehension_exercise` dropped as near-synonyms of `definition`,
+   `solved_example` and `exercise`. Literature narrative is `literary_prose`,
+   never `prose`, so the prose-share diagnostic stays readable.
+3. **Hindi A = one book (Kshitij).** `KRITHIKA 2/` and `KSHITIJ 2/` hold the same
+   13 filenames at the same 13 byte sizes; `jhkr` (Kritika's NCERT code) appears
+   nowhere in the 520. **md5-confirm this in Stage B**, then drop 13 duplicate
+   files from the 372.
+
+Shipped: `20260812040000_syllabus_nodes_book.sql`,
+`20260812050000_content_type_non_stem.sql`, `SUBJECT_FAMILIES` /
+`familyForSubject()` / `promptGuideFor()` in `src/lib/contentExtraction.js`,
+`chapterKeyFor()` + `book` reads in `src/lib/syllabus.js`, 40 tests
+(`contentTaxonomy.test.js`). 329 pass, build clean.
+
+**⚠ NOT APPLIED, NOT DEPLOYED.** Apply `20260812040000` *before* deploying the
+client — `syllabus.js` selects `book` and PostgREST rejects a select for a
+missing column. The reverse order is safe (the old client never asks for it), so
+unlike `20260810070000` these do **not** have to ship in one window.
+
+### Where the original design stood (kept for context)
 
 ### Where things stand
 
@@ -894,11 +926,18 @@ existing values:
 | social | History, Geography, PolSci, Sociology, Psychology, Class 8-10 Social | `concept`, `event`, `case_study`, `source_extract`, `map_work` | chapter |
 | commerce | Accountancy, Business Studies, Economics, IP, CompSci | `concept`, `procedure`, `worked_problem`, `format_template` | chapter |
 
-Two decisions the owner must make:
-1. Is a literature "chapter" the individual text, or the book unit? Drives
-   syllabus_nodes shape and the student chapter picker.
-2. `techniques` (free-text, STEM problem-solving) is meaningless for prose —
-   leave null for non-STEM, or repurpose? Leave null is safer.
+~~Two decisions the owner must make:~~ **BOTH DECIDED, and built in Stage A:**
+1. **Literature "chapter" = the individual text**, not the book unit. The lesson
+   rule inverts for the literature family only: the unit name goes in `unit` and
+   each text inside it is its own lesson.
+2. **`techniques` left null (in practice `[]`) for non-STEM.** No schema change —
+   `normaliseClassification()` already produces `[]` for a missing value.
+
+The families as built differ from the sketch above: `concept`,
+`worked_problem` and `comprehension_exercise` were dropped in favour of the
+existing `definition`, `solved_example` and `exercise`, and literature narrative
+is `literary_prose` rather than `prose`. See `SUBJECT_FAMILIES` for the real
+list — it is the source of truth, and `CONTENT_TYPES` is derived from it.
 
 **Verbatim source_text is REQUIRED for literature.** runNotesExtraction already
 has the `[[PAGE N]]` marker path that slices the ORIGINAL pages array rather
@@ -910,8 +949,8 @@ and MUST be used for every literature load.
 
 | stage | work | est. |
 |---|---|---|
-| A | Taxonomy decision with owner + migration (content_type values, `book` column on syllabus_nodes) | 0.5d |
-| B | Contents-page extraction for ~35 books -> verified chapter lists | 0.5d |
+| ~~A~~ | ~~Taxonomy decision with owner + migration~~ **DONE 2026-08-12** | ~~0.5d~~ |
+| B | Contents-page extraction for ~35 books -> verified chapter lists **← NEXT** | 0.5d |
 | C | Seed syllabus_nodes per subject+book, insert-only, `--undo` | 0.5d |
 | D | Extend `subjectForFolder()` — replace the `computer|political|social` exclusions with correct tagging; map the 8 multi-book pairs | 0.5d |
 | E | Load in BATCHES by class, dry-run then sample-check each | 0.5d |
