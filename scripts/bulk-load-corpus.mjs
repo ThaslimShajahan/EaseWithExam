@@ -31,7 +31,20 @@ import { resolve, dirname, join, relative, extname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT   = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const CORPUS = resolve(ROOT, 'easy with exam');
+/**
+ * Corpus root. CLASS_BY_TOP matches the FIRST path segment below this, so this
+ * must point at the folder whose children are '10 NCRT', '9 NCRT', 'NCRT 8',
+ * '11 NCRT SC' — not at their parent. Point it one level too high and every
+ * file is silently skipped as `unknownClass`.
+ *
+ *   CORPUS_DIR="/c/Users/.../ewe_data/cbse ncrt notes" node scripts/bulk-load-corpus.mjs --dry-run
+ *
+ * Overridable rather than hardcoded because the corpus lives outside the repo
+ * (it is ~1.6GB and gitignored) and has already moved once.
+ */
+const CORPUS = process.env.CORPUS_DIR
+  ? resolve(process.env.CORPUS_DIR)
+  : resolve(ROOT, 'easy with exam');
 const BASE   = process.env.BASE_URL || 'http://localhost:5173';
 const CHECKPOINT = resolve(ROOT, '.corpus-load-checkpoint.json');
 
