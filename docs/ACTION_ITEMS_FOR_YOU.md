@@ -6,7 +6,118 @@ shipped in a degraded state. The narrative of what changed and why lives in
 
 ---
 
-## BLOCKED ON A CA — GST tax invoices (pieces 2-5). Piece 1 shipped 2026-08-13.
+## ⏸ BLOCKED ON API DOCS — integrate with the EXISTING billing software (2026-08-13)
+
+**Direction changed. Do not build invoicing here.** There is a separate, existing
+custom billing product with its own codebase and database. EaseWithExam
+integrates with it; it does not compete with it.
+
+### Status
+
+- **Piece 1 (Admin → Students → Billing) STAYS.** It is a payment log read from
+  `payment_orders`, useful whichever system issues the tax documents. Unaffected.
+- **Pieces 2-5 (invoices table, GST logic, PDF, email) are PAUSED, not
+  cancelled** — see below for what survives the change and what does not.
+- **Blocked on: API documentation and connection details for the billing
+  software.** Owner is obtaining these.
+
+### The three questions cannot be answered from this repo
+
+They are questions about the OTHER system, and nothing in this codebase or its
+database can answer them. Recorded here as a precise request so that the moment
+the docs arrive the design is a short step, not a fresh investigation:
+
+**1. Integration direction — does it expose an API, or does it pull?**
+Need: base URL, auth scheme (API key / OAuth / mTLS / IP allowlist), the
+endpoint that creates a customer and the one that creates an invoice or payment
+record, request/response schemas, rate limits, and whether a sandbox exists.
+If instead it **pulls from our database**, that is a very different job: it needs
+a read path into Supabase (a dedicated role and a view, never broad table
+access), and the direction of trust reverses.
+
+**2. Trigger — inline in `razorpay-verify`, or a separate sync?**
+This is the decision with the most operational consequence, and it should be
+made deliberately rather than by whichever is easier:
+
+- **Inline** (call the billing API from `razorpay-verify` after redemption) is
+  simplest and gives an invoice immediately — but it puts a third-party call on
+  the critical path of activating a subscription. If billing is slow or down, a
+  student who has genuinely paid does not get access. **A payment must never
+  fail because invoicing failed.**
+- **Separate sync** (a queue or scheduled job reading `payment_orders`) keeps
+  activation independent, survives billing downtime, and retries naturally. Cost
+  is a delay before the invoice exists, and one more moving part.
+
+**Recommendation regardless of the answer: activation and invoicing must not
+share a failure domain.** If inline is chosen, the billing call must be
+fire-and-forget with a durable retry, never awaited before activation.
+
+**3. What it needs per transaction.** Need their required-field list. What this
+side can supply today, and what it cannot, is below — the gap is the useful part.
+
+### What we already have to feed it
+
+| field | source | ready? |
+|---|---|---|
+| order id, payment id | `payment_orders.order_id` / `payment_id` | ✅ |
+| amount (paise) | `payment_orders.amount_paise` | ✅ |
+| plan | `payment_orders.plan_id` | ✅ |
+| paid-at timestamp | `payment_orders.redeemed_at` | ✅ |
+| student identity | `payment_orders.firebase_uid` → `users` | ✅ |
+| name, email | `users.display_name`, `users.email` | ✅ |
+
+`payment_orders` is the right source: one row per order, kept permanently.
+**Do not integrate off `subscriptions`** — it upserts on `user_id`, so a renewal
+overwrites the previous payment and any sync built on it loses history.
+
+### ⚠ What we do NOT capture, and almost certainly must
+
+Actionable **now**, before the integration lands, because it needs UI and a
+migration on this side whatever the billing system turns out to want:
+
+- **Billing state / state code** — for B2C online services the place of supply is
+  the recipient's location, and it decides CGST+SGST vs IGST. Captured nowhere.
+- **Legal name and address** — `display_name` is a profile name, not a billing
+  name.
+- **Customer GSTIN** (optional, for B2B students claiming input credit).
+
+Whether these are collected at checkout or backfilled is a UX decision, but no
+billing system can issue a compliant invoice without the first one.
+
+### What survives the change, and what does not
+
+- **Discarded:** local GST computation, invoice numbering, PDF generation, the
+  invoice email path. All of it belongs to the billing product now. The earlier
+  finding that PDF generation is NOT already solved in this codebase stops
+  mattering, which removes the largest single line from that estimate.
+- **Still true and still needed:** the missing billing fields above, and the
+  pricing-copy problem below.
+
+### ⚠ STILL OPEN, and NOT fixed by the redirection
+
+The pricing copy already makes a GST representation that the charge does not
+match:
+
+```
+src/lib/subscription.js:43,73,105   priceSuffix: '+ GST'
+src/pages/LandingPage.jsx:392       "Prices in INR, exclusive of GST."
+src/pages/PricingPage.jsx:322       "Prices exclude GST"
+```
+
+Razorpay is charged exactly `price_paise` — ₹399, with nothing added. So a
+student is told **"₹399 + GST"** and charged **₹399**. If not GST-registered,
+representing that GST is charged is wrong; if registered at 18%, the charge
+should be ₹471, meaning ₹399 is actually GST-*inclusive* and real revenue is
+₹338.
+
+This is **consumer-facing right now** and payments open on the 14th. It is three
+strings, but which way to correct them depends on the registration/exemption
+answer — which is now a question for whoever operates the billing software.
+**This does not go away by integrating with an external system.**
+
+---
+
+## ~~BLOCKED ON A CA~~ (SUPERSEDED by the redirection above) — local GST invoicing
 
 Admin → Students → **Billing** is live: every payment attempt, newest first,
 with collected total and abandoned-checkout count. `admin_list_payments`
