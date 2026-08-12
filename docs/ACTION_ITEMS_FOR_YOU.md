@@ -832,6 +832,106 @@ and re-running them would duplicate the entire NEET corpus.
 
 ---
 
+## ⏭ HANDOFF — load ALL non-STEM subjects (372 files). Designed, not started.
+
+Priority as of 2026-08-12. Inventory complete, design sketched below, NOTHING
+implemented or loaded. Start here in a fresh session.
+
+### Where things stand
+
+- `docs/corpus-inventory.csv` — all 520 PDFs, per file: class folder, subject
+  folder, sub-path, filename, size. 148 loaded (STEM), **372 unloaded (all
+  non-STEM)**.
+- `docs/content-index.csv` — what is currently in knowledge_base +
+  syllabus_nodes, 441 rows.
+- STEM is complete and correct. No STEM gap exists.
+
+### Three complications that must be handled, not worked around
+
+**1. Multi-BOOK subjects vs multi-PART books.** `subjectForFolder()` already
+collapses `chemistry part 1` + `part 2` into one `Chemistry` — correct, one book
+in two volumes, continuous chapter numbering. But these are DIFFERENT BOOKS for
+one subject, each numbering chapters from 1:
+
+```
+Hindi A / Hindi B                    (Class 10)
+English Hornbill / Woven Words       (Class 11)
+Economics: Development / Statistics  (Class 11)
+Political Science: Constitution at Work / Political Theory
+Sociology / Sociology Understanding Society
+Accountancy / Accountancy II
+```
+
+Collapsing these to one subject collides chapter 1 with chapter 1.
+`syllabus_nodes` is UNIQUE on (exam_type, subject, chapter_key), so two
+"Chapter 1" rows silently become one. **A `book` dimension is needed** — either
+a column, or fold it into chapter_key (`c11_hornbill_01_*`). Prefer a column:
+chapter_key is already load-bearing for matchSyllabusChapter.
+
+**2. "English" is 3-5 reader types per class.** Class 10 has First Flight
+(literature), Footprints Without Feet (supplementary), Words and Expressions
+(workbook) — 30 files. Class 11 has Hornbill + Woven Words. A workbook is not a
+literature reader and must not share a content_type.
+
+**3. Chapter names need the contents-page method.** Filenames are NCERT codes
+(`jhks101.pdf`), not titles. Use the PROVEN method from tonight's Kerala work:
+pdfjs + positional reading-order sort (see the toc2 approach —
+`items.sort((a,b) => (b.y - a.y) || (a.x - b.x))`), which correctly handled
+two-column and jumbled contents pages where a naive text join produced garbage.
+~35 books to open. DO NOT web-search chapter lists — third-party sites disagree
+across the 2023 NCERT rationalisation, which is the same edition-mismatch that
+produced the 10 stale Class 8 Maths rows.
+
+### Proposed taxonomy extension (PROPOSE TO OWNER BEFORE BUILDING)
+
+STEM's `content_type` (theorem / formula / exercise / worked_example) does not
+describe prose. Three new families, scoped BY SUBJECT rather than replacing the
+existing values:
+
+| family | subjects | content_type values | chapter unit |
+|---|---|---|---|
+| literature | English, Hindi readers | `prose`, `poem`, `drama`, `author_note`, `comprehension_exercise` | one text (story/poem) |
+| social | History, Geography, PolSci, Sociology, Psychology, Class 8-10 Social | `concept`, `event`, `case_study`, `source_extract`, `map_work` | chapter |
+| commerce | Accountancy, Business Studies, Economics, IP, CompSci | `concept`, `procedure`, `worked_problem`, `format_template` | chapter |
+
+Two decisions the owner must make:
+1. Is a literature "chapter" the individual text, or the book unit? Drives
+   syllabus_nodes shape and the student chapter picker.
+2. `techniques` (free-text, STEM problem-solving) is meaningless for prose —
+   leave null for non-STEM, or repurpose? Leave null is safer.
+
+**Verbatim source_text is REQUIRED for literature.** runNotesExtraction already
+has the `[[PAGE N]]` marker path that slices the ORIGINAL pages array rather
+than trusting the model to reproduce a passage (it paraphrases even when told
+not to). That path exists precisely for extract-based comprehension questions
+and MUST be used for every literature load.
+
+### Staged plan
+
+| stage | work | est. |
+|---|---|---|
+| A | Taxonomy decision with owner + migration (content_type values, `book` column on syllabus_nodes) | 0.5d |
+| B | Contents-page extraction for ~35 books -> verified chapter lists | 0.5d |
+| C | Seed syllabus_nodes per subject+book, insert-only, `--undo` | 0.5d |
+| D | Extend `subjectForFolder()` — replace the `computer|political|social` exclusions with correct tagging; map the 8 multi-book pairs | 0.5d |
+| E | Load in BATCHES by class, dry-run then sample-check each | 0.5d |
+| F | Both-halves verification + counts reconciliation | 0.5d |
+
+~3 days. Do NOT compress by skipping B — guessed chapter names are what produced
+the 472 Kerala orphans with five names for one chapter.
+
+### Already proven and reusable
+
+- `PARTIAL_SYLLABUS_EXAM_TYPES` (src/lib/contentExtraction.js) — gates the
+  closed-list rule per exam_type when a syllabus is incomplete.
+- `bulk-load-corpus.mjs` takes `CORPUS_DIR`; `bulk-load-pyq.mjs` takes
+  `PYQ_DIR` + per-job `examType` and mints a real admin token.
+- `scripts/seed-kerala-class10-syllabus.mjs` is the template for stage C.
+- Checkpoints: `.corpus-load-checkpoint.json` holds all 148 STEM files.
+  **NEVER `--reset`** — it would reload and duplicate the entire STEM corpus.
+
+---
+
 ## OPEN — the Kerala `Question Paper` corpus: audited 2026-08-12, none of it loadable yet
 
 125 PDFs at `OneDrive/Documents/ewe_data/Question Paper`, verified by opening
