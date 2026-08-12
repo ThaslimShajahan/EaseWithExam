@@ -107,27 +107,37 @@ describe('Words and Expressions II attaches to First Flight', () => {
 
   /* THE CASE THE ORDINAL MAPPING EXISTS FOR.
    *
-   * Unit 3 is one printed chapter ("Two Stories about Flying") that split into
-   * two chapter rows. Title matching would have worked for the other eight and
-   * failed silently here, and taking chapters[0] would file every Black
-   * Aeroplane exercise under His First Flight. */
-  it('hands unit 3 BOTH chapters rather than picking one', () => {
-    const u3 = workbookUnitFor('jewe203.pdf');
-    expect(u3.unit).toBe('Two Stories about Flying');
-    expect(u3.chapters).toEqual(['His First Flight', 'Black Aeroplane']);
-    expect(u3.chapters).toHaveLength(2);
+   * Units 3 and 5 are each one printed chapter holding several distinct texts,
+   * split into separate chapter rows. Title matching would have worked for the
+   * other seven and failed silently on both of these, and taking chapters[0]
+   * would file every Black Aeroplane exercise under His First Flight. */
+  it.each([
+    ['jewe203.pdf', 'Two Stories about Flying', ['His First Flight', 'Black Aeroplane']],
+    ['jewe205.pdf', 'Glimpses of India',        ['A Baker from Goa', 'Coorg', 'Tea from Assam']],
+  ])('%s hands back ALL its chapters rather than picking one', (file, unit, chapters) => {
+    const u = workbookUnitFor(file);
+    expect(u.unit).toBe(unit);
+    expect(u.chapters).toEqual(chapters);
 
-    // Its printed unit title matches NEITHER chapter row — which is exactly why
-    // matching on the title would have failed.
-    expect(u3.chapters).not.toContain(u3.unit);
+    // The printed unit title matches NONE of its chapter rows — exactly why
+    // matching on the title would have failed silently here.
+    expect(u.chapters).not.toContain(u.unit);
   });
 
-  it('gives every other unit exactly one chapter', () => {
+  it('has exactly two multi-text units, and seven with one', () => {
     const multi = FIRST_FLIGHT_UNITS.filter((u) => u.chapters.length > 1);
-    expect(multi).toHaveLength(1);
-    expect(multi[0].unit).toBe('Two Stories about Flying');
-    // 9 printed chapters, 10 chapter rows after the split.
+    expect(multi.map((u) => u.unit)).toEqual(['Two Stories about Flying', 'Glimpses of India']);
+    // 9 printed units -> 12 prose chapter rows after both splits.
     expect(FIRST_FLIGHT_UNITS).toHaveLength(9);
-    expect(FIRST_FLIGHT_UNITS.flatMap((u) => u.chapters)).toHaveLength(10);
+    expect(FIRST_FLIGHT_UNITS.flatMap((u) => u.chapters)).toHaveLength(12);
+  });
+
+  /* Every unit title that is NOT also a chapter title is a unit whose texts were
+   * split out. Catches a future edit that adds a split but forgets the unit
+   * label, or renames a chapter out from under its unit. */
+  it('keeps unit and chapter titles consistent for the seven single-text units', () => {
+    for (const u of FIRST_FLIGHT_UNITS) {
+      if (u.chapters.length === 1) expect(u.chapters[0]).toBe(u.unit);
+    }
   });
 });

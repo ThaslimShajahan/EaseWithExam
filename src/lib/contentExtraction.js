@@ -102,21 +102,52 @@ export function normaliseMarks(raw) {
 }
 
 /**
- * Exam types whose syllabus_nodes are known to be INCOMPLETE.
+ * Syllabi known to be INCOMPLETE, keyed by exam type OR by exam type + subject.
  *
  * For these, runPYQExtraction does NOT send the closed chapter list to the
  * model. A partial closed list is worse than none: it forces every
  * out-of-scope question into the nearest listed chapter, producing a
  * confident wrong tag instead of a visibly unsnapped one.
  *
- * `Kerala State Class 10` — seeded from the SCERT Standard X PART 1 textbooks
- * only; the Part 2 volumes are absent from the corpus. Remove this entry the
- * moment Part 2 is seeded, or the model will keep guessing chapter names it
- * did not need to guess.
+ * WHY THIS GAINED A SUBJECT DIMENSION
+ *
+ * It was originally a set of exam types, which was enough while Kerala was the
+ * only entry — there, EVERY subject is Part 1. Class 8 and Class 9 broke that:
+ * their Social Science books are Part 1 only (Class 8's index jumps Theme B to
+ * Theme D; Theme C is in the absent Part 2), while their **Mathematics and
+ * Science syllabi are complete and correct**, with 148 loaded files behind them.
+ *
+ * A bare `CBSE Class 8` entry would have disabled the closed-list rule for
+ * Class 8 Maths and Science too — quietly undoing the constraint that exists to
+ * stop the model inventing chapter names, on the two subjects that least need
+ * loosening. The partial-ness is a property of the SUBJECT, so the key is.
+ *
+ * Entries:
+ *   'Kerala State Class 10'          every subject is SCERT Part 1 only
+ *   'CBSE Class 8::Social Science'   Exploring Society: India and Beyond, Part 1
+ *   'CBSE Class 9::Social Science'   Understanding Society: India and Beyond, Part 1
+ *
+ * Remove an entry the moment its Part 2 is seeded, or the model keeps guessing
+ * chapter names it did not need to guess.
  */
-export const PARTIAL_SYLLABUS_EXAM_TYPES = new Set([
+export const PARTIAL_SYLLABUS = new Set([
   'Kerala State Class 10',
+  'CBSE Class 8::Social Science',
+  'CBSE Class 9::Social Science',
 ]);
+
+/**
+ * True when this exam type + subject has an incomplete syllabus.
+ *
+ * A whole-exam-type entry wins over the subject key, so 'Kerala State Class 10'
+ * still covers all four of its subjects without needing four entries. Passing no
+ * subject checks only the exam-type form, which is the honest answer when the
+ * caller genuinely has no subject in hand.
+ */
+export function isPartialSyllabus(examType, subject = null) {
+  if (PARTIAL_SYLLABUS.has(examType)) return true;
+  return subject ? PARTIAL_SYLLABUS.has(`${examType}::${subject}`) : false;
+}
 
 export function matchSyllabusChapter(guess, chapterNames) {
   if (!guess || !chapterNames?.length) return guess;
@@ -261,13 +292,16 @@ export async function runPYQExtraction({ rawText, examType, subject, year, onPro
    *
    * `Kerala State Class 10` is seeded from the SCERT Part 1 textbooks only;
    * the Part 2 volumes do not exist in the corpus (see
-   * scripts/seed-kerala-class10-syllabus.mjs). Its nodes still drive post-hoc
-   * matchSyllabusChapter() snapping and the chapter pickers — they just do not
-   * constrain this prompt. Remove the entry once Part 2 is seeded.
+   * scripts/seed-kerala-class10-syllabus.mjs). Class 8 and Class 9 Social
+   * Science are Part 1 only for the same reason. Their nodes still drive
+   * post-hoc matchSyllabusChapter() snapping and the chapter pickers — they
+   * just do not constrain this prompt. Remove an entry once its Part 2 is
+   * seeded.
    *
-   * Scoped by exam_type so CBSE and NEET, whose syllabi ARE complete, keep the
-   * closed list exactly as before. */
-  const partialSyllabus = PARTIAL_SYLLABUS_EXAM_TYPES.has(examType);
+   * Scoped by exam_type AND subject, so CBSE and NEET — and, critically, Class 8
+   * and 9 Mathematics and Science, whose syllabi ARE complete — keep the closed
+   * list exactly as before. */
+  const partialSyllabus = isPartialSyllabus(examType, subject);
   const chapterRule = (chapterList.length && !partialSyllabus)
     ? `\nCHAPTER — this is a CLOSED LIST. Every question's "chapter" MUST be copied
 EXACTLY, character for character, from this list of ${chapterList.length} chapters:

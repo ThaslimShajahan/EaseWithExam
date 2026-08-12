@@ -942,11 +942,34 @@ text rather than a filename — and it corrects the hand-typed casing
 (`CARRIER OF WORDS.pdf` → *Carrier of Words*; `8 Follow that dream.pdf` →
 *Follow That Dream*).
 
-Its units are multi-text like Poorvi's: unit 1 contains a second text, *Bharat
-Our Land*, starting page 23. So **per-text titles for Class 9 English need a
-third method** — an in-file large-font heading scan — since there is neither a
-contents page nor one file per text. Stage C should do that scan before seeding
-Class 9 English, and it is the only book of the 26 that needs it.
+Its units are multi-text like Poorvi's. An in-file heading scan finds **22
+candidate texts across the 8 units** (each unit is one prose piece plus one or
+two shorter pieces, usually poems).
+
+**But that scan is not verification, and Class 9 English should NOT be seeded at
+per-text level from it.** Two things went wrong while establishing this, both
+worth recording because they are the failure modes of the method itself:
+
+- A **20pt font threshold silently under-counted**, missing a third text in six
+  of the eight units. Lowering it to 15pt found them. There is no principled
+  threshold — it is tuned against the output, which is the shape of a method
+  that will quietly miss things on the next book.
+- Classifying a heading as *text* vs *activity section* by the content following
+  it **is not reliable**. "Weigh Your Words" was first read as an activity
+  heading because the page it sits on opens with a Dumb Charades exercise; the
+  content immediately after the heading is verse, so it is a poem. Read from the
+  page start it looks like one thing, from the heading like another.
+
+**Recommendation: seed Class 9 English at UNIT level — the 8 names verified from
+NCERT's own appendix — and add `CBSE Class 9::English` to `PARTIAL_SYLLABUS`.**
+That is exactly what the gate now exists for: the nodes still drive post-hoc
+snapping and the chapter pickers, but they do not force the model to file a text
+into a chapter list known to be incomplete. The literature lesson rule will
+return one lesson per text during the load; reconcile in Stage F and add the
+per-text rows from what the loader actually found, rather than from a heading
+scan whose threshold was tuned by hand.
+
+It is the only book of the 26 that cannot be fully verified from the corpus.
 
 #### The retired Class 8 English rows were half right
 

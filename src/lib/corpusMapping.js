@@ -32,23 +32,49 @@
  * every Class 10 English title in front of the student twice.
  */
 
-/** First Flight's units, in printed order, from its own contents page.
+/** First Flight's nine numbered units, in printed order, from its own contents
+ * page (pages 11-12 of the textbook file).
  *
- * `chapters` is a LIST because chapter 3 is one printed chapter containing two
- * distinct stories, split into two chapter rows per the per-text ruling. Every
- * other unit has exactly one. A workbook file therefore resolves to a unit
- * deterministically, and to a chapter deterministically EXCEPT at unit 3, where
- * the two candidates are handed to matchSyllabusChapter rather than guessed. */
+ * `chapters` is a LIST because TWO of the nine are one printed chapter holding
+ * several distinct texts, split into separate chapter rows per the per-text
+ * ruling:
+ *
+ *   unit 3  Two Stories about Flying  -> I. His First Flight · II. Black Aeroplane
+ *   unit 5  Glimpses of India         -> I. A Baker from Goa · II. Coorg · III. Tea from Assam
+ *
+ * An earlier reading of only page 11 caught unit 3 and reported it as the sole
+ * case. Page 12 has unit 5, with three. Recorded because "the one exception"
+ * is the shape of claim that stops people looking for the second one.
+ *
+ * So a workbook file resolves to a unit deterministically, and to a chapter
+ * deterministically for seven of the nine; units 3 and 5 hand their candidates
+ * to matchSyllabusChapter rather than guessing. */
 export const FIRST_FLIGHT_UNITS = [
-  { unit: 'A Letter to God',                     chapters: ['A Letter to God'] },
+  { unit: 'A Letter to God',                      chapters: ['A Letter to God'] },
   { unit: 'Nelson Mandela: Long Walk to Freedom', chapters: ['Nelson Mandela: Long Walk to Freedom'] },
-  { unit: 'Two Stories about Flying',            chapters: ['His First Flight', 'Black Aeroplane'] },
-  { unit: 'From the Diary of Anne Frank',        chapters: ['From the Diary of Anne Frank'] },
-  { unit: 'Glimpses of India',                   chapters: ['Glimpses of India'] },
-  { unit: 'Mijbil the Otter',                    chapters: ['Mijbil the Otter'] },
-  { unit: 'Madam Rides the Bus',                 chapters: ['Madam Rides the Bus'] },
-  { unit: 'The Sermon at Benares',               chapters: ['The Sermon at Benares'] },
-  { unit: 'The Proposal',                        chapters: ['The Proposal'] },
+  { unit: 'Two Stories about Flying',             chapters: ['His First Flight', 'Black Aeroplane'] },
+  { unit: 'From the Diary of Anne Frank',         chapters: ['From the Diary of Anne Frank'] },
+  { unit: 'Glimpses of India',                    chapters: ['A Baker from Goa', 'Coorg', 'Tea from Assam'] },
+  { unit: 'Mijbil the Otter',                     chapters: ['Mijbil the Otter'] },
+  { unit: 'Madam Rides the Bus',                  chapters: ['Madam Rides the Bus'] },
+  { unit: 'The Sermon at Benares',                chapters: ['The Sermon at Benares'] },
+  { unit: 'The Proposal',                         chapters: ['The Proposal'] },
+];
+
+/** First Flight's ten poems, which are interleaved through the numbered units,
+ * unnumbered, and have no files of their own — they sit inside the prose chapter
+ * PDFs. Printed order, with the unit each follows. */
+export const FIRST_FLIGHT_POEMS = [
+  { chapter: 'Dust of Snow',                  afterUnit: 1 },
+  { chapter: 'Fire and Ice',                  afterUnit: 1 },
+  { chapter: 'A Tiger in the Zoo',            afterUnit: 2 },
+  { chapter: 'How to Tell Wild Animals',      afterUnit: 3 },
+  { chapter: 'The Ball Poem',                 afterUnit: 3 },
+  { chapter: 'Amanda!',                       afterUnit: 4 },
+  { chapter: 'The Trees',                     afterUnit: 5 },
+  { chapter: 'Fog',                           afterUnit: 6 },
+  { chapter: 'The Tale of Custard the Dragon', afterUnit: 7 },
+  { chapter: 'For Anne Gregory',              afterUnit: 8 },
 ];
 
 /* ── Book table ──────────────────────────────────────────────────────────
