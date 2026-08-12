@@ -29,6 +29,9 @@ import { createServer } from 'node:http';
 import { readdirSync, statSync, readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
 import { resolve, dirname, join, relative, extname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// Plain ESM with no imports of its own, so it loads in node exactly as it does
+// in the browser — one mapping table, not a copy that can drift.
+import { resolveCorpusFile, workbookUnitFor } from '../src/lib/corpusMapping.js';
 
 const ROOT   = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /**
@@ -94,9 +97,63 @@ function subjectForFolder(folder) {
 // suffixes are front matter (an = answers, ps = prelims, aN = appendix).
 // Loading those as chapters would put "Answers" in the chapter list.
 const NCERT_CODE = /^([a-z]{4})(\d)([a-z0-9]{2})$/i;
+
+/* The non-STEM folders are largely HAND-NAMED, so the code check above sees
+ * nothing to reject in them. Every one of these is front matter that would
+ * otherwise load as a chapter:
+ *
+ *   *INDEX.pdf / CURIOSITY INTEX.pdf   contents pages (note the typo)
+ *   FIRST FLIGHT Text Book...pdf       prelims of the whole book
+ *   PART 1.pdf                         Class 8 Social prelims
+ *   full unit.pdf                      an AUDIO TRANSCRIPT APPENDIX, despite
+ *                                      the name promising the opposite
+ *   POLITICAL MAP.pdf                  a map plate
+ *
+ * This is not hypothetical for STEM either: `Exploration text book for 9.pdf`
+ * IS currently loaded, and is why CBSE Class 9 Science carries a 21-chunk
+ * chapter called "Exploration" alongside the real "Exploration: Entering the
+ * World of Secondary Science". Pre-existing, recorded in ACTION_ITEMS, and NOT
+ * repaired here — this only stops it recurring. The file is checkpointed, so
+ * adding it here does not trigger a reload. */
+/* ANCHOR ANYTHING THAT COULD APPEAR INSIDE A CHAPTER TITLE. The dry-run caught
+ * an unanchored /political map/ eating a real chapter — Class 8 Social's
+ * `THEME B CHAPTER 2 RESHAPING INDIA_S POLITICAL MAP.pdf` — while the intended
+ * target was a standalone map plate named exactly `POLITICAL MAP.pdf`. A
+ * front-matter rule that silently drops a chapter is worse than one that lets
+ * front matter through: the extra chapter is visible in the chapter list, the
+ * missing one is not. */
+const FRONT_MATTER_NAME = [
+  /\bindex\b/i,           // "... INDEX.pdf"
+  /\bintex\b/i,           // the "CURIOSITY INTEX.pdf" typo
+  /text\s*book/i,         // "... Text Book for class 10", "Exploration text book for 9"
+  /^full unit/i,
+  /^part\s*\d+$/i,        // "PART 1" — a whole volume's prelims, not a chapter
+  /^political map$/i,     // the standalone map plate ONLY — see the note above
+  /^learning material/i,
+];
+
+/* Book-title-as-filename. These carry no marker at all — the only thing that
+ * identifies them is knowing the book. Listed explicitly rather than pattern-
+ * matched, because a pattern loose enough to catch them would eat real
+ * chapters. Verified in Stage B: Kaveri.pdf is Kaveri's front matter and
+ * GANITA MANJARI.pdf is the Class 9 Maths book file. */
+const FRONT_MATTER_EXACT = new Set([
+  'kaveri',
+  'ganita manjari',
+  'exploration text book for 9',
+  'first flight text book for class 10',
+  // Class 9 Social's whole-volume prelims: 24 pages of title page, foreword and
+  // the contents page. Same role as Class 8 Social's `PART 1.pdf`, but named
+  // after the book instead, so no pattern catches it.
+  'understanding society india and beyond',
+]);
+
 function isFrontMatter(file) {
-  const m = basename(file, extname(file)).match(NCERT_CODE);
-  return !!m && !/^\d{2}$/.test(m[3]);
+  const name = basename(file, extname(file)).trim();
+  const m = name.match(NCERT_CODE);
+  if (m) return !/^\d{2}$/.test(m[3]);
+  if (FRONT_MATTER_EXACT.has(name.toLowerCase().replace(/\s+/g, ' '))) return true;
+  return FRONT_MATTER_NAME.some((re) => re.test(name));
 }
 
 function walk(dir, out = []) {
@@ -108,9 +165,17 @@ function walk(dir, out = []) {
   return out;
 }
 
+/* Hindi is deferred: every Hindi PDF carries a legacy Devanagari encoding rather
+ * than Unicode, so the text layer extracts as mojibake ("gfjgj dkdk" for
+ * हरिहर काका). Not a scan and not corrupt — the glyphs are there, the character
+ * map is not. Skipped explicitly and COUNTED, rather than falling out of
+ * resolveCorpusFile() as an unremarkable null, so the number stays visible.
+ * See ACTION_ITEMS: revisit with forceVision. */
+const HINDI_DIR = /hindi|aroh|kshitij|krithika|sparsh|sanchayan/i;
+
 function buildQueue() {
   const jobs = [];
-  const skipped = { nonStem: 0, frontMatter: 0, unknownClass: 0 };
+  const skipped = { hindi: 0, unmapped: 0, unmappedFiles: [], frontMatter: 0, unknownClass: 0 };
 
   for (const abs of walk(CORPUS).sort()) {
     const rel   = relative(CORPUS, abs).replace(/\\/g, '/');
@@ -120,12 +185,60 @@ function buildQueue() {
     const classLevel = CLASS_BY_TOP[parts[0].toLowerCase()];
     if (!classLevel) { skipped.unknownClass++; continue; }
 
-    const subject = parts.length > 1 ? subjectForFolder(parts[1]) : null;
-    if (!subject) { skipped.nonStem++; continue; }
+    if (HINDI_DIR.test(rel)) { skipped.hindi++; continue; }
 
+    /* Front matter is decided BEFORE any book resolution. It is a property of
+     * the file, not of the mapping, and running it later mislabels things: the
+     * workbook's own prelims (`jewe2ps.pdf`) reached the workbook branch first
+     * and were counted "unmapped", which reads as a gap in the book table when
+     * it is simply a prelims page being correctly ignored. Same outcome, wrong
+     * diagnosis — and the diagnosis is the reason the counters exist. */
     if (isFrontMatter(abs)) { skipped.frontMatter++; continue; }
 
-    jobs.push({ rel, abs, subject, classLevel, examType: `CBSE Class ${classLevel}` });
+    /* STEM keeps its original path, untouched. 148 files were classified by
+     * subjectForFolder() and are checkpointed against it; re-deriving them
+     * through the new mapping would risk a different subject for an already
+     * loaded file, which is a corpus problem for zero gain. */
+    const stem = parts.length > 1 ? subjectForFolder(parts[1]) : null;
+
+    let job = null;
+    if (stem) {
+      job = { rel, abs, subject: stem, classLevel, examType: `CBSE Class ${classLevel}`, book: null };
+    } else {
+      const m = resolveCorpusFile(rel);
+      // Named, not just counted: an unmapped file is a book table gap, and a
+      // bare count hides which book is missing.
+      if (!m) { skipped.unmapped++; skipped.unmappedFiles.push(rel); continue; }
+
+      job = {
+        rel, abs,
+        subject:  m.subject,
+        classLevel,
+        examType: m.examType,
+        book:     m.book,
+        contentTypeOverride: m.contentTypeOverride ?? null,
+      };
+
+      /* The workbook attaches to the reader: its chapters must be First
+       * Flight's, not names invented from its own unit headings. Units 3 and 5
+       * carry several candidates, which are handed to matchSyllabusChapter
+       * rather than resolved here. */
+      if (m.attachesTo) {
+        const wu = workbookUnitFor(basename(abs));
+        if (!wu) { skipped.unmapped++; skipped.unmappedFiles.push(`${rel} (workbook file with no unit ordinal)`); continue; }
+        job.forceUnit         = wu.unit;
+        job.chapterCandidates = wu.chapters;
+      }
+
+      /* A sanity check the STEM path never needed: exam_type from the mapping
+       * must agree with the folder the file physically sits in. Disagreement
+       * means the book table and the corpus layout have drifted. */
+      if (m.examType !== `CBSE Class ${classLevel}`) {
+        throw new Error(`exam_type mismatch for ${rel}: mapping says ${m.examType}, folder says CBSE Class ${classLevel}`);
+      }
+    }
+
+    jobs.push(job);
   }
   return { jobs, skipped };
 }
@@ -158,7 +271,7 @@ function startCorpusServer() {
 /* ── The per-file pipeline, run inside the browser ──────────────────── */
 
 async function processFile(page, job, corpusOrigin) {
-  return page.evaluate(async ({ url, subject, examType, source }) => {
+  return page.evaluate(async ({ url, subject, examType, source, forceUnit, chapterCandidates, contentTypeOverride }) => {
     const [{ extractPagesWithVision }, ce, { adminSaveKnowledgeChunks }] = await Promise.all([
       import('/src/lib/pdfVision.js'),
       import('/src/lib/contentExtraction.js'),
@@ -180,13 +293,30 @@ async function processFile(page, job, corpusOrigin) {
 
     // Chapter name comes from the AI-read lesson title, not the filename —
     // NCERT short codes like "jesc101.pdf" carry no title at all.
+    //
+    // EXCEPT for a workbook, whose content belongs to the READER's chapters.
+    // Left to its own titles it would coin "Unit 3" or "Two Stories about
+    // Flying" — the second of which matches no chapter row at all, because that
+    // printed chapter was split into two. Snapping onto the supplied candidates
+    // is what makes the exercises land on the texts they are about.
+    const resolveChapter = (lesson) => {
+      const title = lesson.title || 'Untitled';
+      if (!chapterCandidates?.length) return title;
+      if (chapterCandidates.length === 1) return chapterCandidates[0];
+      return ce.matchSyllabusChapter(title, chapterCandidates);
+    };
+
     const rows = lessons.flatMap((lesson) => ce.buildKbRows({
       lesson,
-      chapterName: lesson.title || 'Untitled',
-      unit, subject, examType, source,
+      chapterName: resolveChapter(lesson),
+      unit: forceUnit ?? unit,
+      subject, examType, source,
       figures: [], equationsByPage: ex.equationsByPage,
     }));
     if (!rows.length) return { skipped: 'no chunks', pages: ex.pageCount };
+
+    // A workbook is exercises, whatever the classifier decided per chunk.
+    if (contentTypeOverride) for (const r of rows) r.content_type = contentTypeOverride;
 
     const inserted = await adminSaveKnowledgeChunks(rows);
 
@@ -199,7 +329,15 @@ async function processFile(page, job, corpusOrigin) {
       inserted: inserted?.length ?? 0,
       typed: rows.filter((r) => r.content_type).length,
     };
-  }, { url: `${corpusOrigin}/${job.rel}`, subject: job.subject, examType: job.examType, source: `corpus:${job.rel}` });
+  }, {
+    url: `${corpusOrigin}/${job.rel}`,
+    subject: job.subject,
+    examType: job.examType,
+    source: `corpus:${job.rel}`,
+    forceUnit:           job.forceUnit ?? null,
+    chapterCandidates:   job.chapterCandidates ?? null,
+    contentTypeOverride: job.contentTypeOverride ?? null,
+  });
 }
 
 /* ── Main ───────────────────────────────────────────────────────────── */
@@ -209,17 +347,35 @@ const done  = loadDone();
 const queue = jobs.filter((j) => !done.has(j.rel)).slice(0, LIMIT);
 
 console.log(`\ncorpus       : ${CORPUS}`);
-console.log(`STEM files   : ${jobs.length}   (skipped: ${skipped.nonStem} non-STEM, ${skipped.frontMatter} front-matter, ${skipped.unknownClass} unknown-class)`);
+console.log(`mapped files : ${jobs.length}   (skipped: ${skipped.hindi} Hindi (deferred), ${skipped.unmapped} unmapped, ${skipped.frontMatter} front-matter, ${skipped.unknownClass} unknown-class)`);
+if (skipped.unmappedFiles.length) {
+  console.log('unmapped     :');
+  for (const f of skipped.unmappedFiles) console.log(`   ${f}`);
+}
 console.log(`already done : ${done.size}`);
 console.log(`to process   : ${queue.length}   concurrency=${CONCURRENCY}   figures=OFF`);
 
+/* Grouped by class so the queue can be reviewed and run in class-sized batches,
+ * and by book so a multi-book subject is visibly two lines rather than one
+ * summed one — which is the whole point of the book dimension. */
 const bySubject = {};
-for (const j of jobs) {
-  const k = `Class ${j.classLevel} ${j.subject}`;
+for (const j of queue.length ? queue : jobs) {
+  const k = `Class ${j.classLevel} ${j.subject}${j.book ? ` / ${j.book}` : ''}`;
   bySubject[k] = (bySubject[k] ?? 0) + 1;
 }
-console.log('\nbreakdown:');
-for (const [k, v] of Object.entries(bySubject).sort()) console.log(`  ${k.padEnd(28)} ${v}`);
+console.log(`\nbreakdown (${queue.length ? 'QUEUED' : 'all mapped'}):`);
+let lastClass = null;
+for (const [k, v] of Object.entries(bySubject).sort()) {
+  const cls = k.split(' ').slice(0, 2).join(' ');
+  if (cls !== lastClass) { console.log(`  ── ${cls}`); lastClass = cls; }
+  console.log(`     ${k.replace(/^Class \d+ /, '').padEnd(56)} ${String(v).padStart(3)}`);
+}
+
+const wb = (queue.length ? queue : jobs).filter((j) => j.contentTypeOverride);
+if (wb.length) {
+  console.log(`\n  workbook files (content_type forced, chapters snapped to the reader): ${wb.length}`);
+  for (const j of wb) console.log(`     ${basename(j.abs).padEnd(18)} unit "${j.forceUnit}" -> ${j.chapterCandidates.join(' | ')}`);
+}
 
 if (DRY_RUN) {
   console.log('\nDRY RUN — nothing fetched, nothing written.\n');
