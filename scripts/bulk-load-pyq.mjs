@@ -33,10 +33,23 @@ import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getAuth } from './firebaseAdmin.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PYQ  = resolve(ROOT, 'easy with exam/PYQ');
 const BASE = process.env.BASE_URL || 'http://localhost:5173';
+
+/**
+ * Firebase uid of an ACTIVE admin. Required since 20260812020000 moved
+ * pyq_questions writes behind admin_insert_pyq_rows, which calls
+ * assert_verified_admin(p_caller) — that raises unless verified_uid() (read
+ * from the page's Firebase JWT) equals p_caller. Before that migration this
+ * script wrote to the table with no authentication at all, because the table
+ * carried an `ALL {public}` RLS policy.
+ *
+ *   ADMIN_UID=<uid> BASE_URL=http://localhost:5175 node scripts/bulk-load-pyq.mjs
+ */
+const ADMIN_UID = process.env.ADMIN_UID;
 const CHECKPOINT = resolve(ROOT, '.pyq-load-checkpoint.json');
 
 const arg = (n, d) => { const h = process.argv.find((a) => a.startsWith(`--${n}=`)); return h ? h.split('=').slice(1).join('=') : d; };
@@ -128,8 +141,8 @@ function startPyqServer() {
 }
 
 /* ── The per-file pipeline, run inside the browser ────────────────────────── */
-async function processFile(page, job, origin) {
-  return page.evaluate(async ({ url, subject, year, forceVision, pageRange, keyPage, source }) => {
+async function processFile(page, job, origin, adminUid) {
+  return page.evaluate(async ({ url, subject, year, forceVision, pageRange, keyPage, source, adminUid }) => {
     const [{ extractPagesWithVision }, ce, { getChapters }, { savePYQRows }] = await Promise.all([
       import('/src/lib/pdfVision.js'),
       import('/src/lib/contentExtraction.js'),
@@ -200,8 +213,11 @@ async function processFile(page, job, origin) {
       explanation:   q.explanation ? stripBranding(q.explanation) : q.explanation,
     }));
 
+    // callerUid is explicit: savePYQRows falls back to getCallerUid(), which
+    // reads an admin sessionStorage key this page does not have.
     const saved = await savePYQRows({
       questions: clean, examType: 'NEET', subject, year, source, isMixed, syllabusChapters,
+      callerUid: adminUid,
     });
 
     // Measured, so max_tokens can be right-sized from data rather than guessed.
@@ -221,7 +237,7 @@ async function processFile(page, job, origin) {
       bySubject: clean.reduce((a, q) => { const k = isMixed ? (q.subject || 'Mixed') : subject; a[k] = (a[k] ?? 0) + 1; return a; }, {}),
       paperTitle, totalMarks,
     };
-  }, { url: `${origin}/${encodeURIComponent(job.file)}`, subject: job.subject, year: job.year, forceVision: job.forceVision, pageRange: job.pageRange ?? null, keyPage: job.keyPage ?? null, source: `pyq:neet-${job.year}-${job.subject.toLowerCase()}` });
+  }, { url: `${origin}/${encodeURIComponent(job.file)}`, subject: job.subject, year: job.year, forceVision: job.forceVision, pageRange: job.pageRange ?? null, keyPage: job.keyPage ?? null, source: `pyq:neet-${job.year}-${job.subject.toLowerCase()}`, adminUid });
 }
 
 /* ── Main ─────────────────────────────────────────────────────────────────── */
@@ -261,6 +277,33 @@ const page    = await browser.newPage();
 page.on('console', (m) => { if (m.type() === 'error') console.log(`      [browser] ${m.text().slice(0, 160)}`); });
 await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
 
+/* Sign the page in as a real admin BEFORE any file is processed. Doing it here
+ * rather than per-file means a bad ADMIN_UID fails immediately, instead of
+ * after the first document's extraction has already been paid for. */
+if (!ADMIN_UID) {
+  console.error('\nADMIN_UID is required. pyq_questions writes go through');
+  console.error('admin_insert_pyq_rows, which refuses an unauthenticated caller.');
+  console.error('Usage: ADMIN_UID=<firebase-uid> node scripts/bulk-load-pyq.mjs\n');
+  await browser.close(); server.close();
+  process.exit(1);
+}
+{
+  const customToken = await getAuth().createCustomToken(ADMIN_UID);
+  const signedInAs = await page.evaluate(async (token) => {
+    const { signInWithMintedToken } = await import('/src/lib/devAuth.js');
+    return signInWithMintedToken(token);
+  }, customToken);
+
+  // Assert rather than assume: a token for the wrong uid would otherwise
+  // surface much later as an opaque "Access denied" from assert_verified_admin.
+  if (signedInAs !== ADMIN_UID) {
+    console.error(`\nSigned in as ${signedInAs}, expected ${ADMIN_UID} — aborting.\n`);
+    await browser.close(); server.close();
+    process.exit(1);
+  }
+  console.log(`Signed in as admin ${ADMIN_UID}\n`);
+}
+
 let ok = 0, failed = 0;
 const failures = [];
 
@@ -273,7 +316,7 @@ for (let i = 0; i < queue.length; i++) {
     attempt++;
     const t0 = Date.now();
     try {
-      const r = await processFile(page, job, origin);
+      const r = await processFile(page, job, origin, ADMIN_UID);
       const secs = ((Date.now() - t0) / 1000).toFixed(0);
       if (r.skipped) {
         console.log(`${label}  SKIPPED (${r.skipped})  pages=${r.pages} vision=${r.visionCalls} ${secs}s`);

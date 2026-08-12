@@ -798,6 +798,41 @@ were not audited at all. Scans are safe (Finding 5).
 
 ---
 
+## ⚠ OPEN — three MORE anon-writable content tables (extends the pyq lockdown)
+
+Found 2026-08-12 while checking whether the bulk-load scripts still work. The
+`pyq_open` pattern closed in 20260812030000 is repeated on three sibling tables:
+
+| table | policy | rows at risk |
+|---|---|---|
+| `knowledge_base` | `knowledge_base_open` **ALL {public}** | 4,377 chunks + HNSW embeddings |
+| `syllabus_nodes` | `sn_admin_write` **ALL {anon,authenticated}** | the whole curated chapter vocabulary |
+| `content_figures` | INSERT/UPDATE/DELETE each **{public}** | 89 figure rows |
+| `study_notes` | SELECT only, writes via `admin_upsert_study_note` | ✅ already correct |
+
+`sn_admin_write` is worth calling out by name: it *reads* as an admin-only
+policy and is granted to `anon`. Nothing about the name suggests the hole.
+
+`study_notes` shows the target shape — public read, writes behind a
+`SECURITY DEFINER` RPC with `assert_verified_admin`.
+
+**Same class of vulnerability found three separate times now** (P0.75 student
+tables, `pyq_questions`, these three). The write-lockdown work should not be
+considered finished until these are closed. **Sequence AFTER Step 3/4
+completes**, not before — the pyq lockdown is one migration from done and must
+not be destabilised.
+
+Shape of the fix, per table: enumerate every writer first (that discipline is
+what made the pyq lockdown land without an outage), add guarded RPCs, drop the
+permissive policies, keep SELECT open. `knowledge_base` has the most writers —
+`adminSaveKnowledgeChunks`, the bulk corpus loader, and `adminClearAllData`.
+
+Note the ordering hazard learned on 20260812020000/030000: create the RPCs and
+deploy the client FIRST, drop the policies SECOND, or admin writes break in the
+window between.
+
+---
+
 ## ⚠ OPEN — anyone with the anon key can rewrite or delete the whole question bank
 
 Found 2026-08-12 while checking whether an archive script could write via the
