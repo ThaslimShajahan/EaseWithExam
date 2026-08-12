@@ -798,6 +798,40 @@ were not audited at all. Scans are safe (Finding 5).
 
 ---
 
+## BLOCKED — the PYQ bulk loader is NEET-only; the 9 ready Kerala files cannot go through it
+
+Stopped here deliberately on 2026-08-12 rather than rushing the change.
+
+`scripts/bulk-load-pyq.mjs` is not exam-type agnostic. Four things are
+hardcoded to NEET:
+
+| line | hardcoded |
+|---|---|
+| `PYQ` const | `easy with exam/PYQ` — the Kerala files are in OneDrive `Question Paper/Model 10th PYQ/...` |
+| `processFile` | `extractPagesWithVision(buf, { examType: 'NEET' })` |
+| `savePYQRows` | `examType: 'NEET'` |
+| `source` | `` `pyq:neet-${year}-${subject}` `` |
+
+Run as-is, the 9 Kerala files would be saved as **NEET** questions with a
+`pyq:neet-*` source. That is worse than not loading them.
+
+**The fix is mechanical, not ambiguous** — move `examType` and the corpus dir
+into the job manifest / env, derive `source` from `examType`, keep every default
+identical so the NEET path is untouched. ~30 lines. It was NOT done tonight
+because it is real surgery on the only loader that works, and doing it on a
+thin context budget and then running an unattended token-spending production
+load is exactly the pattern that produced tonight's other incidents.
+
+**Prerequisites already in place** — nothing else blocks the 9 files:
+- `Kerala State Class 10` syllabus_nodes seeded (18 nodes, Part 1)
+- `PARTIAL_SYLLABUS_EXAM_TYPES` keeps the closed list off for Kerala
+- The 9 files have clean text layers (no vision cost) and are English medium
+
+**Do not use `--reset`** when picking this up: all 14 NEET jobs are checkpointed
+and re-running them would duplicate the entire NEET corpus.
+
+---
+
 ## OPEN — the Kerala `Question Paper` corpus: audited 2026-08-12, none of it loadable yet
 
 125 PDFs at `OneDrive/Documents/ewe_data/Question Paper`, verified by opening

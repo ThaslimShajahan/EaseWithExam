@@ -101,6 +101,23 @@ export function normaliseMarks(raw) {
   return { value: rounded, note: `marks ${n} → ${rounded}` };
 }
 
+/**
+ * Exam types whose syllabus_nodes are known to be INCOMPLETE.
+ *
+ * For these, runPYQExtraction does NOT send the closed chapter list to the
+ * model. A partial closed list is worse than none: it forces every
+ * out-of-scope question into the nearest listed chapter, producing a
+ * confident wrong tag instead of a visibly unsnapped one.
+ *
+ * `Kerala State Class 10` — seeded from the SCERT Standard X PART 1 textbooks
+ * only; the Part 2 volumes are absent from the corpus. Remove this entry the
+ * moment Part 2 is seeded, or the model will keep guessing chapter names it
+ * did not need to guess.
+ */
+export const PARTIAL_SYLLABUS_EXAM_TYPES = new Set([
+  'Kerala State Class 10',
+]);
+
 export function matchSyllabusChapter(guess, chapterNames) {
   if (!guess || !chapterNames?.length) return guess;
   const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -235,7 +252,23 @@ export async function runPYQExtraction({ rawText, examType, subject, year, onPro
   // actual chapter list turns that from fuzzy string matching into
   // multiple-choice.
   const chapterList = (syllabusChapters ?? []).filter(Boolean);
-  const chapterRule = chapterList.length
+
+  /* The closed list is only safe when the syllabus is COMPLETE. chapterRule
+   * tells the model every chapter "MUST be copied EXACTLY" and to fall back to
+   * "Other" only if a question "fits none of them at all" — so a half-complete
+   * list forces out-of-scope questions into the nearest listed chapter, which
+   * is a confident WRONG tag rather than a visible orphan.
+   *
+   * `Kerala State Class 10` is seeded from the SCERT Part 1 textbooks only;
+   * the Part 2 volumes do not exist in the corpus (see
+   * scripts/seed-kerala-class10-syllabus.mjs). Its nodes still drive post-hoc
+   * matchSyllabusChapter() snapping and the chapter pickers — they just do not
+   * constrain this prompt. Remove the entry once Part 2 is seeded.
+   *
+   * Scoped by exam_type so CBSE and NEET, whose syllabi ARE complete, keep the
+   * closed list exactly as before. */
+  const partialSyllabus = PARTIAL_SYLLABUS_EXAM_TYPES.has(examType);
+  const chapterRule = (chapterList.length && !partialSyllabus)
     ? `\nCHAPTER — this is a CLOSED LIST. Every question's "chapter" MUST be copied
 EXACTLY, character for character, from this list of ${chapterList.length} chapters:
 ${chapterList.map((c) => `  - ${c}`).join('\n')}
