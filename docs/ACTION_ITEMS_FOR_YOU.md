@@ -867,6 +867,41 @@ client — `syllabus.js` selects `book` and PostgREST rejects a select for a
 missing column. The reverse order is safe (the old client never asks for it), so
 unlike `20260810070000` these do **not** have to ship in one window.
 
+### ⏸ DEFERRED — all Hindi books (~90 files): the text layer is not Unicode
+
+**Owner decision 2026-08-12: defer Hindi, load everything else.** Revisit with
+vision-based extraction when there is room for the token spend.
+
+Every Hindi PDF carries a **legacy Devanagari encoding** (Kruti-Dev family), not
+Unicode. pdfjs extracts the glyph bytes faithfully and they are meaningless:
+
+```
+jhsy101.pdf  ->  "gfjgj dkdk"      is  हरिहर काका  (Harihar Kaka, Sanchayan ch 1)
+jhsp101.pdf  ->  "i| [kaM"          is  पद्य खंड     (Padya Khand, "Poetry Section")
+jhks101.pdf  ->  "dkO; [kaM"        is  काव्य खंड    (Kavya Khand, "Poetry Section")
+```
+
+This is **not** a scan and not a corrupt file — the glyphs are present, the
+character map is not. Nothing downstream can fix it: chapter names, chunk text
+and verbatim extracts would all be mojibake, and `matchSyllabusChapter` would
+snap real questions onto garbage names.
+
+**Affects:** Class 8 Hindi (11 files), Class 9 Hindi (13), Class 10 Hindi A
+(13 after the duplicate is dropped), Class 10 Hindi B (20), Class 11 Aroh (17).
+
+**Three routes, and why 3 is the one to pick up:**
+
+1. ~~Defer~~ **← chosen for now.** Zero risk, unblocks the other ~270 files.
+2. **Kruti-Dev → Unicode mapping table.** No token cost, but the mapping varies
+   by font and by book, and a wrong mapping produces plausible-looking wrong
+   Hindi — the worst failure mode of the three.
+3. **`forceVision`.** Reads the RENDERED page, so the encoding never matters.
+   Works today with no new code. ~90 files of real token spend, which is the
+   only reason it is not being done now.
+
+**Do NOT attempt route 2 casually.** Silent mojibake that looks like Hindi is
+harder to detect than the obvious garbage above.
+
 ### Where the original design stood (kept for context)
 
 ### Where things stand

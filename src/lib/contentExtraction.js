@@ -597,7 +597,16 @@ const CORE_TYPES = ['definition', 'exercise', 'activity', 'summary', 'diagram', 
 
 export const SUBJECT_FAMILIES = {
   stem:       [...CORE_TYPES, 'theorem', 'law', 'formula', 'solved_example', 'derivation'],
-  literature: [...CORE_TYPES, 'literary_prose', 'poem', 'drama', 'author_note'],
+  /* 'procedure' is shared with commerce, and it is here because a reader is not
+   * only literature: Hornbill's second half is a WRITING SKILLS section —
+   * Note-making, Summarising, Sub-titling, Essay-writing, Letter-writing,
+   * Creative Writing (files kehb111-116, read from the book's own contents page
+   * in Stage B). "How to make notes" is a method, not a literary text, and
+   * without this it would have been forced into 'prose' or 'literary_prose' —
+   * the second of which would have corrupted the very distinction
+   * literary_prose exists to draw. Costs no migration: 'procedure' is already
+   * in the 21-value union via commerce. */
+  literature: [...CORE_TYPES, 'literary_prose', 'poem', 'drama', 'author_note', 'procedure'],
   social:     [...CORE_TYPES, 'event', 'case_study', 'source_extract', 'map_work'],
   // 'formula' and 'solved_example' are shared with stem, not duplicated concepts:
   // Statistics for Economics computes real means and Accountancy works real
@@ -734,6 +743,9 @@ const CONTENT_TYPE_GUIDES = {
     "poem"           the poem text itself, or a stanza of it
     "drama"          the play text itself — a scene, or a passage of dialogue
     "author_note"    the "About the author" / "About the poet" box
+    "procedure"      a composition or study METHOD being taught — "Note-making",
+                     "Summarising", "Letter-writing". A reader's Writing Skills
+                     section is procedures, not literature
     "definition"     a term being defined — a literary device, a glossed word
     "diagram"        content whose substance is an illustration and its caption
     "exercise"       UNSOLVED questions set for the student — comprehension
@@ -746,7 +758,9 @@ const CONTENT_TYPE_GUIDES = {
   "prose" is writing ABOUT the book. A story is literary_prose. An editor's
   foreword is prose. NEVER label the literary text itself as "prose".
   "summary" means a recap the book prints. If the book prints none, there is
-  none — do not write a plot summary and label it that.`,
+  none — do not write a plot summary and label it that.
+  "procedure" vs "exercise": teaching the student HOW to summarise is a
+  procedure; asking them to summarise a given passage is an exercise.`,
 
   social: `    "event"          a dated historical happening, narrated as such
     "case_study"     a named, bounded real-world example the chapter reasons

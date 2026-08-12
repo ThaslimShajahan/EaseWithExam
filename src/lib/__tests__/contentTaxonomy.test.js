@@ -156,6 +156,18 @@ describe('content_type scoping', () => {
     expect(SUBJECT_FAMILIES.social).not.toContain('poem');
   });
 
+  /* Stage B, from Hornbill's own contents page: files kehb111-116 are a WRITING
+   * SKILLS section (Note-making, Summarising, Letter-writing...), not the poems
+   * an earlier reading of the file codes assumed. A reader is not only
+   * literature, and without 'procedure' those six would have been forced into
+   * 'literary_prose' — corrupting the exact distinction it exists to draw. */
+  it('offers literature `procedure` for a reader\'s Writing Skills section', () => {
+    expect(SUBJECT_FAMILIES.literature).toContain('procedure');
+    expect(promptGuideFor('English').contentTypes).toContain('Writing Skills');
+    // Shared with commerce, so it adds nothing to the union and needs no migration.
+    expect(SUBJECT_FAMILIES.commerce).toContain('procedure');
+  });
+
   it('is a union of exactly 21 values, adding 10 to the original 11', () => {
     expect(CONTENT_TYPES.size).toBe(21);
     for (const t of ORIGINAL_TYPES) expect(CONTENT_TYPES.has(t)).toBe(true);

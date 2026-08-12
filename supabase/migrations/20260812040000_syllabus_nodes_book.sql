@@ -35,12 +35,28 @@
 -- NULL MEANS "single-book subject". Every existing row stays NULL and every
 -- existing reader keeps working: this is additive only.
 --
--- WITHIN-BOOK SECTIONS ARE NOT A COLUMN. Hornbill (prose kehb101-106, poetry
--- kehb111-116) and Woven Words (stories keww101-108, poems keww111-122, essays
--- keww131-137) restart numbering per SECTION inside one book. That is handled by
--- banding sort_order — prose 1-99, poetry 100-199, essays/drama 200-299 —
--- reusing the convention the NEET rows already use (1-14 class 11, 100-113
--- class 12, 900+ legacy). A third column for a display concern is not worth it.
+-- WITHIN-BOOK SECTIONS ARE NOT A COLUMN. A reader restarts numbering per SECTION
+-- inside one book. Hornbill, read from its own contents page in Stage B:
+--
+--   Reading Skills  pp 1-69    6 numbered prose chapters, with 5 poems
+--                              INTERLEAVED, unnumbered, and having no files of
+--                              their own -- they sit inside the prose chapter
+--                              PDFs (A Photograph in kehb101, The Laburnum Top
+--                              and The Voice of the Rain in kehb103, ...)
+--   Writing Skills  pp 70-100  6 numbered items (Note-making ... Creative
+--                              Writing), files kehb111-116
+--
+-- Handled by banding sort_order per PRINTED SECTION — Reading Skills 1-99,
+-- Writing Skills 100-199 — reusing the convention the NEET rows already use
+-- (1-14 class 11, 100-113 class 12, 900+ legacy). A third column for a display
+-- concern is not worth it.
+--
+-- An earlier draft of this comment banded "prose 1-99, poetry 100-199" on the
+-- assumption that kehb111-116 were Hornbill's poems. They are not; they are the
+-- Writing Skills section. Poems are not a section at all — they are interleaved
+-- through Reading Skills — so a prose/poetry banding would have split a section
+-- that the book keeps together and invented one it does not have. Recorded
+-- because the wrong version is the intuitive one.
 --
 -- NOT DONE HERE, DELIBERATELY: knowledge_base gets no `book` column. Its chunks
 -- are keyed on (exam_type, subject, chapter) and literature chapter names are
