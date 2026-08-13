@@ -396,8 +396,13 @@ No open questions remain for Phase 1 as scoped. New ones will accrue here as lat
 
 1. `src/admin/AdminContentLibrary.jsx` — `examTagFilter` crash. **Fixed and verified, committed.**
    Was a stale identifier from refactor `f93677a`; crashed *every* KB-view render, not just Kerala.
-2. `src/pages/ExamCenterPage.jsx:219` — **`EXAM_QTYPES` is not defined.** Same crash class, still open.
-   `defaultQTypesFor` is imported from `../lib/examPattern` and looks like the intended source.
+2. `src/pages/ExamCenterPage.jsx:219` — `EXAM_QTYPES` was not defined. **Fixed and verified, committed
+   (`e6a24d8`).** Replaced with `defaultQTypesFor(examType)` — already imported, already used correctly
+   elsewhere in this same file for the identical combined-board-string reason (see that call site's own
+   comment) — rather than a raw `EXAM_QTYPES` import, which would have fixed the crash but silently
+   reintroduced the exact "map keyed 'CBSE'/'Class 10', examType is combined 'CBSE Class 10'" bug this
+   file already patched once. Covered by `qTypeResolution.test.js`'s existing regression test for this
+   exact shape.
 3. Political Science "Equality" contamination — moot (data wiped). The new design prevents the class
    structurally: `keps101` choosing ordinal 3 against filename ordinal 1 is **rejected, not written**.
    Covered by a passing test.

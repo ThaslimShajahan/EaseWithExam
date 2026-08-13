@@ -333,11 +333,12 @@ well, matching every other admin RPC here. **This does not loosen security** —
 - real admin JWT with a spoofed `p_caller` → `42501 Access denied: caller mismatch`
 - genuine superadmin → **200**, row written
 
-**STILL BROKEN, not fixed here:** `admin_upsert_chapter_manifest` and `admin_approve_chapter_manifest`
-carry the identical grant and are equally unreachable from the app today. They belong to the
-content-engine rebuild (`docs/REBUILD_HANDOFF.md`), a separately phase-gated project, so they were
-reported to the owner rather than changed across a project boundary. **Whoever picks up that thread's
-admin surface must apply the same one-line grant fix first, or every save there will 401.**
+**FIXED since** (`9fbb388`, migration `20260813090000`): `admin_upsert_chapter_manifest` and
+`admin_approve_chapter_manifest` carried the identical grant and were equally unreachable from the app.
+Reported to the owner rather than fixed silently across a project boundary at the time this section was
+written; owner asked for the same one-line grant fix on both, applied and live-verified the same way as
+above (real superadmin JWT → 200 / manifest row created; anon, non-admin JWT, and spoofed `p_caller` all
+correctly denied). Both RPCs are `{anon,authenticated}` live, re-confirmed 2026-08-14.
 
 **General rule for this codebase:** never grant an RPC to `authenticated` alone. Grant to
 `anon, authenticated` and gate inside the body with `assert_verified_admin` / `assert_verified_self`.
