@@ -237,11 +237,26 @@ persisted, not just UI gating. Test row deleted after verification.
    had this data even in the original source JSON — inventing names would be fabricating a curriculum
    fact a student relies on). The Phase 3 admin editor's `named_combinations` list is specifically
    designed so these can be added later **without a schema change** — see §2.
-2. **Phase 3 (admin editor) not started.** Currently the only way to edit either table is direct
-   SQL/RPC calls, as done for §6's correction. Owner has asked for this next: per-stream editor
-   (locked-subject chips, choice-slot editor, optional-slot editor, named-combinations list), a
-   board-language editor, live validation (`count ≤ choose_from.length`, warn-not-block on
-   mismatched named combinations), changelog on every save.
+2. **Phase 3 (admin editor) DONE** — `7d2179f`, live-verified. **Admin → Platform → Streams**
+   (`src/admin/AdminStreamConfig.jsx`, registered in `AdminPlatformHub.jsx`). Per-board grouping,
+   per-stream editor (locked-subject chips, choice/optional slot editors, named-combinations list),
+   board-language editor whose "second-language choice" toggle stores **actual null** when off (the
+   thing `needsLanguageChoice()` branches on), live validation, changelog on every save.
+
+   **Validation lives in `src/lib/streamSelection.js`** (`validateStreamConfigDraft`,
+   `validateBoardLanguageDraft`), not in the component — same reason the two student-side rules do:
+   it's unit-tested against the real live configs and shared with the reader rather than being a
+   second definition that drifts. Errors block the save (`count > choose_from.length`, empty pool,
+   a subject both locked and choosable, bad `stream_key`); named-combination problems only **warn**,
+   because Kerala Commerce/Humanities legitimately ship zero combinations and an admin may save one
+   before adding the subject it refers to. A regression test asserts an empty `named_combinations`
+   array stays completely silent — no nudge, no auto-fill (the "no fabricated DHSE block names" rule).
+
+   **Two deliberate gaps, surfaced in the UI rather than faked:** no deactivate (the RPC has no
+   `p_is_active`) and no delete (there is no `admin_delete_stream_config` RPC at all). Both need a
+   migration if wanted.
+
+   ⚠️ **A grant bug was found here that also affects the content-engine thread** — see §11.
 3. **Phase 4 (downstream consumption) not started.** `useStudentScope()`, Practice Generator, Syllabus
    page scoping to a student's actual `subjects`/`academic_track` instead of the full board list; a
    "Complete your profile" nudge banner for existing 11-12 profiles with no `academic_track`; a
@@ -253,3 +268,74 @@ persisted, not just UI gating. Test row deleted after verification.
 5. **A genuine, unrelated security finding was discovered while building this feature** (extending
    `upsert_own_user`). It is NOT part of this feature's scope and is tracked in
    `docs/SECURITY_INCIDENTS.md`, not here — go there for it, not this file.
+
+---
+
+## 10. Phase 3 — admin editor (DONE)
+
+**Admin → Platform → Streams.** `src/admin/AdminStreamConfig.jsx`, registered as a tab in
+`src/admin/AdminPlatformHub.jsx`. Reads both tables directly (they are read-open), writes through
+`admin_upsert_stream_config` / `admin_upsert_board_language_config`, logs to the changelog on every
+save. See §9 item 2 for the behaviour summary and the two deliberate gaps (no deactivate, no delete).
+
+**Verified against live, not just unit-tested** — the same standard Phase 2 was held to, and it paid
+off again (§11). With a genuine Firebase admin session driven through the real UI:
+
+| Check | Result |
+|---|---|
+| All 6 live stream rows + both language configs render | PASS |
+| CBSE shows "No second-language choice — students are not asked" (null slot) | PASS |
+| Kerala shows "Second-language choice: pick 1 of 6" | PASS |
+| CBSE Commerce flagged `auto-select-all` (4-of-4) | PASS |
+| Kerala Science shows its two named combinations | PASS |
+| Unsatisfiable slot (pick 9 of 3) → Save disabled, "1 issue to fix" | PASS |
+| Unreachable named combination → warning shown, Save stays **enabled** | PASS |
+| Real save round-trip → "Saved with 1 warning" | PASS |
+| Browser console errors | none |
+
+Live data was left exactly as §4 documents it — the walkthrough's own test edit to CBSE Science's
+`named_combinations` was reverted to `[]` and all 6 rows re-verified afterwards.
+
+---
+
+## 11. ⚠️ The grant bug — affects the content-engine thread too
+
+**Found by the Phase 3 click-through, not by code review.** The editor's first real save failed with:
+
+```
+Save failed: permission denied for function admin_upsert_stream_config
+```
+
+`20260813040000` had granted both stream RPCs `EXECUTE` to **`authenticated` only**. That looks
+tighter than the rest of the admin surface. In this project it means **nobody at all**:
+
+> Auth here is **Firebase, not Supabase Auth**. A Firebase ID token carries no `role` claim, so
+> PostgREST never switches the request role — **every request runs as `anon`**, signed in or not.
+> A grant to `authenticated` alone can never be exercised by the real app.
+
+Isolated rather than assumed. One genuine Firebase ID token for a real superadmin, three RPCs
+differing only in their grant, same instant:
+
+| RPC | Grant | Result |
+|---|---|---|
+| `admin_list_onboarding_options` | `{anon,authenticated}` | **200**, real data |
+| `admin_upsert_stream_config` | `{authenticated}` | **401** `42501 permission denied` |
+| `admin_upsert_chapter_manifest` | `{authenticated}` | **401** `42501 permission denied` |
+
+Fixed for the two stream RPCs in `20260813080000_stream_admin_rpc_grants.sql` by granting `anon` as
+well, matching every other admin RPC here. **This does not loosen security** — the real gate is the
+`assert_verified_admin(p_caller)` call in each body, untouched. Re-verified live after the change:
+
+- anon, no Firebase identity → `42501 Access denied: unverified caller`
+- real JWT for a non-admin uid → `42501 Access denied`
+- real admin JWT with a spoofed `p_caller` → `42501 Access denied: caller mismatch`
+- genuine superadmin → **200**, row written
+
+**STILL BROKEN, not fixed here:** `admin_upsert_chapter_manifest` and `admin_approve_chapter_manifest`
+carry the identical grant and are equally unreachable from the app today. They belong to the
+content-engine rebuild (`docs/REBUILD_HANDOFF.md`), a separately phase-gated project, so they were
+reported to the owner rather than changed across a project boundary. **Whoever picks up that thread's
+admin surface must apply the same one-line grant fix first, or every save there will 401.**
+
+**General rule for this codebase:** never grant an RPC to `authenticated` alone. Grant to
+`anon, authenticated` and gate inside the body with `assert_verified_admin` / `assert_verified_self`.
