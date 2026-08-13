@@ -569,13 +569,39 @@ ${batches[b]}`,
     // A truncated response is a cut-off JSON string, so JSON.parse below would
     // fail with a position offset that says nothing about the cause. Naming it
     // here is the difference between "max_tokens is too low" and a mystery.
-    if (resp.choices[0].finish_reason === 'length') {
+    const finish = resp.choices[0].finish_reason;
+    if (finish === 'length') {
       throw new Error(
         `Structuring response hit the ${NOTES_MAX_TOKENS}-token output cap on batch ${b + 1}/${batches.length} — raise NOTES_MAX_TOKENS or lower NOTES_BATCH_CHARS.`,
       );
     }
+    /* Every other non-'stop' reason cuts the JSON off just as effectively, and
+     * the guard above named only one of them. Two Class 11 literature files
+     * failed with "Unterminated string in JSON" ending at 1,688 and 2,371
+     * chars — roughly 500 tokens against a 3,000 cap, so 'length' was never
+     * going to fire and the bare parse error was all that surfaced. */
+    if (finish && finish !== 'stop') {
+      throw new Error(
+        `Structuring response ended with finish_reason='${finish}' on batch ${b + 1}/${batches.length} — the JSON is incomplete.`,
+      );
+    }
 
-    const data = JSON.parse(resp.choices[0].message.content);
+    const rawJson = resp.choices[0].message?.content;
+    let data;
+    try {
+      data = JSON.parse(rawJson);
+    } catch (e) {
+      /* A parse position on its own says nothing about the cause — recovering
+       * that for two files meant calibrating V8's error messages by hand to
+       * learn the response had simply stopped early. Carrying the finish
+       * reason, the length actually received and the tail makes the next
+       * occurrence state its own cause. */
+      throw new Error(
+        `Structuring response did not parse as JSON on batch ${b + 1}/${batches.length}: ${e.message}. `
+        + `finish_reason=${finish ?? 'null'}, received ${rawJson?.length ?? 0} chars, `
+        + `ends: ${JSON.stringify(String(rawJson ?? '').slice(-100))}`,
+      );
+    }
     unit = unit || data.unit || null;
 
     for (const lesson of (data.lessons ?? [])) {
