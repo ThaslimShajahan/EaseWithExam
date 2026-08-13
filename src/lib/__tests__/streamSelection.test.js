@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   classTierFor, hasStreamsFor, needsLanguageChoice, isAutoSelectAll,
   availableOptionalSubjects, matchedCombinationName, flattenSubjects, buildAcademicTrack,
+  validateStreamConfigDraft, validateBoardLanguageDraft,
 } from '../streamSelection';
 
 /* Fixtures are the ACTUAL rows verified live in 20260813040000/stream_configs
@@ -163,5 +164,134 @@ describe('buildAcademicTrack — omits optional keys rather than storing them as
   it('CBSE with the optional 6th taken', () => {
     const track = buildAcademicTrack({ boardKey: 'CBSE', streamKey: 'humanities', languageChoice: null, chosenSlotSubjects: ['History', 'Political Science', 'Geography', 'Sociology'], optional6th: 'Legal Studies' });
     expect(track.optional_6th).toBe('Legal Studies');
+  });
+});
+
+/* ── Phase 3: admin-editor validation ─────────────────────────────────────
+ * The live rows above double as the "must pass clean" corpus: whatever the
+ * admin editor rejects, it must NOT reject the six configurations actually
+ * in production, or the editor is unusable for the very data it exists to
+ * edit.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+describe('validateStreamConfigDraft — the live configs must all pass clean', () => {
+  it.each([
+    ['CBSE Science',    { ...cbseScience,    label: 'Science' }],
+    ['CBSE Commerce',   { ...cbseCommerce,   label: 'Commerce' }],
+    ['CBSE Humanities', { ...cbseHumanities, label: 'Humanities' }],
+    ['Kerala Science',  { ...keralaScience,  label: 'Science' }],
+  ])('%s: no errors', (_name, draft) => {
+    expect(validateStreamConfigDraft(draft).errors).toEqual([]);
+  });
+
+  it('Kerala Science produces no warnings — its two named combinations are internally consistent', () => {
+    expect(validateStreamConfigDraft({ ...keralaScience, label: 'Science' }).warnings).toEqual([]);
+  });
+
+  it('CBSE Commerce 4-of-4 (isAutoSelectAll) is valid, not flagged as a mistake', () => {
+    // count === pool length is legitimate — it means "take all of these".
+    expect(validateStreamConfigDraft({ ...cbseCommerce, label: 'Commerce' }).errors).toEqual([]);
+  });
+});
+
+describe('validateStreamConfigDraft — blocking errors', () => {
+  it('blocks a slot asking for more subjects than the pool holds', () => {
+    const bad = { ...cbseScience, label: 'Science',
+      choice_slots: [{ slot_key: 'elective', count: 5, choose_from: ['Mathematics', 'Biology'] }] };
+    expect(validateStreamConfigDraft(bad).errors).toContain(
+      'Choice slot 1: asks the student to pick 5 but the pool only has 2.');
+  });
+
+  it('blocks a subject that is both locked and offered as a choice', () => {
+    const bad = { ...cbseScience, label: 'Science',
+      choice_slots: [{ slot_key: 'elective', count: 1, choose_from: ['Physics', 'Biology'] }] };
+    expect(validateStreamConfigDraft(bad).errors).toContain(
+      'Choice slot 1: Physics is already a locked subject.');
+  });
+
+  it('blocks an empty pool, a zero count, and a missing slot key', () => {
+    const bad = { ...cbseScience, label: 'Science',
+      choice_slots: [{ slot_key: '', count: 0, choose_from: [] }] };
+    const { errors } = validateStreamConfigDraft(bad);
+    expect(errors).toContain('Choice slot 1: slot key is required.');
+    expect(errors).toContain('Choice slot 1: pick count must be a whole number of at least 1.');
+    expect(errors).toContain('Choice slot 1: needs at least one subject in the pool.');
+  });
+
+  it('blocks an invalid stream_key before the RPC has to reject it', () => {
+    const bad = { ...cbseScience, label: 'Science', stream_key: 'vocational' };
+    expect(validateStreamConfigDraft(bad).errors).toContain('Stream must be science, commerce or humanities.');
+  });
+
+  it('blocks duplicate locked subjects and duplicate pool entries', () => {
+    const bad = { ...cbseScience, label: 'Science', stream_mandatory: ['Physics', 'Physics'],
+      choice_slots: [{ slot_key: 'e', count: 1, choose_from: ['Biology', 'Biology'] }] };
+    const { errors } = validateStreamConfigDraft(bad);
+    expect(errors).toContain('Locked subjects contain a duplicate.');
+    expect(errors).toContain('Choice slot 1: the pool has duplicate subjects.');
+  });
+});
+
+describe('validateStreamConfigDraft — named combinations WARN, never block', () => {
+  it('an unreachable combination warns but does not block the save', () => {
+    const draft = { ...keralaScience, label: 'Science',
+      named_combinations: [{ name: 'Course Code 9', resulting_subjects: ['Physics', 'Chemistry', 'Mathematics', 'Sanskrit'] }] };
+    const { errors, warnings } = validateStreamConfigDraft(draft);
+    expect(errors).toEqual([]);                       // the point: still saveable
+    expect(warnings.some((w) => w.includes('Sanskrit'))).toBe(true);
+    expect(warnings.some((w) => w.includes('can never match'))).toBe(true);
+  });
+
+  it('a combination missing a locked subject warns but does not block', () => {
+    const draft = { ...keralaScience, label: 'Science',
+      named_combinations: [{ name: 'Partial', resulting_subjects: ['Physics', 'Biology'] }] };
+    const { errors, warnings } = validateStreamConfigDraft(draft);
+    expect(errors).toEqual([]);
+    expect(warnings.some((w) => w.includes('Chemistry'))).toBe(true);
+  });
+
+  it('ZERO named combinations is silent — Kerala Commerce/Humanities ship empty BY DESIGN', () => {
+    // Regression guard for the explicit "no fabricated DHSE block names" rule:
+    // an empty array must never be nudged, warned about, or auto-filled.
+    const keralaCommerce = {
+      board_key: 'Kerala State', class_tier: '11-12', stream_key: 'commerce', label: 'Commerce',
+      stream_mandatory: ['Business Studies', 'Accountancy', 'Economics'],
+      choice_slots: [{ slot_key: 'elective', count: 1, choose_from: ['Computer Applications', 'Mathematics', 'Statistics', 'Political Science'] }],
+      optional_slots: [], named_combinations: [],
+    };
+    const { errors, warnings } = validateStreamConfigDraft(keralaCommerce);
+    expect(errors).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+});
+
+describe('validateBoardLanguageDraft — the nullable choice slot is the whole point', () => {
+  it('CBSE: null choice_language_slot is valid and produces no warning', () => {
+    const { errors, warnings } = validateBoardLanguageDraft({
+      board_key: 'CBSE', class_tier: '11-12', mandatory_languages: ['English Core'], choice_language_slot: null });
+    expect(errors).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
+  it('Kerala: a populated choice slot is valid', () => {
+    const { errors } = validateBoardLanguageDraft({
+      board_key: 'Kerala State', class_tier: '11-12', mandatory_languages: ['English'],
+      choice_language_slot: { slot_key: 'second_language', count: 1, label: 'Second language',
+        choose_from: ['Malayalam', 'Hindi', 'Arabic', 'Urdu', 'Sanskrit', 'Syriac'] } });
+    expect(errors).toEqual([]);
+  });
+
+  it('blocks a language that is both mandatory and offered as a choice', () => {
+    const { errors } = validateBoardLanguageDraft({
+      board_key: 'Kerala State', class_tier: '11-12', mandatory_languages: ['English'],
+      choice_language_slot: { slot_key: 'second_language', count: 1, choose_from: ['English', 'Hindi'] } });
+    expect(errors).toContain('Language choice slot: English is already mandatory.');
+  });
+
+  it('blocks a choice slot asking for more languages than its pool holds', () => {
+    const { errors } = validateBoardLanguageDraft({
+      board_key: 'Kerala State', class_tier: '11-12', mandatory_languages: ['English'],
+      choice_language_slot: { slot_key: 'second_language', count: 3, choose_from: ['Malayalam', 'Hindi'] } });
+    expect(errors).toContain('Language choice slot 1: asks the student to pick 3 but the pool only has 2.');
   });
 });
