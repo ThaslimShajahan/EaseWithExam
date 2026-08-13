@@ -315,11 +315,25 @@ describe('assignChapters — the Phase 2 integration point', () => {
     expect(r.reason).toMatch(/could not read a chapter number/i);
   });
 
-  it('REJECT: a chunk whose page sits outside every accepted entry — refuses rather than assigning the nearest one', () => {
-    const chunks = [{ pageNo: 999 }];
+  // Found by actually running the pipeline (Phase 2 acceptance test): a real
+  // AI extraction of a short, bare fixture lesson returned no page_start at
+  // all, which the strict version of this rule rejected even though there
+  // was only one possible chapter for the file — nothing to disambiguate.
+  it('PERMIT: a missing page number is fine when the file has only ONE accepted chapter — nothing to disambiguate', () => {
+    const chunks = [{ pageNo: null }];
+    const r = assignChapters({ manifest: fixtureBook, filename: '1-fixture-book.pdf', chunks, classLevel: '11', book: 'Fixture Book' });
+    expect(r.ok).toBe(true);
+    expect(r.chunks[0].chapterKey).toBe('c11_fixture_book_ch01');
+  });
+
+  it('REJECT: a chunk whose page matches NEITHER of two accepted entries — genuine ambiguity, still refuses', () => {
+    // filePageRange [2, 999] pulls the interleaved poem (pp2-2) in as a
+    // SECOND accepted entry alongside chapter 1 — now there really are two
+    // candidates, and page 999 disambiguates to neither.
+    const chunks = [{ pageNo: 2 }, { pageNo: 999 }];
     const r = assignChapters({ manifest: fixtureBook, filename: '1-fixture-book.pdf', chunks, classLevel: '11', book: 'Fixture Book' });
     expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/falls outside every accepted chapter/i);
+    expect(r.reason).toMatch(/falls outside every accepted chapter.*more than one chapter is accepted/i);
   });
 
   it('PERMIT: an admin override on an unparseable filename settles it, same as a real ordinal would', () => {

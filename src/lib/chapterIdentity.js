@@ -249,9 +249,21 @@ export function assignChapters({ manifest, filename, chunks, classLevel, book = 
   const syllabusEntries = [];
   const chunksOut = [];
   for (const chunk of chunks) {
-    const entry = chapterForPage(acceptedEntries, chunk.pageNo);
+    // Positional lookup first. But when there is only ONE accepted entry —
+    // the overwhelming common case, a single-chapter file with no interleaved
+    // poems — there is no actual ambiguity to resolve positionally: the whole
+    // file belongs to that one chapter regardless of which page a chunk
+    // starts on. Requiring an exact page match here was found to reject real
+    // uploads whose extraction genuinely couldn't infer page_start (a bare,
+    // short lesson gives the model nothing to anchor a page number to) even
+    // though there was nothing to disambiguate. Positional assignment stays
+    // MANDATORY once there is more than one accepted entry (a host chapter
+    // plus an interleaved poem) — that IS a real ambiguity, and a missing
+    // page number there must still refuse rather than guess which one.
+    const entry = chapterForPage(acceptedEntries, chunk.pageNo)
+      ?? (acceptedEntries.length === 1 ? acceptedEntries[0] : null);
     if (!entry) {
-      return { ok: false, reason: `Chunk on page ${chunk.pageNo ?? '?'} falls outside every accepted chapter's page range for this file.` };
+      return { ok: false, reason: `Chunk on page ${chunk.pageNo ?? '?'} falls outside every accepted chapter's page range for this file, and more than one chapter is accepted for it — cannot tell which one it belongs to.` };
     }
     if (!chapterKeysByOrdinal.has(entry.ordinal)) {
       const chapterKey = chapterKeyFor({ prefix, classLevel, book, ordinal: entry.ordinal });
