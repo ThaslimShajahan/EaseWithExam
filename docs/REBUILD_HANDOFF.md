@@ -827,3 +827,26 @@ UI's step-gating. Test row deleted after verification; `walkthrough-%` UIDs conf
 Admin editor (Phase 3, next) and Phase 4 downstream consumption (`useStudentScope`, Practice Generator,
 Syllabus scoping, Classes 8-10 regression check). `users.subjects`/`academic_track` are written but
 nothing reads them yet — by design, per the column comments in `20260813050000`.
+
+## 15. CBSE Science correction — Physics/Chemistry are locked, not pool options
+
+Owner instruction, live curriculum-data correction to what Phase 1 (§12) originally modeled from the
+task's canonical text. Real-world CBSE Science policy: Physics and Chemistry are compulsory at most
+schools, unlike Commerce/Humanities' genuinely free pool — Phase 1's literal "CBSE locks nothing but
+English" read turned out to need this one stream-specific exception.
+
+**Changed, via the real `admin_upsert_stream_config` RPC** (fetched the existing row's id first, updated
+in place — not a new row): CBSE Science `stream_mandatory` is now `["Physics","Chemistry"]`; the choice
+slot shrank from "pick 4 of 5" to "pick 2 of the remaining 3" (`Mathematics`, `Biology`,
+`Computer Science`), keeping the total non-language subject count at 4. `optional_slots` (the shared
+6th-subject pool) and `description` untouched. CBSE Commerce, CBSE Humanities, and all three Kerala rows
+confirmed unchanged — 6 rows total, only this one's content moved.
+
+No code changes needed — `streamSelection.js`'s functions are generic on `slot.count`/`stream_mandatory`,
+not hardcoded to "4 chosen, 0 locked", so this was a pure data correction. Test fixtures updated to
+match (`cbseScience` in `streamSelection.test.js`), plus 3 new tests asserting the lock directly (not
+just its downstream consequences) — 22 tests in that file, 424 total, all passing.
+
+**Verified live**, not just in fixtures: real Playwright run through CBSE Class 11 → Science shows
+`English Core | Physics | Chemistry` as locked chips, then `Choose 2 more subjects (0/2 selected)` over
+Mathematics/Biology/Computer Science. Test row deleted after.

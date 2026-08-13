@@ -7,10 +7,15 @@ import {
 /* Fixtures are the ACTUAL rows verified live in 20260813040000/stream_configs
  * seeding (see docs/REBUILD_HANDOFF.md s12), not invented shapes. */
 
+// Physics/Chemistry moved to stream_mandatory on owner instruction after
+// Phase 2 shipped (real-world CBSE Science policy: these two are compulsory
+// at most schools, unlike Commerce/Humanities' genuinely free pool) — the
+// choice slot shrank from "pick 4 of 5" to "pick 2 of the remaining 3" so
+// the total non-language subject count stays 4.
 const cbseScience = {
   board_key: 'CBSE', class_tier: '11-12', stream_key: 'science',
-  stream_mandatory: [],
-  choice_slots: [{ slot_key: 'core4', count: 4, choose_from: ['Physics', 'Chemistry', 'Mathematics', 'Biology', 'Computer Science'] }],
+  stream_mandatory: ['Physics', 'Chemistry'],
+  choice_slots: [{ slot_key: 'elective', count: 2, choose_from: ['Mathematics', 'Biology', 'Computer Science'] }],
   optional_slots: [{ slot_key: 'sixth', count: 1, choose_from: ['Physical Education', 'Fine Arts', 'Informatics Practices', 'Legal Studies', 'Psychology', 'Home Science'] }],
   named_combinations: [],
 };
@@ -72,6 +77,19 @@ describe('needsLanguageChoice — branches on data, not board_key', () => {
   it('Kerala: has a second-language choice', () => { expect(needsLanguageChoice(keralaLang)).toBe(true); });
 });
 
+describe('CBSE Science: Physics/Chemistry are locked, not pool options', () => {
+  it('stream_mandatory contains exactly Physics and Chemistry', () => {
+    expect(cbseScience.stream_mandatory).toEqual(['Physics', 'Chemistry']);
+  });
+  it('the choice pool no longer offers Physics or Chemistry as a pick', () => {
+    expect(cbseScience.choice_slots[0].choose_from).not.toContain('Physics');
+    expect(cbseScience.choice_slots[0].choose_from).not.toContain('Chemistry');
+  });
+  it('the choice slot shrank to 2 (locking 2 subjects out of 4 leaves 2 more to pick)', () => {
+    expect(cbseScience.choice_slots[0].count).toBe(2);
+  });
+});
+
 describe('isAutoSelectAll — CBSE Commerce is the real 4-of-4 case', () => {
   it('Commerce pool size equals count: auto-select', () => {
     expect(isAutoSelectAll(cbseCommerce.choice_slots[0])).toBe(true);
@@ -88,7 +106,7 @@ describe('availableOptionalSubjects — REQUIREMENT: exclude already-chosen subj
     expect(available).toEqual(['Physical Education', 'Fine Arts', 'Informatics Practices', 'Legal Studies', 'Home Science']);
   });
   it('a Science student who did not pick Psychology still sees it as an optional-6th option', () => {
-    const available = availableOptionalSubjects(cbseScience, ['Physics', 'Chemistry', 'Mathematics', 'Biology']);
+    const available = availableOptionalSubjects(cbseScience, ['Mathematics', 'Biology']);
     expect(available).toContain('Psychology');
   });
   it('Kerala streams have no optional pool at all', () => {
@@ -105,21 +123,21 @@ describe('matchedCombinationName — REQUIREMENT: empty named_combinations never
     expect(matchedCombinationName(keralaCommerce, ['Mathematics'])).toBeNull();
   });
   it('CBSE streams also have empty named_combinations today: null, not a badge', () => {
-    expect(matchedCombinationName(cbseScience, ['Physics', 'Chemistry', 'Mathematics', 'Biology'])).toBeNull();
+    expect(matchedCombinationName(cbseScience, ['Mathematics', 'Biology'])).toBeNull();
   });
 });
 
 describe('flattenSubjects — the resolved list, in the order the confirm screen presents it', () => {
-  it('CBSE Science, no optional 6th taken', () => {
+  it('CBSE Science, no optional 6th taken — Physics/Chemistry come from stream_mandatory, not chosenSlotSubjects', () => {
     expect(flattenSubjects({
       boardLanguageConfig: cbseLang, languageChoice: null, streamConfig: cbseScience,
-      chosenSlotSubjects: ['Physics', 'Chemistry', 'Mathematics', 'Biology'], optional6th: null,
+      chosenSlotSubjects: ['Mathematics', 'Biology'], optional6th: null,
     })).toEqual(['English Core', 'Physics', 'Chemistry', 'Mathematics', 'Biology']);
   });
   it('CBSE Science WITH the optional 6th', () => {
     expect(flattenSubjects({
       boardLanguageConfig: cbseLang, languageChoice: null, streamConfig: cbseScience,
-      chosenSlotSubjects: ['Physics', 'Chemistry', 'Mathematics', 'Biology'], optional6th: 'Psychology',
+      chosenSlotSubjects: ['Mathematics', 'Biology'], optional6th: 'Psychology',
     })).toEqual(['English Core', 'Physics', 'Chemistry', 'Mathematics', 'Biology', 'Psychology']);
   });
   it('Kerala Science: two languages + three locked + one chosen, no optional slot', () => {
