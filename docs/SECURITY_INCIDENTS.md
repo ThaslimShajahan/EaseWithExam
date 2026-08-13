@@ -108,6 +108,32 @@ temp scripts removed from repo root).
 
 ## 2026-08-13 — Remaining 68 RPCs with the same missing-caller-check pattern
 
+> # 🚨 HARD GATE — Batch 2 MUST ship before the first coaching centre exists
+>
+> ```sql
+> select count(*) from coaching_centres;   -- if this is > 0, Batch 2 is OVERDUE, not "next"
+> ```
+>
+> **Check this before onboarding any coaching centre, and before starting any other feature work
+> that creates one.** Batch 2 (the 9-RPC invite/privilege-escalation surface, listed below) was
+> deliberately sequenced *after* the stream-selection admin editor on 2026-08-13, on the explicit
+> reasoning that **every table it protects was empty at the time** — verified live that day:
+>
+> | table | rows on 2026-08-13 |
+> |---|---|
+> | `coaching_centres` | 0 |
+> | `coaching_admins` | 0 |
+> | `coaching_admin_invites` | 0 |
+> | `centre_invites` | 0 |
+> | `coaching_students` | 0 |
+>
+> The exposure is **latent, not theoretical**: `create_coaching_admin_invite` lets an unverified
+> caller mint themselves ongoing coaching-admin access to any centre — it just needs a real
+> `p_centre_id` to aim at, and there were none. **The day a coaching centre is created, this becomes
+> a live privilege-escalation hole.** The deferral is only valid while that count is zero.
+>
+> Owner-agreed gate, 2026-08-13. Not a calendar promise — a checkable condition.
+
 **Status: OPEN**, catalogued below by risk, with a remediation batch plan. Not fixed in this pass —
 the 8 above were the confirmed-severe + originally-reported set; these 68 are the rest of the same
 live-audit result (`SECURITY DEFINER` functions granted to `anon`/`authenticated` whose body doesn't
@@ -255,7 +281,39 @@ every RPC touched; that pace, not raw patch-writing speed, is what should set ba
    `get_centre_invites`, `deactivate_centre_invite`, `redeem_centre_invite`,
    `redeem_coaching_admin_invite`, `coaching_centre_update_branding`. Highest urgency — this is the only
    group that lets an attacker mint themselves *ongoing* coaching-admin access, not just touch one
-   record. Needs the centre-ownership check designed once, then reused.
+   record.
+
+   **Pre-work already done (2026-08-13) — read this before writing the migration; two findings correct
+   the assumption above:**
+
+   a. **These do NOT need a centre-ownership check added — 7 of the 9 already have one.**
+      `create_coaching_admin_invite`, `list_coaching_admin_invites`, `revoke_coaching_admin_invite`,
+      `coaching_centre_update_branding`, `create_centre_invite`, `deactivate_centre_invite`, and
+      `get_centre_invites` all already query `admins`/`coaching_admins` correctly for the claimed
+      caller. What they lack is only the *identity* half — an attacker passes a known real
+      centre-admin's uid and sails through the existing check. So the fix is the same one-line
+      `assert_verified_self()` insertion used for the first 8, **preserving each existing check**, not
+      a new Pattern B check. (`redeem_centre_invite`/`redeem_coaching_admin_invite` are plain
+      self-redemption — Pattern A on `p_uid`.)
+
+   b. **3 of the 9 are already broken in production** — proven live, in a rolled-back probe:
+
+      | RPC | sqlstate | error |
+      |---|---|---|
+      | `get_centre_invites` | `42703` | `column cc.created_by does not exist` |
+      | `create_centre_invite` | `42703` | `column "created_by" does not exist` |
+      | `deactivate_centre_invite` | `42703` | `column cc.created_by does not exist` |
+
+      All three authorize against `coaching_centres.created_by`, **a column that does not exist on that
+      table** (`centre_invites` has `created_by`; `coaching_centres` does not). They throw before
+      reaching any logic, so they can be neither used nor exploited. `redeem_centre_invite` similarly
+      references `coaching_students.student_uid` (real column: `firebase_uid`) — *suspected* broken,
+      unproven, because the probe hit the invite-not-found early exit first.
+
+      **This is a data-model gap, not just a bug: "who owns a coaching centre" is currently undefined
+      in the schema.** Needs an owner decision before Batch 2 ships — either (a) add the identity check
+      only and leave them broken, documenting it, or (b) resolve the ownership model and repair them
+      too. Do not guess.
 2. **Batch 3 — coaching-admin data & content management (13 RPCs, Pattern B):**
    `coaching_get_own_centre`, `coaching_list_centre_results`, `coaching_list_own_assignments`,
    `coaching_list_own_students`, `coaching_list_own_tests`, `coaching_delete_assignment`,
