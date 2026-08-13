@@ -275,14 +275,14 @@ committed.
    separate Science subjects; IT mandatory vs optional) matter for content
    tagging even though there's no streaming to model there.
 
-## 6c. Phase 1 build state (in progress, uncommitted as of this writing)
+## 6c. Phase 1 build state — code committed (`121b01e`), migration PROVEN, not yet applied anywhere
 
 Owner decisions locked in before Phase 1 started: `chapter_manifests` is a real table (not JSON in the
 repo), every book's manifest requires owner approval before load, `knowledge_base` gained a `book`
 column while the tables were empty (2026-08-13 wipe), and a PYQ upload with no matching syllabus
 escalates to the owner after **48 hours**.
 
-**Files, all written, all passing, NONE committed yet:**
+**Files, all written, all passing, all committed:**
 
 - `src/lib/chapterManifest.js` — `fileOrdinalFrom()` (the third corroboration signal, parses NCERT
   short codes and hand-named filenames), `validateManifest()` (structural checks — duplicate ordinals,
@@ -298,23 +298,72 @@ escalates to the owner after **48 hours**.
   partial unique index (one approved manifest per book; NULLs-are-distinct trap from `20260812040000`
   applies again, handled with `coalesce(book,'')`), `knowledge_base.book`, and two admin RPCs
   (`admin_upsert_chapter_manifest`, `admin_approve_chapter_manifest`) gated by `assert_verified_admin`
-  exactly like the existing PYQ RPCs. **Statically checked** (paren/dollar-quote balance, RPC signatures
-  match their `revoke`/`grant` lines) but **never executed against a real Postgres** — see next section
-  for why the Docker-based local test didn't happen.
+  exactly like the existing PYQ RPCs.
 - `src/lib/__tests__/chapterManifest.test.js` (15 tests) and 4 new tests appended to
   `chapterIdentity.test.js` (now 21). **36 tests total for Phase 1, all passing.** Fixtures include the
   real corpus filenames (`kehb111.pdf` etc.) and the Hornbill Writing-Skills banding case, where the
   printed chapter number (1–6) and the filename number (11–16) genuinely differ — a naive
   `fileOrdinal === ordinal` rule would reject that whole section, and there's a test asserting it doesn't.
 
-**What's NOT done for Phase 1 yet:**
+### The migration is PROVEN, not just statically checked
 
-- The migration has **never been executed**, not locally and not on the live database. A Docker-based
-  local Supabase stack was started specifically to test it for real (not just statically) before this
-  session got redirected into a much bigger, separate task — see §9. **This is the next concrete step**
-  once whatever comes after §9 is resolved: either run it locally via `supabase start` + `supabase db
-  push` (writes nothing live, fully disposable), or apply it to the live database now that the tables it
-  touches are empty anyway.
+**A from-scratch local Docker rebuild is currently broken, for reasons that have nothing to do with
+Phase 1.** `supabase start` replays the entire migration history from an empty database, and the very
+FIRST migration (`20260806000643_flashcards_sm2.sql`) fails: it `ALTER TABLE`s `flashcard_progress`
+assuming the table already exists, but nothing in the migration history creates it — the same
+"created outside the migration history" gap already documented for `syllabus_nodes` in §4. This means
+`supabase start` cannot currently do a clean rebuild **at all**, for any migration, not just this one.
+Fixing that is real but separate infrastructure debt, out of scope here.
+
+Instead, the migration was tested for real against the **live** schema, inside a transaction that was
+**rolled back** — nothing persisted. This is arguably more trustworthy than a local replay would have
+been anyway, since it's the actual target schema rather than a reconstruction. Method: `auth.jwt()`
+reads the `request.jwt.claims` Postgres GUC, so a real authenticated-admin session was simulated with
+`set local request.jwt.claims = '{"sub":"<real superadmin uid>","role":"authenticated"}'` inside the
+transaction, letting the RPCs' actual success paths run, not just their rejection paths.
+
+**17 assertions, all passing, both halves on every rule:**
+
+- **DENY** (3 variants): no JWT at all → `Access denied: unverified caller`; a JWT `sub` that isn't an
+  `admins` row → `Access denied`; a real admin JWT but a mismatched `p_caller` → `Access denied: caller
+  mismatch`. All exactly the `assert_verified_admin` behaviour already proven for the PYQ RPCs, now
+  confirmed for these two specifically rather than assumed by analogy.
+- **PERMIT**: create a draft as a real superadmin, approve it — both succeed, `approved_by`/
+  `approved_at` populate correctly.
+- **Immutability**: editing the now-approved manifest is rejected (`... approved manifests are
+  immutable`).
+- **Empty-manifest rejection**: approving `entries: []` is rejected.
+- **Not-found handling**: approving a random uuid is rejected with `manifest % not found`.
+- **Supersession**: a second approved manifest for the same book flips the first to `superseded` and
+  leaves exactly one `approved` row.
+- **The load-bearing one — raw constraint enforcement, not just RPC courtesy**: a THIRD draft for the
+  same book was approved by **directly `UPDATE`ing its status, bypassing the RPC's supersession logic
+  entirely**. Postgres itself rejected it: `duplicate key value violates unique constraint
+  "chapter_manifests_approved_uniq"`. The index protects even if a future bug — or someone editing data
+  by hand — skips the RPC.
+- **The `coalesce(book,'')` NULL trap, specifically**: two single-book (`book IS NULL`) manifests for
+  the same subject were created and approved in sequence. If the coalesce weren't working, Postgres
+  would treat the two `NULL`s as distinct and both would sit `approved` — this is the exact bug pattern
+  `20260812040000` already had to work around once. Confirmed: the second correctly supersedes the
+  first.
+- **Two different books do NOT conflict** (Hornbill and Woven Words both approved simultaneously).
+- **Schema**: `knowledge_base.book` column exists, `kb_exam_subject_book_idx` exists, RLS is enabled on
+  `chapter_manifests` with exactly one policy (`SELECT`, i.e. read-open/write-closed as designed).
+
+Verified clean after rollback: `chapter_manifests` table, the `book` column, and both RPCs are all
+**absent** again; `admins` still exactly 2 rows; `knowledge_base` still 0. Nothing leaked out of the
+transaction.
+
+**Not covered by this pass:** an anon REST-API probe against `chapter_manifests` specifically (the
+kind done for `pyq_questions` in §1) — that needs the table to actually exist for another connection to
+see, which a rolled-back transaction precludes by construction. The RLS *shape* is confirmed (one
+read-only policy, same pattern as `pyq_questions` post-`20260812030000`), but a live anon HTTP call
+against this specific table has not been independently fired. Worth doing if the owner wants that exact
+layer proven, which requires actually applying the migration somewhere first.
+
+**What's left for Phase 1:** decide where to apply the now-proven migration — local Docker (blocked
+until the unrelated `flashcard_progress` replay gap is fixed) or live (owner's call, standing "deploy
+only when told" rule applies).
 - The manifest **approval UI** (where the owner reviews a draft and clicks approve) does not exist —
   that's naturally Phase 2/3 alongside the Study Notes upload screen, since it's the same admin surface.
 - Uncommitted work has NOT been through the owner's phase-boundary approval yet. Do not describe Phase 1
