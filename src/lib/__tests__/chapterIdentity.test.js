@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chapterKeyFor, decideAssignments, aliasFor, chapterForPage, VERDICT } from '../chapterIdentity';
+import { chapterKeyFor, decideAssignments, aliasFor, chapterForPage, assignChapters, VERDICT } from '../chapterIdentity';
 
 /* Fixtures are the ACTUAL failures measured on the 2026-08-12/13 load, not
  * invented cases. Each rejection test names the row count it would have
@@ -255,5 +255,79 @@ describe('positional chunk assignment — headings cannot capture content', () =
   it('returns null off the end rather than guessing the last chapter', () => {
     expect(chapterForPage(accepted, 99)).toBeNull();
     expect(chapterForPage(accepted, null)).toBeNull();
+  });
+});
+
+/* Phase 2 slice: assignChapters() is the actual integration point
+ * AdminContentIntake.jsx calls — everything above it is already proven; these
+ * tests are what proves the WIRING, not the engine underneath it again.
+ *
+ * fileOrdinal is set explicitly on every numbered entry here (unlike the
+ * shared fixtures above), because candidatesForFile() matches on it strictly
+ * — it does not fall back to `ordinal` the way decideAssignments does. Kept
+ * as its own fixture rather than editing the shared ones above, which
+ * deliberately test that fallback path directly. */
+// Non-overlapping host/interleaved page ranges, deliberately — matches the
+// convention the 'positional chunk assignment' fixture above already uses.
+// A real manifest with genuinely overlapping ranges (a poem's pages are also
+// claimed by its host chapter's own pageEnd) is an existing, pre-Phase-2
+// ambiguity in chapterForPage()'s plain array .find() — out of scope to fix
+// here; not exercised by this fixture on purpose.
+const fixtureBook = [
+  { ordinal: 1, title: 'FIXTURE Chapter One', pageStart: 1, pageEnd: 1, numbered: true, fileOrdinal: 1 },
+  { ordinal: 9, title: 'FIXTURE Interleaved Poem', pageStart: 2, pageEnd: 2, numbered: false },
+  { ordinal: 2, title: 'FIXTURE Chapter Two', pageStart: 4, pageEnd: 6, numbered: true, fileOrdinal: 2 },
+];
+
+describe('assignChapters — the Phase 2 integration point', () => {
+  it('PERMIT: a real file, real chunks, produces the right chapter_key and one syllabus entry', () => {
+    const chunks = [{ pageNo: 1, content: 'a' }, { pageNo: 1, content: 'b' }];
+    const r = assignChapters({ manifest: fixtureBook, filename: '1-fixture-book.pdf', chunks, classLevel: '11', book: 'Fixture Book' });
+    expect(r.ok).toBe(true);
+    expect(r.chunks.every((c) => c.chapterKey === 'c11_fixture_book_ch01')).toBe(true);
+    expect(r.chunks.every((c) => c.chapterName === 'FIXTURE Chapter One')).toBe(true);
+    expect(r.syllabusEntries).toEqual([{ chapterKey: 'c11_fixture_book_ch01', chapterName: 'FIXTURE Chapter One', sortOrder: 1 }]);
+    // S2 (printed header) is never read in this slice, so every accept is
+    // flagged by design — decideAssignments' own "two of three, third unread" path.
+    expect(r.flagged).toBe(true);
+  });
+
+  it('PERMIT: an interleaved chunk inside the numbered chapter gets its OWN chapter_key, not the host\'s', () => {
+    const chunks = [{ pageNo: 1, content: 'prose' }, { pageNo: 2, content: 'poem' }];
+    const r = assignChapters({ manifest: fixtureBook, filename: '1-fixture-book.pdf', chunks, classLevel: '11', book: 'Fixture Book' });
+    expect(r.ok).toBe(true);
+    expect(r.chunks[0].chapterKey).toBe('c11_fixture_book_ch01');
+    expect(r.chunks[1].chapterKey).toBe('c11_fixture_book_ch09');
+    expect(r.syllabusEntries).toHaveLength(2);
+  });
+
+  it('REJECT: a file whose filename ordinal matches no manifest entry — nothing to write, clear reason, no guess', () => {
+    const r = assignChapters({ manifest: fixtureBook, filename: '99-fixture-book.pdf', chunks: [{ pageNo: 1 }], classLevel: '11', book: 'Fixture Book' });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/no approved manifest entry has file ordinal 99/i);
+    expect(r.chunks).toBeUndefined();
+    expect(r.syllabusEntries).toBeUndefined();
+  });
+
+  it('REJECT: an unparseable filename with no admin override — refuses rather than guessing', () => {
+    const r = assignChapters({ manifest: fixtureBook, filename: 'scan_final_v2.pdf', chunks: [{ pageNo: 1 }], classLevel: '11', book: 'Fixture Book' });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/could not read a chapter number/i);
+  });
+
+  it('REJECT: a chunk whose page sits outside every accepted entry — refuses rather than assigning the nearest one', () => {
+    const chunks = [{ pageNo: 999 }];
+    const r = assignChapters({ manifest: fixtureBook, filename: '1-fixture-book.pdf', chunks, classLevel: '11', book: 'Fixture Book' });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/falls outside every accepted chapter/i);
+  });
+
+  it('PERMIT: an admin override on an unparseable filename settles it, same as a real ordinal would', () => {
+    const r = assignChapters({
+      manifest: fixtureBook, filename: 'scan_final_v2.pdf', chunks: [{ pageNo: 4 }],
+      classLevel: '11', book: 'Fixture Book', adminSelectedOrdinal: 2,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.chunks[0].chapterKey).toBe('c11_fixture_book_ch02');
   });
 });

@@ -30,6 +30,8 @@
  * name-slugs. The migration comment and the helper have disagreed since.
  */
 
+import { fileOrdinalFrom, candidatesForFile } from './chapterManifest';
+
 /** Ordinal-anchored, book-scoped. `book` stays out of the UNIQUE index
  *  (exam_type, subject, chapter_key) — it is nullable and Postgres treats NULLs
  *  as distinct, which would stop the index guarding single-book subjects. The
@@ -177,4 +179,87 @@ export function aliasFor(entry, observedTitle) {
 export function chapterForPage(acceptedEntries, pageNo) {
   if (pageNo == null) return null;
   return acceptedEntries.find((e) => pageNo >= e.pageStart && pageNo <= e.pageEnd) ?? null;
+}
+
+/**
+ * PHASE 2 INTEGRATION POINT. Given an approved manifest and one uploaded
+ * file's extracted chunks (each carrying the page it came from), decide real
+ * chapter identity for every chunk — or refuse to write any of them.
+ *
+ * Returns data, never touches Supabase — same separation buildKbRows()
+ * already uses in contentExtraction.js, so this stays unit-testable without a
+ * live database and the caller (AdminContentIntake.jsx) owns the actual
+ * insert/RPC calls.
+ *
+ * Deliberately does NOT let a chunk propose its own ordinal (the old pipeline's
+ * failure mode — a model guess IS the free-form proposal that produced
+ * 'Poorvi' and the keps101 capture). Proposals here come only from
+ * candidatesForFile(), i.e. only from what the filename and the approved
+ * manifest can jointly support — the closed set holds before decideAssignments
+ * even runs, not just inside it.
+ *
+ * S2 (printed chapter number in page headers) is not read in this slice — no
+ * caller supplies observedNumber, so decideAssignments' own ACCEPT_WITH_FLAG
+ * path (two of three signals agree, third unavailable) is the expected normal
+ * result, not an error. `flagged: true` surfaces that to the caller.
+ *
+ * A REJECT on ANY candidate blocks the WHOLE file — REBUILD_HANDOFF.md's rule
+ * is "disagree: do not write, flag for owner review", not "write everything
+ * except the one you're unsure about". A chunk whose page falls outside every
+ * accepted entry's range is the same refusal, not a guess at the nearest one.
+ */
+export function assignChapters({ manifest, filename, chunks, classLevel, book = null, prefix = 'c', adminSelectedOrdinal = null }) {
+  const fileOrdinal = fileOrdinalFrom(filename);
+  const pages = (chunks ?? []).map((c) => c.pageNo).filter((p) => p != null);
+  const filePageRange = pages.length ? [Math.min(...pages), Math.max(...pages)] : null;
+
+  let candidates = candidatesForFile(manifest, fileOrdinal, filePageRange);
+
+  // A decisive human pick can supply its own candidate when the file itself
+  // produced none — this is specifically for hand-named files where
+  // fileOrdinalFrom() returns null, so candidatesForFile() has nothing to key
+  // off (see this function's own header comment on adminSelectedOrdinal). The
+  // manifest entry still has to be real; decideAssignments enforces that.
+  if (candidates.length === 0 && adminSelectedOrdinal != null) {
+    const picked = manifest.find((m) => m.ordinal === adminSelectedOrdinal);
+    if (picked) candidates = [picked];
+  }
+
+  if (candidates.length === 0) {
+    return {
+      ok: false,
+      reason: fileOrdinal == null
+        ? `Could not read a chapter number from "${filename}", and it matches no manifest entry by page range. This file's chapter must be picked manually.`
+        : `No approved manifest entry has file ordinal ${fileOrdinal} (parsed from "${filename}"). This file does not match any chapter in the approved manifest.`,
+    };
+  }
+
+  const proposals = candidates.map((c) => ({ ordinal: c.ordinal, observedNumber: null }));
+  const decided = decideAssignments({ manifest, fileOrdinal, filePageRange, proposals, adminSelectedOrdinal });
+
+  const rejected = decided.filter((d) => d.verdict === VERDICT.REJECT);
+  if (rejected.length > 0) {
+    return { ok: false, reason: rejected[0].reason, allReasons: [...new Set(rejected.map((r) => r.reason))] };
+  }
+
+  const acceptedEntries = decided.map((d) => d.entry);
+  const flagged = decided.some((d) => d.verdict === VERDICT.ACCEPT_WITH_FLAG);
+
+  const chapterKeysByOrdinal = new Map();
+  const syllabusEntries = [];
+  const chunksOut = [];
+  for (const chunk of chunks) {
+    const entry = chapterForPage(acceptedEntries, chunk.pageNo);
+    if (!entry) {
+      return { ok: false, reason: `Chunk on page ${chunk.pageNo ?? '?'} falls outside every accepted chapter's page range for this file.` };
+    }
+    if (!chapterKeysByOrdinal.has(entry.ordinal)) {
+      const chapterKey = chapterKeyFor({ prefix, classLevel, book, ordinal: entry.ordinal });
+      chapterKeysByOrdinal.set(entry.ordinal, chapterKey);
+      syllabusEntries.push({ chapterKey, chapterName: entry.title, sortOrder: entry.ordinal });
+    }
+    chunksOut.push({ ...chunk, chapterKey: chapterKeysByOrdinal.get(entry.ordinal), chapterName: entry.title });
+  }
+
+  return { ok: true, flagged, chunks: chunksOut, syllabusEntries };
 }
