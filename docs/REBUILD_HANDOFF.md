@@ -587,3 +587,54 @@ recreated one automatically. Confirms that self-healing path genuinely works, no
 something this session caused directly.
 
 402 tests pass, build clean (this work was schema + data only, no application code changed).
+
+## 11. Stream selection onboarding — Part 1 done, Parts 2-4 not started
+
+Owner spec'd the full feature (stream selection UI for Class 11/12, save format, downstream consumption,
+admin preview, a fallback-visibility signal). Part 1 was "verify the data shape before coding, don't
+assume" — done, and it caught real gaps.
+
+### What Part 1 found
+
+Pulled the actual seeded `streams` JSON (not memory) and compared against the owner's stated model.
+Found the §10 seed did NOT support the required UI:
+
+- **CBSE mandate mismatch.** Owner's model: English is the ONLY mandatory subject, system-wide; the
+  other 4 are a free pick from a pool. The seeded data instead baked extra subjects into a PER-STREAM
+  `mandatory_core` — Science forced Physics+Chemistry, Commerce forced Accountancy/Business
+  Studies/Economics. Only Humanities already matched.
+- **Kerala Commerce wasn't in "combination block" shape** — used the CBSE-style mandatory/options split,
+  not the `combinations` array-of-named-blocks shape Science already had, even though the owner's model
+  says Kerala uses closed named blocks uniformly across all three streams.
+- **Two fields were prose strings, not arrays** (CBSE Humanities' `options`, Kerala Humanities'
+  `combinations`) — unusable for a card/radio UI.
+
+### What was fixed, and what's deliberately still open
+
+**Fixed, verified, committed** — CBSE (both classes) restructured: single `mandatory: ["English"]`,
+each stream's forced subjects moved into a real `elective_pool` array (Science's pool now genuinely
+includes Physics/Chemistry as PICKS, not requirements — a student can still assemble PCM/PCB/PCMB from
+the pool, they're just no longer forced), Humanities' string converted to an array. Kerala Science
+renamed `combinations` → `combination_blocks` for shape consistency; content was already correct.
+Verified via the real anon client read path (not just reading rows back), and confirmed the full 39-row
+`exam_categories` count didn't move.
+
+**Deliberately NOT touched: Kerala Commerce and Humanities.** No authoritative source exists for their
+real named combination blocks — the owner's own `curriculum-streams-reference.json` only had Science's
+two named blocks; Commerce/Humanities were given as a flat list in the source itself. Inventing
+plausible-sounding Kerala block names would be fabricating a curriculum fact a student would rely on.
+Owner chose (via `AskUserQuestion`, not assumed): **they will supply the real block data** before this
+gets built out, rather than a placeholder or a Science-only ship. Their `commerce`/`humanities_arts`
+entries are unchanged from the original §10 seed, still in the old shape, until that data arrives.
+
+### Parts 2-4: not started
+
+Full onboarding step UI, `users.academic_track` column + save-path wiring, `useStudentScope()` /
+Practice Generator / Syllabus page consumption, `stream_selection_enabled` flag + fallback nudge, admin
+preview panel, and the Part 4 changelog-on-empty-RPC + admin banner signal — none of this is built yet.
+Waiting on: (a) the owner's Kerala Commerce/Humanities data, (b) explicit go-ahead to start Part 2, per
+the phase-gate process this whole rebuild has followed. CBSE's full flow and Kerala's Science flow have
+clean data now and are unblocked whenever Part 2 starts; Kerala's other two streams will need whatever
+graceful "not yet available" UI state Part 2 design settles on, or a follow-up once their data lands.
+
+402 tests pass, build clean (data-only change).
