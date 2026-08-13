@@ -452,6 +452,13 @@ const corpusOrigin = `http://127.0.0.1:${corpusServer.address().port}`;
 
 let browser = await chromium.launch();
 
+async function openPage() {
+  const ctx  = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
+  return page;
+}
+
 async function newPage() {
   // When the renderer dies it takes the whole browser process with it, not just
   // the tab — the first recovery attempt failed with "browser has been closed"
@@ -460,10 +467,24 @@ async function newPage() {
     console.log('        [browser] disconnected — relaunching Chromium');
     browser = await chromium.launch();
   }
-  const ctx  = await browser.newContext();
-  const page = await ctx.newPage();
-  await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
-  return page;
+  try {
+    return await openPage();
+  } catch (e) {
+    // isConnected() is not sufficient. Chromium can still report itself
+    // connected and then crash the very target it just handed out, so the guard
+    // above never fires and newContext()/newPage() throws "Target crashed"
+    // instead. That escaped the SCHEDULED recycle, which runs outside the
+    // per-file try/catch, and so took the whole process down with an uncaught
+    // exception 91 files in with 33 still queued -- every completed file was
+    // checkpointed, but the run stopped dead. Relaunching and retrying once
+    // turns that back into the recoverable condition the per-file path already
+    // treats it as.
+    if (!isPageDead(e)) throw e;
+    console.log('        [browser] target crashed on open — relaunching Chromium');
+    try { await browser.close(); } catch { /* already gone */ }
+    browser = await chromium.launch();
+    return await openPage();
+  }
 }
 
 // Every file loads a whole PDF as an ArrayBuffer into the SAME renderer and
