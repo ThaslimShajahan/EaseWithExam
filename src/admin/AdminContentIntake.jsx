@@ -209,7 +209,7 @@ async function saveNoteChunks({
       kbCount += rows.length;
     } else {
       const kbRows = buildKbRows({
-        lesson, chapterName, chapterKey, unit, subject, examType, source, figures, equationsByPage,
+        lesson, chapterName, chapterKey, book, unit, subject, examType, source, figures, equationsByPage,
       });
 
       const ids = await adminSaveKnowledgeChunks(kbRows);

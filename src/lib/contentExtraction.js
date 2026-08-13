@@ -963,7 +963,7 @@ export function buildFigureRows(figures, { sourceTable = 'knowledge_base', sourc
  * binding is a later refinement.
  */
 export function buildKbRows({
-  lesson, chapterName, chapterKey = null, unit, subject, examType, source,
+  lesson, chapterName, chapterKey = null, book = null, unit, subject, examType, source,
   figures = [], equationsByPage = {},
 }) {
   const classLevel = classLevelFromExamType(examType);
@@ -1002,6 +1002,7 @@ export function buildKbRows({
       // this book", not "unknown". `chapter` (above) stays the display label
       // either way. See docs/REBUILD_HANDOFF.md Phase 2.
       chapter_key:   chapterKey,
+      book,
       class_level:   classLevel,
       unit:          unit || null,
       keywords:      Array.isArray(c.keywords) ? c.keywords.filter(Boolean).slice(0, 12) : [],
