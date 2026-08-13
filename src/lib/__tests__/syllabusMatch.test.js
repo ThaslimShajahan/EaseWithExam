@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { matchSyllabusChapter } from '../contentExtraction';
+import { matchSyllabusChapter, matchSyllabusChapterKeyed } from '../contentExtraction';
 
 const MATHS10 = [
   'Real Numbers', 'Polynomials', 'Pair of Linear Equations in Two Variables',
@@ -60,5 +60,43 @@ describe('matchSyllabusChapter', () => {
     expect(matchSyllabusChapter('Anything', [])).toBe('Anything');
     expect(matchSyllabusChapter('', MATHS10)).toBe('');
     expect(matchSyllabusChapter(null, MATHS10)).toBeNull();
+  });
+});
+
+/* Phase 2 PYQ slice (docs/REBUILD_HANDOFF.md): matchSyllabusChapterKeyed()
+ * shares the exact matching algorithm above (same fixtures, same measured
+ * cases) but operates on real {key, name} rows and returns null — never the
+ * raw guess — on no confident match, since PYQ's reject-per-question
+ * behaviour needs to know a match genuinely failed. */
+const MATHS10_KEYED = MATHS10.map((name, i) => ({ key: `c10_maths_ch${String(i + 1).padStart(2, '0')}`, name }));
+const SCIENCE10_KEYED = SCIENCE10.map((name, i) => ({ key: `c10_science_ch${String(i + 1).padStart(2, '0')}`, name }));
+
+describe('matchSyllabusChapterKeyed', () => {
+  it('matches exactly and returns the real chapter_key alongside the name', () => {
+    expect(matchSyllabusChapterKeyed('Real Numbers', MATHS10_KEYED))
+      .toEqual({ key: 'c10_maths_ch01', name: 'Real Numbers' });
+  });
+
+  it('recovers the same near-misses as the unkeyed matcher, with the key attached', () => {
+    expect(matchSyllabusChapterKeyed('Human Eye and Colourful World', SCIENCE10_KEYED))
+      .toEqual({ key: 'c10_science_ch10', name: 'The Human Eye and the Colourful World' });
+    expect(matchSyllabusChapterKeyed('Trigonometric Identities', MATHS10_KEYED))
+      .toEqual({ key: 'c10_maths_ch08', name: 'Introduction to Trigonometry' });
+  });
+
+  // The behaviour that actually differs from matchSyllabusChapter: no
+  // confident match returns null, not the raw guess — this is what lets the
+  // PYQ save path reject the individual question instead of silently writing
+  // an unconstrained chapter name.
+  it('REJECT: returns null rather than the raw guess when nothing matches confidently', () => {
+    expect(matchSyllabusChapterKeyed('Simple Interest', MATHS10_KEYED)).toBeNull();
+    expect(matchSyllabusChapterKeyed('Chemical Bonding', SCIENCE10_KEYED)).toBeNull();
+    expect(matchSyllabusChapterKeyed('Human Reproduction', SCIENCE10_KEYED)).toBeNull(); // same undistinguishable-rename case as above
+  });
+
+  it('REJECT: null/empty guess or empty chapter list, never throws', () => {
+    expect(matchSyllabusChapterKeyed('Anything', [])).toBeNull();
+    expect(matchSyllabusChapterKeyed('', MATHS10_KEYED)).toBeNull();
+    expect(matchSyllabusChapterKeyed(null, MATHS10_KEYED)).toBeNull();
   });
 });

@@ -234,9 +234,22 @@ async function processFile(page, job, origin, adminUid) {
 
     // Closed chapter list, per subject. For a Mixed paper the model must be
     // able to pick from all three subjects' chapters at once.
+    //
+    // Phase 2 PYQ slice (docs/REBUILD_HANDOFF.md): kept as {key, name}[] now,
+    // deduped by name — savePYQRows needs the key to resolve chapter_key.
+    // runPYQExtraction's closed-list prompt still wants plain names, derived
+    // below. (savePYQRows re-fetches its own per-subject lists internally
+    // when isMixed, so this keyed list is only actually used by it in the
+    // single-subject case — passed regardless, since it's harmless either way.)
     const subjects = isMixed ? ['Physics', 'Chemistry', 'Biology'] : [subject];
     const chapterSets = await Promise.all(subjects.map((s) => getChapters(examType, s)));
-    const syllabusChapters = [...new Set(chapterSets.flat().map((c) => c.name))];
+    const seenNames = new Set();
+    const syllabusChaptersKeyed = chapterSets.flat().filter((c) => {
+      if (seenNames.has(c.name)) return false;
+      seenNames.add(c.name);
+      return true;
+    }).map((c) => ({ key: c.key, name: c.name }));
+    const syllabusChapters = syllabusChaptersKeyed.map((c) => c.name);
 
     // A whole-paper answer key on its own page must reach every batch, not just
     // the batch it happens to fall in. See runPYQExtraction's `preamble`.
@@ -256,14 +269,21 @@ async function processFile(page, job, origin, adminUid) {
     // callerUid is explicit: savePYQRows falls back to getCallerUid(), which
     // reads an admin sessionStorage key this page does not have.
     const saved = await savePYQRows({
-      questions: clean, examType, subject, year, source, isMixed, syllabusChapters,
+      questions: clean, examType, subject, year, source, isMixed,
+      syllabusChapters: syllabusChaptersKeyed,
       callerUid: adminUid,
     });
 
     // Measured, so max_tokens can be right-sized from data rather than guessed.
     const serialised = JSON.stringify(clean);
     const withAnswer = clean.filter((q) => q.correct_answer != null && String(q.correct_answer).trim() !== '').length;
-    const snapped    = saved.filter((r) => r.chapter && syllabusChapters.includes(r.chapter)).length;
+    // Phase 2 PYQ slice: `snapped` used to measure how many SAVED rows also
+    // happened to match the syllabus, back when every extracted question was
+    // saved regardless. Now a question only reaches `saved` if it matched —
+    // that ratio would trivially always read 100%. `rejected` (questions
+    // dropped for no confident chapter match) is the metric that's actually
+    // informative now.
+    const rejected = saved.rejected ?? [];
 
     return {
       pages: ex.pageCount,
@@ -271,7 +291,7 @@ async function processFile(page, job, origin, adminUid) {
       extracted: clean.length,
       saved: saved.length,
       withAnswer,
-      snapped,
+      rejected: rejected.length,
       syllabusSize: syllabusChapters.length,
       bytesPerQuestion: Math.round(serialised.length / clean.length),
       bySubject: clean.reduce((a, q) => { const k = isMixed ? (q.subject || 'Mixed') : subject; a[k] = (a[k] ?? 0) + 1; return a; }, {}),
@@ -364,7 +384,7 @@ for (let i = 0; i < queue.length; i++) {
         failures.push({ id: job.id, error: `skipped: ${r.skipped}` });
         failed++;
       } else {
-        console.log(`${label}  saved=${r.saved}/${r.extracted}  answers=${r.withAnswer}  snapped=${r.snapped}/${r.saved}  vision=${r.visionCalls}  ${secs}s`);
+        console.log(`${label}  saved=${r.saved}/${r.extracted}  answers=${r.withAnswer}  rejected(no chapter match)=${r.rejected}  vision=${r.visionCalls}  ${secs}s`);
         if (r.bySubject && Object.keys(r.bySubject).length > 1) console.log(`      bySubject: ${JSON.stringify(r.bySubject)}`);
         console.log(`      bytes/question=${r.bytesPerQuestion}  syllabus=${r.syllabusSize} chapters`);
         done[job.id] = { ...r, at: new Date().toISOString() };

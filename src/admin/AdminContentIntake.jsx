@@ -14,7 +14,7 @@ import { fetchPdfBuffer } from '../lib/pdfAnalyzer';
 import { extractPagesWithVision, MAX_VISION_PAGES } from '../lib/pdfVision';
 import {
   runPYQExtraction, runNotesExtraction, buildKbRows, buildFigureRows, figuresForLesson,
-  matchSyllabusChapter, normaliseMarks,
+  matchSyllabusChapter, matchSyllabusChapterKeyed, normaliseMarks,
 } from '../lib/contentExtraction';
 import { assignChapters } from '../lib/chapterIdentity';
 import { getSubjectsForExam, BOARDS, CLASS_LEVELS, EXAM_TYPE_GROUPS } from '../lib/categories';
@@ -77,23 +77,66 @@ function cleanChapterGuess(filename) {
 // function the admin screen uses, rather than keeping a second copy of the row
 // shape. These rows feed Blueprint V2's chapter allocation, so a drifted
 // duplicate would corrupt generation quietly.
+/**
+ * Content-engine rebuild, Phase 2 PYQ slice (docs/REBUILD_HANDOFF.md).
+ *
+ * `syllabusChapters` is now `{key, name}[]` (from getChapters()), not bare
+ * names — chapter_key is resolved and written on a confident match via
+ * matchSyllabusChapterKeyed(). On no match: REJECT THE INDIVIDUAL QUESTION,
+ * not the whole paper (owner decision) — a 180-question NEET paper should not
+ * be entirely blocked by one unmatched chapter, but silently writing an
+ * unconstrained guess is exactly what this rebuild exists to prevent. Same
+ * middle ground as the old pipeline was NOT: it always wrote every question,
+ * unconstrained, on any miss.
+ */
 export async function savePYQRows({ questions, examType, subject, year, source, isMixed, syllabusChapters, callerUid = null }) {
   const reviewQueueOn = await getFeatureFlag(FLAGS.CONTENT_REVIEW_QUEUE);
+
+  // A single-subject upload already has the right chapter list. A Mixed paper
+  // (one file, multiple subjects — a combined NEET paper is Physics+Chemistry
+  // +Biology at once) cannot be resolved from one subject's list, since each
+  // question can belong to a different subject than whatever was selected at
+  // upload time. Fetch per-subject lists for whichever subjects the
+  // extraction actually produced — same per-subject getChapters() lookup
+  // scripts/bulk-load-pyq.mjs already does, just discovered from the output
+  // instead of a known subject list up front.
+  let chaptersBySubject;
+  if (isMixed) {
+    const distinctSubjects = [...new Set(questions.map((q) => q.subject).filter(Boolean))];
+    const lists = await Promise.all(distinctSubjects.map((s) => getChapters(examType, s)));
+    chaptersBySubject = new Map(distinctSubjects.map((s, i) => [s, lists[i].map((c) => ({ key: c.key, name: c.name }))]));
+  } else {
+    chaptersBySubject = new Map([[subject, syllabusChapters ?? []]]);
+  }
 
   // Every adjustment normaliseMarks makes is collected so the operator sees it.
   // `marks` is an integer column and this used to be a raw `q.marks ?? null`
   // pass-through, so a single 0.5 from the model failed the whole multi-row
   // insert and lost every question in the file.
   const marksAdjusted = [];
+  const rejected = [];
 
-  const rows = questions.map((q, i) => {
+  const rows = [];
+  questions.forEach((q, i) => {
     const marks = normaliseMarks(q.marks);
     if (marks.note) marksAdjusted.push(`Q${i + 1}: ${marks.note}`);
 
-    return {
+    const qSubject = isMixed ? (q.subject || 'General') : subject;
+    const chapters = chaptersBySubject.get(qSubject) ?? [];
+    const matched  = matchSyllabusChapterKeyed(q.chapter, chapters);
+
+    if (!matched) {
+      rejected.push(chapters.length === 0
+        ? `Q${i + 1}: no syllabus exists yet for "${qSubject}" (${examType}) — upload Study Notes for this subject first`
+        : `Q${i + 1}${q.chapter ? ` ("${q.chapter}")` : ''}: no confident match in ${qSubject}'s ${chapters.length}-chapter syllabus`);
+      return; // reject THIS question only — the rest of the paper still saves
+    }
+
+    rows.push({
       exam_type:      examType,
-      subject:        isMixed ? (q.subject || 'Mixed') : subject,
-      chapter:        matchSyllabusChapter(q.chapter, syllabusChapters) || null,
+      subject:        qSubject,
+      chapter:        matched.name,
+      chapter_key:    matched.key,
       question_text:  q.question_text,
       options:        q.options?.length ? q.options : null,
       correct_answer: q.correct_answer || null,
@@ -106,27 +149,28 @@ export async function savePYQRows({ questions, examType, subject, year, source, 
       has_diagram:    q.has_diagram ?? false,
       source,
       ...(reviewQueueOn && { status: 'in_review' }),
-    };
+    });
   });
 
   // Direct table writes are closed (20260812020000) — pyq_questions was
   // ALL-writable by anyone holding the public anon key. Same returned shape as
   // the old .insert().select(), so callers are unaffected.
-  const { data: saved, error } = await supabase.rpc('admin_insert_pyq_rows', {
-    p_caller: callerUid || getCallerUid(),
-    p_rows:   rows,
-  });
+  const { data: saved, error } = rows.length
+    ? await supabase.rpc('admin_insert_pyq_rows', { p_caller: callerUid || getCallerUid(), p_rows: rows })
+    : { data: [], error: null };
   if (error) throw new Error(error.message);
 
   logChange(ENTITY.PYQ_QUESTION, 'bulk', ACTION.CREATE,
-    { count: rows.length, examType, subject, source, marksAdjusted: marksAdjusted.length },
+    { count: rows.length, rejected: rejected.length, examType, subject, source, marksAdjusted: marksAdjusted.length },
     `Content Intake: ${rows.length} PYQ questions from ${source}`
+      + (rejected.length ? ` (${rejected.length} question(s) rejected — no confident chapter match)` : '')
       + (marksAdjusted.length ? ` (${marksAdjusted.length} marks value(s) adjusted)` : ''));
 
-  // Carried as a property on the returned array rather than by changing the
+  // Carried as properties on the returned array rather than by changing the
   // return type, because scripts/bulk-load-pyq.mjs consumes this as an array.
   const out = saved ?? [];
   out.marksAdjusted = marksAdjusted;
+  out.rejected = rejected;
   return out;
 }
 
@@ -444,14 +488,21 @@ export default function AdminContentIntake() {
   const isMixed    = subject === 'Mixed';
 
   // Real syllabus chapters for this exam+subject — used to align AI-detected
-  // chapter names so they register correctly in Content Map.
+  // chapter names so they register correctly in Content Map, and (Phase 2 PYQ
+  // slice) to resolve a real chapter_key for PYQ questions. Kept as
+  // {key, name}[] now, not bare names — matchSyllabusChapter (Notes' no-
+  // manifest fallback) still gets plain names via syllabusChapterNames below,
+  // unchanged; matchSyllabusChapterKeyed (PYQ) needs the key too.
   const [syllabusChapters, setSyllabusChapters] = useState([]);
   useEffect(() => {
     if (!subject || step === 'type') { setSyllabusChapters([]); return; }
     let cancelled = false;
-    getChapters(dbExamType, subject).then((chs) => { if (!cancelled) setSyllabusChapters(chs.map((c) => c.name)); });
+    getChapters(dbExamType, subject).then((chs) => {
+      if (!cancelled) setSyllabusChapters(chs.map((c) => ({ key: c.key, name: c.name })));
+    });
     return () => { cancelled = true; };
   }, [dbExamType, subject, step]);
+  const syllabusChapterNames = syllabusChapters.map((c) => c.name);
 
   // The APPROVED chapter_manifests row's entries for (dbExamType, subject,
   // book) — or null. Read-open RLS (chapter_manifests_read), so this is a
@@ -626,7 +677,7 @@ export default function AdminContentIntake() {
 
         if (contentType === 'pyq') {
           const { questions } = await runPYQExtraction({
-            rawText, examType: dbExamType, subject, year, syllabusChapters,
+            rawText, examType: dbExamType, subject, year, syllabusChapters: syllabusChapterNames,
             onProgress: (msg) => setStepMsg({ message: msg }),
           });
           setStepMsg({ message: `Saving ${questions.length} questions…` });
@@ -651,13 +702,20 @@ export default function AdminContentIntake() {
           const marksNote = adjusted.length
             ? ` · ${adjusted.length} marks value(s) ADJUSTED (${adjusted.slice(0, 3).join('; ')}${adjusted.length > 3 ? `; +${adjusted.length - 3} more` : ''})`
             : '';
+          // Phase 2 PYQ slice: questions rejected for no confident chapter
+          // match — saved alongside the successes, never silent.
+          const rejectedQs  = rows.rejected ?? [];
+          const rejectNote  = rejectedQs.length
+            ? ` · ${rejectedQs.length} question(s) REJECTED — no chapter match (${rejectedQs.slice(0, 3).join('; ')}${rejectedQs.length > 3 ? `; +${rejectedQs.length - 3} more` : ''})`
+            : '';
 
           setStepMsg({
-            status: (failedPages?.length || adjusted.length) ? 'partial' : 'done',
+            status: (failedPages?.length || adjusted.length || rejectedQs.length) ? 'partial' : 'done',
             savedRows: rows,
-            message: `${rows.length} questions saved`
+            message: `${rows.length} of ${questions.length} questions saved`
               + (visionPageCount ? ` · ${visionPageCount} page(s) read by vision` : '')
               + (figures.length ? ` · ${figures.length} figure(s)` : '')
+              + rejectNote
               + failNote
               + marksNote,
           });
@@ -676,7 +734,7 @@ export default function AdminContentIntake() {
           setStepMsg({ message: `Saving ${lessons.length} lesson(s)…` });
           const { kbCount, chapterName, lessonCount, flagged } = await saveNoteChunks({
             unit, lessons, examType: dbExamType, subject, chapter: it.chapter || chapterHint,
-            source: `${it.source}:${it.name}`, callerUid, syllabusChapters,
+            source: `${it.source}:${it.name}`, callerUid, syllabusChapters: syllabusChapterNames,
             figures, equationsByPage,
             manifest, filename: it.name, book: book || null, classLevel,
           });

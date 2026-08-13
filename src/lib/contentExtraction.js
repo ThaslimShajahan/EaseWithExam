@@ -162,16 +162,27 @@ export function isPartialSyllabus(examType, subject = null) {
   return subject ? PARTIAL_SYLLABUS.has(`${examType}::${subject}`) : false;
 }
 
-export function matchSyllabusChapter(guess, chapterNames) {
-  if (!guess || !chapterNames?.length) return guess;
+/**
+ * The actual matcher, shared by both callers below. Returns the INDEX into
+ * `names` of the best match, or -1 on no confident match — never a string,
+ * so neither caller has to re-derive a name back into whatever else it also
+ * needs (e.g. a chapter_key at the same index, see matchSyllabusChapterKeyed).
+ *
+ * Exact, then substring, then token-overlap scoring — unchanged from the
+ * original single-purpose function this was extracted from. See
+ * matchSyllabusChapter's own history for the measured cases the 1/3
+ * threshold and the 6-char shared-prefix rule are calibrated against.
+ */
+function _bestChapterMatchIndex(guess, names) {
+  if (!guess || !names?.length) return -1;
   const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const g = norm(guess);
 
-  const exact = chapterNames.find((c) => norm(c) === g);
-  if (exact) return exact;
+  const exactIdx = names.findIndex((c) => norm(c) === g);
+  if (exactIdx !== -1) return exactIdx;
 
-  const partial = chapterNames.find((c) => norm(c).includes(g) || g.includes(norm(c)));
-  if (partial) return partial;
+  const partialIdx = names.findIndex((c) => norm(c).includes(g) || g.includes(norm(c)));
+  if (partialIdx !== -1) return partialIdx;
 
   // Token overlap, Jaccard over stemmed content words. Tokens also count as
   // shared when one is a long prefix of the other, which is what lets
@@ -189,14 +200,14 @@ export function matchSyllabusChapter(guess, chapterNames) {
   };
 
   const gt = [...new Set(chapterTokens(guess))];
-  if (!gt.length) return guess;
-  let best = null, bestScore = 0;
-  for (const c of chapterNames) {
-    const ct = [...new Set(chapterTokens(c))];
+  if (!gt.length) return -1;
+  let bestIdx = -1, bestScore = 0;
+  for (let i = 0; i < names.length; i++) {
+    const ct = [...new Set(chapterTokens(names[i]))];
     if (!ct.length) continue;
     const shared = gt.filter((t) => ct.some((u) => shareToken(t, u))).length;
     const score = shared / (gt.length + ct.length - shared);
-    if (score > bestScore) { bestScore = score; best = c; }
+    if (score > bestScore) { bestScore = score; bestIdx = i; }
   }
 
   // 1/3 is where the measured cases separate, and the separation is narrow:
@@ -213,7 +224,37 @@ export function matchSyllabusChapter(guess, chapterNames) {
   // it silently attributes a question to a chapter it does not test. Cases like
   // that are what the closed chapter list in runPYQExtraction is for; this
   // backstop only covers uploads with no syllabus to constrain against.
-  return bestScore >= 1 / 3 ? best : guess;
+  return bestScore >= 1 / 3 ? bestIdx : -1;
+}
+
+/** Unchanged observable behaviour from before the extraction above: returns
+ *  the matched name, or the raw guess unconstrained on no match. Used by the
+ *  Notes no-manifest fallback path — deliberately NOT given a stricter
+ *  reject-on-no-match behaviour here, since that path already has its own
+ *  separate, stricter path (assignChapters) for any book with an approved
+ *  manifest; this backstop only runs for books that don't have one yet. */
+export function matchSyllabusChapter(guess, chapterNames) {
+  const i = _bestChapterMatchIndex(guess, chapterNames);
+  return i === -1 ? guess : chapterNames[i];
+}
+
+/**
+ * Content-engine rebuild, Phase 2 PYQ slice (docs/REBUILD_HANDOFF.md).
+ * Same matching algorithm as matchSyllabusChapter, but against real
+ * syllabus_nodes rows (carrying chapter_key) instead of bare name strings,
+ * and returns null rather than the raw guess on no confident match — PYQ's
+ * per-question reject-on-no-match behaviour (owner-decided: reject the
+ * individual question, not the whole paper) needs to know a match genuinely
+ * failed, not silently receive an unconstrained name back.
+ *
+ * @param {string} guess
+ * @param {{key: string, name: string}[]} chapters — from getChapters()
+ * @returns {{key: string, name: string} | null}
+ */
+export function matchSyllabusChapterKeyed(guess, chapters) {
+  const names = (chapters ?? []).map((c) => c.name);
+  const i = _bestChapterMatchIndex(guess, names);
+  return i === -1 ? null : chapters[i];
 }
 
 /**
