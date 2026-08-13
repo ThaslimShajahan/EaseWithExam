@@ -478,24 +478,6 @@ function KnowledgeBaseViewer() {
     });
   }, []);
 
-  /* Same asymmetry as PYQBank: subjects scoped by the selected exam tag, exam
-   * tags never scoped by subject. Without this, selecting Class 8 offered
-   * Class 11 subjects like Biotechnology. Case-insensitive dedupe is retained
-   * — "Hindi" and "hindi" both occur and would otherwise split into two
-   * useless pills. */
-  const allSubjects = useMemo(() => {
-    const inScope = examTagFilter === 'All'
-      ? kbPairs
-      : kbPairs.filter((c) => c.exam_type === examTagFilter);
-    const byKey = new Map();
-    for (const c of inScope) {
-      if (!c.subject) continue;
-      const key = c.subject.toLowerCase();
-      const existing = byKey.get(key);
-      if (!existing || (/^[a-z]/.test(existing) && /^[A-Z]/.test(c.subject))) byKey.set(key, c.subject);
-    }
-    return ['All', ...[...byKey.values()].sort()];
-  }, [kbPairs, examTagFilter]);
   const allExamTags = examTagOptions;
   const competitiveTags = allExamTags.filter((t) => t !== 'All' && !/\sClass\s\d+$/i.test(t));
 
@@ -525,6 +507,30 @@ function KnowledgeBaseViewer() {
     if (clsSel) return new RegExp(`\\sClass\\s${clsSel}$`, 'i').test(e);
     return true;
   }
+
+  /* Same asymmetry as PYQBank: subjects scoped by the selected exam, exam pills
+   * never scoped by subject. Without this, selecting Class 8 offered Class 11
+   * subjects like Biotechnology. Case-insensitive dedupe is retained — "Hindi"
+   * and "hindi" both occur and would otherwise split into two useless pills.
+   *
+   * Scoping goes through matchesExamSelection rather than comparing exam_type
+   * to a single filter value, because this view selects an exam as three
+   * independent pills (board, class, competitive) and no single value exists to
+   * compare against. It therefore has to sit BELOW that function: the matcher
+   * closes over hasExamFilter, which is a const declared further down, so
+   * calling it from higher up hits the temporal dead zone. */
+  const allSubjects = useMemo(() => {
+    const byKey = new Map();
+    for (const c of kbPairs) {
+      if (!c.subject || !matchesExamSelection(c.exam_type)) continue;
+      const key = c.subject.toLowerCase();
+      const existing = byKey.get(key);
+      if (!existing || (/^[a-z]/.test(existing) && /^[A-Z]/.test(c.subject))) byKey.set(key, c.subject);
+    }
+    return ['All', ...[...byKey.values()].sort()];
+    // Depends on the three selection pills, not on matchesExamSelection: that
+    // function is rebuilt every render and listing it would defeat the memo.
+  }, [kbPairs, boardSel, clsSel, competitiveSel]);
 
   const displayed = chunks.filter((c) => {
     const term = search.trim().toLowerCase();
