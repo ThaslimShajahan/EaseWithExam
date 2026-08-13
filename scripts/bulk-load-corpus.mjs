@@ -6,6 +6,7 @@
  *   BASE_URL=http://localhost:5175 node scripts/bulk-load-corpus.mjs --dry-run
  *   BASE_URL=http://localhost:5175 node scripts/bulk-load-corpus.mjs
  *   ... --concurrency=4 --limit=5 --reset
+ *   ... --file-timeout=20        (minutes per file before it is failed)
  *
  * Drives the REAL production modules — src/lib/pdfVision.js and
  * src/lib/contentExtraction.js — inside browser pages served by Vite, exactly
@@ -81,6 +82,38 @@ const MAX_RETRIES = Number(arg('retries', 6));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const isRateLimit = (e) => /rate limit|429|TPM|tokens per min/i.test(String(e?.message ?? e));
+
+/* Per-file deadline.
+ *
+ * Nothing in the chain below processFile() sets one. The model calls happen
+ * inside the page, through the same modules the app uses, and a request that
+ * never settles therefore stalls the whole queue: no error, no FAIL line, no
+ * checkpoint write, the run simply stops advancing until someone notices. That
+ * is the identical hole src/lib/aiProxy.js closed for the vision upload, which
+ * sat on "Reading page 4 with vision…" for 15+ minutes against `signal:
+ * undefined`. A load meant to run unattended overnight cannot carry it.
+ *
+ * The deadline lives here rather than in aiProxy's withDeadline() because there
+ * is no signal to hand the in-page work — page.evaluate() takes none. Racing a
+ * timer is the only lever node has, so a fired deadline leaves the in-page call
+ * still running: the caller MUST tear the context down, which is the sole real
+ * cancellation available. See the timeout branch in worker(). */
+const FILE_TIMEOUT_MS = Math.max(1, Number(arg('file-timeout', 20))) * 60_000;
+const TIMEOUT_MARK    = 'file deadline exceeded';
+const isFileTimeout   = (e) => String(e?.message ?? e).includes(TIMEOUT_MARK);
+
+function withDeadline(promise, timeoutMs) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${TIMEOUT_MARK} after ${Math.round(timeoutMs / 60_000)}m`)),
+      timeoutMs,
+    );
+  });
+  // The losing promise is deliberately not awaited — on a timeout it is the
+  // abandoned in-page work, and it dies with the context the caller closes.
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+}
 
 /* ── Scope: which folders are STEM ──────────────────────────────────── */
 
@@ -476,8 +509,19 @@ async function worker(page, id) {
       // whole queue producing nothing.
       let r, attempt = 0, revived = false;
       for (;;) {
-        try { r = await processFile(page, job, corpusOrigin); break; }
+        try { r = await withDeadline(processFile(page, job, corpusOrigin), FILE_TIMEOUT_MS); break; }
         catch (e) {
+          // The deadline fired, so the in-page call is still live — it would go
+          // on spending quota and would race the next file scheduled onto this
+          // page. Closing the context is the only thing that actually stops it.
+          // The file is then failed loudly rather than retried: a stuck file is
+          // usually stuck for a reason, and a retry costs another full deadline
+          // of wall clock. It stays out of the checkpoint, so a later run picks
+          // up exactly it while the queue keeps moving now.
+          if (isFileTimeout(e)) {
+            await recycle(TIMEOUT_MARK);
+            throw e;
+          }
           // A dead renderer is not this file's fault, and it does not heal on
           // its own — without this the loop below would run the entire rest of
           // the queue against a corpse, failing every file in milliseconds
