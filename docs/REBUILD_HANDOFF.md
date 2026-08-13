@@ -638,3 +638,74 @@ clean data now and are unblocked whenever Part 2 starts; Kerala's other two stre
 graceful "not yet available" UI state Part 2 design settles on, or a follow-up once their data lands.
 
 402 tests pass, build clean (data-only change).
+
+## 12. Stream selection: unified data model — Phase 1 DONE, awaiting review
+
+Full task from the owner: unified stream/language data model (Phase 1), onboarding UI (Phase 2), admin
+editor (Phase 3), downstream consumption (Phase 4). Owner said STOP after Phase 1 and Phase 3 for
+review. This entry covers Phase 1 only.
+
+### Table decision: new `stream_configs` + `board_language_config`, not `exam_categories.streams`
+
+Proposed and built, not assumed. `exam_categories` is a general-purpose board/class/competitive
+catalog also serving Classes 6–10 and competitive exams — unrelated concerns. Phase 3's admin UI
+naturally edits "one stream" as a unit, which maps to one row with real columns, not a field buried in
+nested jsonb. Keying by `class_tier='11-12'` (not separately per Class 11 and Class 12) avoids the
+duplication/drift risk the §10 seed had, since the curriculum is identical across both years.
+
+Migration `20260813040000_stream_configs.sql`:
+- `stream_configs` — `board_key`, `class_tier`, `stream_key` (checked: science/commerce/humanities),
+  `stream_mandatory text[]`, `choice_slots`/`optional_slots`/`named_combinations` (jsonb arrays),
+  `sort_order`, `is_active`. Partial unique index on `(board_key, class_tier, stream_key) WHERE
+  is_active`, same pattern as `chapter_manifests_approved_uniq`.
+- `board_language_config` — `board_key`, `class_tier`, `mandatory_languages text[]`,
+  `choice_language_slot jsonb` (**null** = no second-language choice = CBSE; **populated** = Kerala
+  shape). Phase 2 UI must branch on nullness, never on a board-name literal — that's the whole point of
+  splitting this out from `stream_configs`.
+- Two admin RPCs, same `assert_verified_admin` gate as every other admin write surface in this project:
+  `admin_upsert_stream_config`, `admin_upsert_board_language_config`.
+- `exam_categories.streams` (the §10/§11 column) is **deprecated via column comment, not dropped** —
+  additive-only rule. Nothing reads it as of this migration.
+
+### Verified, not assumed — both halves, then real anon HTTP
+
+Rolled-back transaction first (6 assertions): unverified caller denied, bad `stream_key` rejected,
+real admin creates a row, **raw partial-unique-index blocks a duplicate identity via direct INSERT**
+(bypassing the RPC, same rigor as the `chapter_manifests` proof in §6c) for both new tables. All 6
+passed. Applied for real (`supabase db push`, verified independently via `migration list` + a schema
+existence query — table/RPC/row counts all confirmed, 0 rows before seeding, no dry-run pollution).
+
+Then seeded the 6 stream rows + 2 language rows from the task's canonical curriculum text — not from
+the superseded §10/§11 seed — via the real RPCs. Verified through the **real anon client read path**
+(not just reading rows back): 8 structural assertions (CBSE streams have zero `stream_mandatory`;
+CBSE Commerce's pool is exactly 4-of-4, the deliberate auto-select case; Kerala Science has exactly 3
+locked subjects; Kerala Science's two named combinations — `Course Code 1`/`Course Code 5` — are
+present and Kerala Commerce/Humanities' are correctly **empty**, not invented; CBSE's optional-6th pool
+is byte-identical across all three streams). Anon write to the table and anon call to the RPC are both
+blocked (401, RLS / permission-denied-for-function — same as `chapter_manifests`). `exam_categories`
+still exactly 39 rows — nothing else moved. 402 tests pass, build clean.
+
+### The evidence question the task asked directly
+
+*"Confirm CBSE's optional_slots pool correctly excludes same-subject duplicates logically (or note
+that's enforced in UI, not data — say which)."* **Enforced in the UI, not the data — deliberately.**
+The stored `optional_slots.choose_from` pool is static per stream and cannot know which subject a given
+student already picked in `choice_slots` (e.g. Psychology appears in both Humanities' core-4 pool and
+the shared optional-6th pool). A stored config has no per-student state to reason about; Phase 2's
+selection screen is where "already chosen" is known and must filter the option out at render/validation
+time. Recorded in the migration's column comment on `optional_slots` so this isn't re-litigated later.
+
+### Real curriculum data used (all 8 rows, from the task text verbatim, no invention)
+
+See the migration file's header comment and `seed-stream-configs.sql`-equivalent logic (data is now
+live, not committed as a separate seed script — captured here for reference): CBSE Science/Commerce/
+Humanities (empty `stream_mandatory`, 4-of-N or 4-of-4 `choice_slots`, shared 6-item optional pool);
+Kerala Science (3 locked, 1-of-2 choice, 2 named combinations)/Commerce (3 locked, 1-of-4 choice, no
+named combinations)/Humanities (3 locked, 1-of-4 choice, no named combinations); CBSE and Kerala
+`board_language_config` rows.
+
+### Not started: Phases 2–4
+
+Onboarding UI, `users.academic_track`, admin editor, downstream consumption (`useStudentScope`,
+Practice Generator, Syllabus, Classes 8–10 regression check) — none built. Stopping for review per the
+task's explicit phase gate.
