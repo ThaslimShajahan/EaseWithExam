@@ -1,0 +1,255 @@
+# Class 11/12 Stream Selection — Handoff
+
+**Read this first if you are picking this work up with no memory of the conversation that started it.**
+You have the repo and this file. That is enough. Everything below is either verifiable in the repo or
+was measured against the live database and recorded here.
+
+**This is a separate feature from the content-platform rebuild.** See `docs/REBUILD_HANDOFF.md` for
+that work (chapter identity, manifests, the non-STEM taxonomy). The two share infrastructure —
+this feature was seeded on top of the live-database wipe documented in that file's §9, and its earliest
+data (the flawed `exam_categories.streams` column) was created while restoring what that wipe removed
+(REBUILD_HANDOFF.md §10) — but the feature itself, its phases, and its own open items are tracked here,
+not there. If you're looking for chapter manifests or Study Notes, you're in the wrong file.
+
+Last updated: 2026-08-13, Phase 2 done + a live data correction. Phase 3 (admin editor) starting next.
+Branch: `nonstem-stage-a-taxonomy`, same as the content rebuild (never pushed to `origin/main`).
+
+---
+
+## 1. What this feature is
+
+Class 11/12 students on CBSE or Kerala State pick a stream (Science/Commerce/Humanities) and, within
+it, a language and subject combination that genuinely differs by board — not a simple flat subject
+list. The owner supplied real curriculum facts (verbatim in
+[`docs/curriculum-streams-reference.json`](curriculum-streams-reference.json), and later a more precise
+canonical spec directly in the task text) and asked for a unified data model, an onboarding UI, an
+admin editor, and downstream consumption (Practice Generator, Syllabus, etc. scoped to a student's
+actual chosen subjects instead of the full board list).
+
+**The curriculum facts, as currently modeled (§4 below is the authoritative live data — read that, not
+this summary, before changing anything):**
+
+- **Classes 8–10, both boards**: no streaming, no choice. Out of scope for this feature entirely.
+- **CBSE 11–12**: one mandatory subject (English Core). Per stream, some subjects are **locked**
+  (currently: Physics + Chemistry for Science only — see §6, a live correction from the original "CBSE
+  locks nothing" model) and the rest are a genuine free pick from a pool. An optional, ungraded 6th
+  subject is available from a pool shared across all three CBSE streams.
+- **Kerala State 11–12**: two mandatory languages (English + a choice of second language). Per stream,
+  3 subjects are locked (the "common core") plus one more chosen from a small pool (the "course code"
+  choice — e.g. Science's Biology vs Computer Science pick). No optional 6th subject; Kerala totals
+  exactly 6 subjects (2 languages + 4 stream subjects), no more.
+
+## 2. Decided architecture
+
+**Two new tables**, not an extension of `exam_categories.streams` (the column that data originally
+landed in — see §5). `exam_categories` is a general-purpose board/class/competitive catalog serving
+unrelated concerns; the admin editor (Phase 3) naturally edits "one stream" as a unit, which wants a
+real row, not a field in nested jsonb.
+
+- **`stream_configs`** — one row per (board, class tier, stream). `stream_mandatory` (locked subjects,
+  may be empty), `choice_slots` (the graded pick — usually one slot), `optional_slots` (CBSE's ungraded
+  6th, empty for Kerala), `named_combinations` (admin-addable labels for a choice pick, e.g. Kerala
+  Science's "Course Code 1"). Keyed by `class_tier = '11-12'`, not separately per Class 11 and Class 12
+  — the curriculum is identical across both years, so this avoids a duplication/drift risk the original
+  seed had.
+- **`board_language_config`** — one row per board. `mandatory_languages`, and `choice_language_slot`
+  (**null** for a board with no second-language choice — CBSE; **populated** for one that has it —
+  Kerala). **UI must branch on this field's nullness, never on a board-name string** — that's the whole
+  reason it's split out from `stream_configs` rather than folded in.
+
+Both tables: read-open RLS policy, write-closed (no permissive policy at all — matches
+`chapter_manifests`' pattern), two admin RPCs (`admin_upsert_stream_config`,
+`admin_upsert_board_language_config`) gated by `assert_verified_admin`, same as every other admin write
+surface in this project.
+
+`users` gained two additive, nullable columns: **`subjects text[]`** (the flattened, consumer-friendly
+list — NULL for every student who hasn't completed stream selection; **nothing reads it yet**, that's
+Phase 4's job) and **`academic_track jsonb`** (the structured choice: `{board, stream, language_choice?,
+chosen_slot_subjects, optional_6th?}`).
+
+## 3. What already exists and works
+
+| Thing | Where | State |
+|---|---|---|
+| `stream_configs` + `board_language_config` schema, RPCs, RLS | migration `20260813040000` | Applied to live, both-halves verified (§7) |
+| `stream_configs.description` (Phase 1 gap fix) | migration `20260813060000` | Applied, backfilled from real source text |
+| `users.subjects` / `users.academic_track` | migration `20260813050000` | Applied; extends `upsert_own_user`/`update_own_user`, does not add a new RPC |
+| Pure selection logic (no React) | `src/lib/streamSelection.js` | 22 tests passing — see §8 |
+| Data-fetching hook | `src/hooks/useStreamConfig.js` | Holds the onboarding flow at the Board step until the fetch resolves |
+| Onboarding UI (5 new step types) | `src/pages/OnboardingPage.jsx` | Built, real end-to-end Playwright proof (§8) |
+| `stream_selection_enabled` feature flag | `src/lib/featureFlags.js` `FLAGS.STREAM_SELECTION` | Registered and gated in the UI; **currently ON in the live DB, for testing** — turn off before considering this "launched" if that matters |
+
+## 4. The live curriculum data, exactly as seeded (read this before touching any row)
+
+**6 `stream_configs` rows** (`board_key`, `stream_key` → `stream_mandatory` / `choice_slots.count` /
+`choice_slots.choose_from` / `named_combinations`):
+
+| Board | Stream | Locked | Choice | Named combos |
+|---|---|---|---|---|
+| CBSE | science | `Physics, Chemistry` | pick 2 of `Mathematics, Biology, Computer Science` | none |
+| CBSE | commerce | *(none)* | pick 4 of `Accountancy, Business Studies, Economics, Applied Mathematics` (4-of-4 = auto-select-all) | none |
+| CBSE | humanities | *(none)* | pick 4 of `History, Political Science, Geography, Sociology, Psychology, Economics` | none |
+| Kerala State | science | `Physics, Chemistry, Mathematics` | pick 1 of `Biology, Computer Science` | **Course Code 1** = +Biology, **Course Code 5** = +Computer Science |
+| Kerala State | commerce | `Business Studies, Accountancy, Economics` | pick 1 of `Computer Applications, Mathematics, Statistics, Political Science` | **none — see §9** |
+| Kerala State | humanities | `History, Economics, Political Science` | pick 1 of `Sociology, Geography, Psychology, Journalism` | **none — see §9** |
+
+CBSE's three streams also share one **optional, ungraded 6th subject** pool:
+`Physical Education, Fine Arts, Informatics Practices, Legal Studies, Psychology, Home Science`
+(a subject already picked in the stream's choice slot is filtered out of this pool **at render time**,
+in `availableOptionalSubjects()` — the stored config has no per-student state to do this itself, see §8).
+
+**2 `board_language_config` rows**:
+
+| Board | Mandatory | Choice |
+|---|---|---|
+| CBSE | `English Core` | none (`choice_language_slot` is `null`) |
+| Kerala State | `English` | pick 1 of `Malayalam, Hindi, Arabic, Urdu, Sanskrit, Syriac` |
+
+**Do not hand-edit these facts without re-reading §6 and §9** — the CBSE Science lock and the Kerala
+Commerce/Humanities empty `named_combinations` are both deliberate, owner-confirmed states, not
+placeholders waiting to be "cleaned up."
+
+## 5. History: how the data got here (the flawed first attempt, kept for context)
+
+The very first seed of this feature landed in `exam_categories.streams` (a jsonb column added in
+migration `20260813030000`, back when this was being modeled as an extension of the general categories
+table). That shape had real, measured defects — found by a Part-1-style "verify before building UI"
+check, not assumed:
+
+- **CBSE over-locked subjects.** Physics/Chemistry (Science) and Accountancy/Business
+  Studies/Economics (Commerce) were baked into a per-stream `mandatory_core`, when the owner's model
+  was "English is the only mandatory subject, the rest is a free pick."
+- **Kerala Commerce wasn't in "combination block" shape** — it used the CBSE-style
+  mandatory/options split instead of the named-blocks array Science had.
+- **Two fields were prose strings, not arrays** (CBSE Humanities' `options`, Kerala Humanities'
+  `combinations`) — unusable for a card/radio UI.
+
+That column is now **deprecated via a SQL comment, not dropped** (additive-only rule) — nothing reads
+it as of `20260813040000`. The real model is `stream_configs`/`board_language_config` (§2, §4). If you
+find code or a migration still referencing `exam_categories.streams`, that is stale and should be
+pointed at the new tables instead.
+
+## 6. Live data correction: CBSE Science locks Physics/Chemistry
+
+Owner instruction, after Phase 2 shipped. Real-world CBSE Science policy: Physics and Chemistry are
+compulsory at most schools, unlike Commerce/Humanities' genuinely free pool — the original "CBSE locks
+nothing but English" model (itself already a correction from an even more over-locked first draft, §5)
+needed this one stream-specific exception.
+
+Changed via the real `admin_upsert_stream_config` RPC (existing row's id fetched first, updated in
+place — not a new row): `stream_mandatory` is now `["Physics","Chemistry"]`; the choice slot shrank
+from "pick 4 of 5" to "pick 2 of the remaining 3" (`Mathematics`, `Biology`, `Computer Science`),
+keeping the total non-language subject count at 4. `optional_slots` and `description` untouched. The
+other 5 rows confirmed unchanged.
+
+No code changes were needed — `streamSelection.js`'s functions are generic on `slot.count` /
+`stream_mandatory`, never hardcoded to a specific count. Verified live: a real Playwright run through
+CBSE Class 11 → Science shows `English Core | Physics | Chemistry` as locked chips, then `Choose 2 more
+subjects (0/2 selected)` over the remaining pool. Test fixtures in `streamSelection.test.js` updated to
+match, plus 3 new tests asserting the lock directly.
+
+## 7. Phase 1 — unified data model (DONE)
+
+Full evidence originally logged 2026-08-13; summarized here, detail in git log for commits
+`5e25b67`/`fd3a9a0` and this file's predecessor sections in `REBUILD_HANDOFF.md`'s history if you need
+the verbatim original write-up.
+
+- **Table decision** (`stream_configs` + `board_language_config`, not extending `exam_categories`):
+  proposed and built, reasoning in §2.
+- **Verified both halves in a rolled-back transaction before applying anything**: unverified caller
+  denied, bad `stream_key` rejected, real admin creates a row, and — the one that matters most — the
+  **raw partial-unique-index blocks a duplicate identity via a direct INSERT that bypasses the RPC
+  entirely**, proving the constraint protects even if a future bug or a manual edit skips the RPC. All 6
+  assertions passed, for both new tables.
+- **Applied for real**, independently reverified (`migration list` + a schema-existence query, not
+  trusting the CLI's own "Finished" message — it printed a red herring about a certificate file that
+  turned out to be an unrelated post-push caching step).
+- **Seeded from the task's canonical curriculum text**, not the flawed `exam_categories.streams` data,
+  via the real RPCs. Verified through the **real anon HTTP client path**, not just reading rows back —
+  8 structural assertions, anon write and anon RPC call both confirmed blocked (401).
+- **The evidence question the task asked directly**, answered: same-subject exclusion between a stream's
+  choice slot and the optional-6th pool is enforced in the **UI**, not the data — a static stored pool
+  cannot know what a given student already picked. Recorded in the `optional_slots` column comment.
+
+## 8. Phase 2 — onboarding UI, save path (DONE)
+
+- `src/lib/streamSelection.js` — pure logic, no React, specifically so the two owner-mandated
+  requirements have a **real test proving them**, not a comment claiming them:
+  - `availableOptionalSubjects()` excludes whatever was already picked in the stream's choice slot.
+  - `matchedCombinationName()` returns `null` — never an invented name — when `named_combinations` is
+    empty (Kerala Commerce/Humanities, permanently until real data arrives — see §9).
+  - 22 tests, all passing.
+- `src/hooks/useStreamConfig.js` — fetches both tables for a board+tier; `loading` holds the onboarding
+  flow at the Board step until the fetch resolves, so a slow fetch can never let a student advance past
+  where the Stream step should have been inserted.
+- `src/pages/OnboardingPage.jsx` — 5 new step types (`stream`, `language`, `streamSubjects`,
+  `optionalSixth`, `confirm`), inserted between Board and the competitive-exam step. Gated purely on
+  data (`streamsApply` / `needsLanguageChoice` / optional-slot presence) and the feature flag — **never**
+  a board-name string comparison.
+- `src/context/AuthContext.jsx` — `completeOnboarding` optionally passes `subjects`/`academicTrack`
+  through; absent for every non-stream signup, so no other flow changes.
+- `users.subjects`/`academic_track` (§2) extend the **existing** `upsert_own_user`/`update_own_user`
+  RPCs rather than adding a new write path — those RPCs are hard-coded field allow-lists (confirmed by
+  reading them, not assumed), and onboarding already saves through that exact call.
+
+### Two real bugs an actual click-through run caught, not code review
+
+1. **The flag was created but nothing checked it.** Confirmed by `grep` before assuming otherwise —
+   `getFeatureFlag`/`FLAGS` appeared nowhere in the first draft of `OnboardingPage.jsx`. Fixed by gating
+   `streamsApply` on `useFeatureFlag(FLAGS.STREAM_SELECTION)`.
+2. **Kerala's board key never matched.** Onboarding stores UPPER_SNAKE keys (`KERALA_STATE`);
+   `stream_configs.board_key` uses the display form (`Kerala State`). Comparing them directly meant
+   Kerala silently **skipped the entire stream sequence** — CBSE only "worked" in the first walkthrough
+   pass by coincidence, because its onboarding key and board_key happen to be the identical string. This
+   exact bug class was already solved once, in `categories.js`'s `resolveBoard()`/`BOARD_KEY_ALIASES`
+   (added after a prior incident: "state-board students resolved to no combo at all"). Reused it rather
+   than re-solving the same problem. **Would not have been caught without a real run against both
+   boards** — the CBSE-only path never exercises the mismatch.
+
+### Real end-to-end evidence (Playwright against the live dev server)
+
+**CBSE Class 11 → Science**: no Language step; "Choose your subjects" shows `English Core` (+ now
+`Physics`/`Chemistry`, post-§6) locked, `Choose 2 more subjects` over the remaining pool.
+
+**Kerala Class 11 → Science**: dedicated Language step (`English` locked + a 6-item second-language
+choice); subjects step shows 3 locked + a real 1-of-2 choice; Confirm shows a genuine **`Course Code 1`**
+badge (a real `matchedCombinationName` hit) and the full resolved list.
+
+**Full completion checked in the database, not just the UI** — ran a synthetic Kerala Class 11 / Science
+/ Malayalam / Computer Science signup to `/dashboard`, then queried the real row:
+
+```
+academic_track: { board: "Kerala State", stream: "science",
+                   language_choice: "Malayalam", chosen_slot_subjects: ["Computer Science"] }
+subjects: ["English","Malayalam","Physics","Chemistry","Mathematics","Computer Science"]
+onboarding_completed: true
+```
+
+`academic_track.board` is the **resolved** form, proving the board-key fix reaches all the way to what's
+persisted, not just UI gating. Test row deleted after verification.
+
+421 tests pass (402 content-rebuild + 19 stream-selection at the time), build clean.
+
+## 9. Open items
+
+1. **Kerala Commerce/Humanities `named_combinations` are empty and stay that way** until the owner
+   supplies the real named DHSE combination blocks (Science has 2 real ones; Commerce/Humanities never
+   had this data even in the original source JSON — inventing names would be fabricating a curriculum
+   fact a student relies on). The Phase 3 admin editor's `named_combinations` list is specifically
+   designed so these can be added later **without a schema change** — see §2.
+2. **Phase 3 (admin editor) not started.** Currently the only way to edit either table is direct
+   SQL/RPC calls, as done for §6's correction. Owner has asked for this next: per-stream editor
+   (locked-subject chips, choice-slot editor, optional-slot editor, named-combinations list), a
+   board-language editor, live validation (`count ≤ choose_from.length`, warn-not-block on
+   mismatched named combinations), changelog on every save.
+3. **Phase 4 (downstream consumption) not started.** `useStudentScope()`, Practice Generator, Syllabus
+   page scoping to a student's actual `subjects`/`academic_track` instead of the full board list; a
+   "Complete your profile" nudge banner for existing 11-12 profiles with no `academic_track`; a
+   Classes 8-10 regression check (must remain completely untouched — confirm no stream step ever
+   appears for them).
+4. **`stream_selection_enabled` is currently ON in the live DB**, for testing during Phase 2/3
+   development. Decide before considering this feature launched whether it should be off until Phase 4
+   also lands, or on incrementally.
+5. **A genuine, unrelated security finding was discovered while building this feature** (extending
+   `upsert_own_user`). It is NOT part of this feature's scope and is tracked in
+   `docs/SECURITY_INCIDENTS.md`, not here — go there for it, not this file.
