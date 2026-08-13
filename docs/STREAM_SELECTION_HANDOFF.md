@@ -401,3 +401,61 @@ Categories decides *what subjects exist*. Enforce in three places, cheapest firs
 Rejected alternatives: making B canonical (Categories also serves 8–10, competitive exams and all
 content tooling; streams cover only 11–12 on two boards), and a third shared `subjects` table
 (cleanest long-term, largest migration — revisit if a fourth consumer appears).
+
+### §12a. Reconciliation decision table — AWAITING OWNER REVIEW
+
+**21 unique subjects** (the "26" in §12 counts board-subject *pairs*; 5 subjects appear on both
+boards). Recommendation pre-filled per subject; owner to correct before anything is applied.
+
+**Adds go to the `Class 11` AND `Class 12` rows for that board only** — not the board-level row, not
+6–10. "Already in catalog" means the exact string is already used somewhere in `exam_categories`, so
+adding it introduces no new vocabulary and carries no naming risk.
+
+| # | Subject | Board(s) | Where it's used | Already in catalog? | **Recommendation** |
+|---|---|---|---|---|---|
+| 1 | **English Core** | CBSE | language, mandatory | no | **RENAME → `English`** ⚠️ |
+| 2 | Applied Mathematics | CBSE | commerce choice | no | ADD ⚠️ |
+| 3 | History | CBSE, Kerala | CBSE humanities choice; Kerala humanities **locked** | yes (UPSC, CUET) | ADD |
+| 4 | Geography | CBSE, Kerala | humanities choice (both) | yes (ICSE rows) | ADD |
+| 5 | Political Science | CBSE, Kerala | CBSE humanities choice; Kerala commerce choice + humanities **locked** | yes (CUET) | ADD |
+| 6 | Sociology | CBSE, Kerala | humanities choice (both) | no | ADD |
+| 7 | Psychology | CBSE, Kerala | CBSE humanities choice + optional-6th; Kerala humanities choice | no | ADD |
+| 8 | Computer Applications | Kerala | commerce choice | yes (ICSE rows) | ADD |
+| 9 | Statistics | Kerala | commerce choice | no | ADD |
+| 10 | Journalism | Kerala | humanities choice | no | ADD |
+| 11 | Informatics Practices | CBSE | optional-6th | no | ADD |
+| 12 | Legal Studies | CBSE | optional-6th | no | ADD |
+| 13 | Physical Education | CBSE | optional-6th | no | ADD |
+| 14 | Fine Arts | CBSE | optional-6th | no | ADD |
+| 15 | Home Science | CBSE | optional-6th | no | ADD |
+| 16 | Hindi | Kerala | language choice | yes (18 rows) | ADD |
+| 17 | Sanskrit | Kerala | language choice | yes (class-10 rows) | ADD |
+| 18 | Malayalam | Kerala | language choice | no | ADD |
+| 19 | Arabic | Kerala | language choice | no | ADD |
+| 20 | Urdu | Kerala | language choice | no | ADD |
+| 21 | Syriac | Kerala | language choice | no | ADD |
+
+**Net: 1 rename, 20 adds.**
+
+#### The three calls worth arguing about
+
+1. **#1 `English Core` → `English` (the only rename).** CBSE's formal name for the compulsory paper
+   is "English Core" (it also offers "English Elective"). Recommending the rename because Categories
+   already has `English`, content/syllabus/PYQ will be filed under `English`, and two names for one
+   paper is precisely the drift being fixed. **Counter-argument:** if English Elective is ever
+   offered, `English` becomes ambiguous and you'd want both names back. Owner's call.
+2. **#2 `Applied Mathematics` stays separate from `Mathematics`.** These are genuinely different
+   CBSE subjects with different syllabi (041 vs 241), so this is an ADD, not a rename to
+   `Mathematics`. Confirm — if you consider them one subject for content purposes, it becomes a
+   rename and CBSE Commerce's pool shrinks accordingly.
+3. **Structural: should languages and arts be in the Categories subject list at all?**
+   Categories subjects drive the *content* tooling — Admin Content Intake, Study Notes, Paper Gen,
+   Practice Generator dropdowns. Adding Syriac, Urdu, Fine Arts, Home Science etc. makes them
+   selectable there for subjects the platform may never hold content for.
+   - **(a) Add all 21 (recommended).** One vocabulary, no drift, unblocks Phase 4 immediately. The
+     dropdown clutter is a UI concern, solvable later with a `content_bearing` flag on the subject.
+   - **(b) Add only the academic core**, and treat languages/arts as valid-for-a-profile but
+     not-content-bearing. More correct long-term, but needs a new schema concept now, and until it
+     exists those subjects are exactly the "in a profile, unknown to the catalog" state being fixed.
+
+   Recommending **(a)** — fix the drift completely now, refine presentation later.
