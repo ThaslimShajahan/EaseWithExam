@@ -507,6 +507,83 @@ should not assume "the live site works" as a baseline fact anymore.
 - **Whether this was in preparation for testing the new content engine on a truly clean live DB**, or a
   broader relaunch reset, was not stated explicitly. Worth confirming with the owner rather than
   assuming either.
-- The Phase 1 migration (`20260813020000`) has still not been applied anywhere — this wipe made the live
-  `knowledge_base`/`chapter_manifests` target empty, which is exactly the condition Phase 1 was written
-  to take advantage of, but applying it is a separate, not-yet-taken step.
+- **Update, same day:** the Phase 1 migration (`20260813020000`) has since been applied to live — see
+  §6c. `exam_categories`/`onboarding_category_display` have also since been reseeded, and
+  `exam_categories` gained a `streams` column via a second migration (`20260813030000`) — see §10. This
+  bullet is kept for history; don't take "still empty" as current fact for those tables.
+
+## 10. Baseline platform config restored + streams data seeded, 2026-08-13
+
+Separate from the Phase 1 migration. Owner reported "not seeing anything" in Admin Categories and
+onboarding after the §9 wipe. Investigated rather than assumed a single cause, because the two screens
+are NOT the same situation:
+
+- **Admin Categories renders the real `exam_categories` table directly, by design** — an editing tool
+  showing fake fallback content would be actively misleading. Seeing nothing there was 100% the expected
+  consequence of the wipe, not a bug.
+- **Onboarding has an explicit hardcoded fallback** (`FALLBACK_EXAM_OPTIONS`/`BOARD_OPTIONS`/
+  `CLASS_OPTIONS` in `src/lib/onboardingOptions.js`) specifically meant to survive an empty DB. Confirmed
+  by direct anon RPC call that `get_onboarding_options()` correctly returns `[]` (HTTP 200, no error),
+  which is exactly the condition `if (error || !data?.length) return; // keep hardcoded fallback` is
+  written to handle — so onboarding showing *something* was expected too. The owner then confirmed
+  onboarding was in fact showing the fallback data; the real ask was to seed REAL data so it stops
+  relying on the fallback, and to fold in the curriculum-streams reference from §6b item 3.
+
+### What was restored
+
+Read the ACTUAL save logic in `AdminCategorySettings.jsx` first rather than guess at the row shape —
+`category_kind` has three values in practice (`board`, `board_class`, `competitive`), never `class`; a
+board save fans into one standalone row plus seven `board_class` rows (one per class 6–12) using the
+6–10 or 11–12 subject tier. Seeded through the REAL RPCs (`admin_upsert_exam_category`,
+`admin_upsert_onboarding_option`), with a simulated authenticated-admin session (same `request.jwt.claims`
+technique as §6c), content mirroring `FALLBACK_CATEGORIES` / `FALLBACK_*_OPTIONS` exactly — those hardcoded
+fallbacks ARE the app's own definition of the intended baseline, not a separate guess.
+
+- **`exam_categories`: 39 rows** — 4 boards (CBSE, ICSE, State Board, Kerala State) × (1 standalone + 7
+  class combos) = 32, plus 7 competitive exams (NEET, JEE Main, JEE Advanced, CUET, UPSC, SSC CGL,
+  Olympiad).
+- **`onboarding_category_display`: 13 rows** — 5 exam options, 2 board options, 6 class options,
+  matching the fallback's exact keys so a student's saved profile resolves identically regardless of
+  which source (DB or fallback) happened to answer when they onboarded.
+
+### The streams data — added as real structure, not flattened
+
+Migration `20260813030000_exam_categories_streams.sql`: additive, nullable `streams jsonb` column on
+`exam_categories`, same precedent as `book` (`20260812040000`/`20260813020000`) — NULL for every row
+that isn't Class 11/12, nothing existing affected.
+
+**Deliberately not stored in `subjects text[]`.** A flat list would erase exactly what makes the
+owner's reference data (`docs/curriculum-streams-reference.json`) worth having: CBSE's mandatory-core +
+options-pool structure, and Kerala's closed named combinations, are genuinely different shapes, not the
+same data formatted differently. Populated on exactly 4 rows (`CBSE Class 11`, `CBSE Class 12`,
+`Kerala State Class 11`, `Kerala State Class 12`) via direct `UPDATE`, not through
+`admin_upsert_exam_category` — that RPC has no `p_streams` parameter yet, and adding one now would build
+an editing surface nothing calls, since there is no admin UI or onboarding step that reads this column
+yet. That UI is still Part 2/3 work (§6b item 3), unchanged by this seed.
+
+### Verified through the real client-facing paths, not just by reading rows back
+
+- `categories.js`'s exact query (`select exam_key,label,category_kind,board_key,class_key,group_label,
+  subjects,sort_order … eq('is_active',true) … order('sort_order')`) fired via anon key: 200, 39 rows,
+  all 4 boards and all 7 competitive exams present.
+- `get_onboarding_options()` fired via anon key: 200, 13 rows, all three `option_type`s present with the
+  exact keys `OnboardingPage.jsx` expects (`NONE`/`NEET`/`JEE_MAIN`/`JEE_ADVANCED`/`BOTH`,
+  `CBSE`/`KERALA_STATE`, `8`–`12`/`REPEATER`).
+- Streams spot-checked on all 4 target rows (right top-level keys present, including
+  `mandatory_languages` appearing ONLY on the Kerala rows — the exact structural asymmetry the source
+  data has, not accidentally uniform) and confirmed `NULL` on a non-target row (`CBSE Class 8`).
+- Full sanity pass on tables NOT touched by this work: `admins` still 2, `knowledge_base` still 0,
+  `chapter_manifests` still 0, `study_notes` still 0 — nothing leaked outside its intended scope.
+
+### One unexpected-looking but benign finding
+
+`public.users` went from 0 (post-§9 wipe) to **2** during this work, without either seed script touching
+that table. Checked rather than assumed: both rows are `info@acenzos.com` and
+`thaslimshajahans@gmail.com`, `created_at` timestamps inside this session's timeframe. This is
+`AuthContext`'s own self-healing logic (`if (!profile) { profile = upsertUser(...) }`, found while
+investigating the original "not seeing anything" report) firing for real — an admin opened the live app
+during this session, their Firebase auth session found no matching `public.users` row, and the app
+recreated one automatically. Confirms that self-healing path genuinely works, not a bug and not
+something this session caused directly.
+
+402 tests pass, build clean (this work was schema + data only, no application code changed).
