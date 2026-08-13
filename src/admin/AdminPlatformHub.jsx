@@ -1,5 +1,5 @@
 import { lazy } from 'react';
-import { ToggleRight, Settings, Tag, Gauge, LayoutGrid, Compass, Mail, Layers } from 'lucide-react';
+import { ToggleRight, Settings, Tag, Gauge, LayoutGrid, Compass, Mail, Layers, BookMarked } from 'lucide-react';
 import AdminHub from './AdminHub';
 
 const AdminFeatureFlags      = lazy(() => import('./AdminFeatureFlags'));
@@ -10,12 +10,13 @@ const AdminCategorySettings  = lazy(() => import('./AdminCategorySettings'));
 const AdminOnboardingOptions = lazy(() => import('./AdminOnboardingOptions'));
 const AdminEmailTemplates    = lazy(() => import('./AdminEmailTemplates'));
 const AdminStreamConfig      = lazy(() => import('./AdminStreamConfig'));
+const AdminSubjects          = lazy(() => import('./AdminSubjects'));
 
 export default function AdminPlatformHub() {
   return (
     <AdminHub
       title="Platform"
-      subtitle="Feature flags, branding, pricing, quota limits, categories, onboarding, streams, and email templates"
+      subtitle="Feature flags, branding, pricing, quota limits, categories, onboarding, streams, subjects, and email templates"
       defaultTab="flags"
       tabs={[
         { id: 'flags',      icon: ToggleRight, label: 'Feature Flags', element: <AdminFeatureFlags /> },
@@ -23,6 +24,7 @@ export default function AdminPlatformHub() {
         { id: 'categories', icon: LayoutGrid,  label: 'Categories',    element: <AdminCategorySettings /> },
         { id: 'onboarding', icon: Compass,     label: 'Onboarding',    element: <AdminOnboardingOptions /> },
         { id: 'streams',    icon: Layers,      label: 'Streams',       element: <AdminStreamConfig /> },
+        { id: 'subjects',   icon: BookMarked,  label: 'Subjects',      element: <AdminSubjects /> },
         { id: 'emails',     icon: Mail,        label: 'Email Templates', element: <AdminEmailTemplates /> },
         { id: 'pricing',    icon: Tag,         label: 'Pricing',       element: <AdminPricing /> },
         { id: 'quota',      icon: Gauge,       label: 'Quota',         element: <AdminQuota /> },

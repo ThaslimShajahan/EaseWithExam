@@ -106,13 +106,40 @@ export async function refreshCategories() {
   return _fetchAndApply();
 }
 
+/**
+ * The subject vocabulary (public.subjects, added 20260813100000) — the record of
+ * which subjects EXIST, separate from which are content-bearing.
+ *
+ * A subject can be valid on a student's profile without belonging in content
+ * tooling: Kerala's Malayalam/Arabic/Urdu/Syriac and CBSE's Physical
+ * Education/Fine Arts/Home Science are real choices a student makes, but the
+ * platform serves no content for them, so they must not clutter the Practice
+ * Generator / Syllabus / Content Intake / Study Notes / Paper Gen dropdowns.
+ *
+ * Empty until loaded. Empty means "don't filter" — on a failed/absent load every
+ * subject stays visible, which is the same behaviour as before this existed.
+ * Failing open matters here: filtering on an empty set would blank every subject
+ * dropdown in the admin panel.
+ */
+let NON_CONTENT_SUBJECTS = new Set();
+
 async function _fetchAndApply() {
   try {
-    const { data, error } = await supabase
-      .from('exam_categories')
-      .select('exam_key, label, category_kind, board_key, class_key, group_label, subjects, sort_order')
-      .eq('is_active', true)
-      .order('sort_order');
+    const [{ data, error }, subjectsRes] = await Promise.all([
+      supabase
+        .from('exam_categories')
+        .select('exam_key, label, category_kind, board_key, class_key, group_label, subjects, sort_order')
+        .eq('is_active', true)
+        .order('sort_order'),
+      supabase.from('subjects').select('name, content_bearing'),
+    ]);
+
+    if (Array.isArray(subjectsRes?.data) && subjectsRes.data.length) {
+      NON_CONTENT_SUBJECTS = new Set(
+        subjectsRes.data.filter((s) => s.content_bearing === false).map((s) => s.name),
+      );
+    }
+
     if (error || !data?.length) return; // keep hardcoded fallback
 
     const categories = {};
@@ -145,8 +172,26 @@ async function _fetchAndApply() {
   }
 }
 
-export function getSubjectsForExam(examType) {
-  return CATEGORIES[examType]?.subjects ?? ['Mathematics', 'Science', 'English'];
+/**
+ * Subjects for an exam/board/class key.
+ *
+ * Defaults to CONTENT-BEARING ONLY, so every existing caller (Practice
+ * Generator, Syllabus, Content Intake, Study Notes, Paper Gen) gets clean
+ * dropdowns with no call-site change. Pass `{ includeNonContent: true }` where
+ * you need the full set a student's profile may legitimately contain — profile
+ * display, and validating a stored selection.
+ */
+export function getSubjectsForExam(examType, { includeNonContent = false } = {}) {
+  const all = CATEGORIES[examType]?.subjects ?? ['Mathematics', 'Science', 'English'];
+  if (includeNonContent || NON_CONTENT_SUBJECTS.size === 0) return all;
+  return all.filter((s) => !NON_CONTENT_SUBJECTS.has(s));
+}
+
+/** True when the platform serves no content for this subject — i.e. it may sit
+ *  on a profile but should not appear in content tooling. Unknown names return
+ *  false (treated as content-bearing), matching getSubjectsForExam's fail-open. */
+export function isNonContentSubject(name) {
+  return NON_CONTENT_SUBJECTS.has(name);
 }
 
 export function getAllExamTypes() {

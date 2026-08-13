@@ -41,39 +41,74 @@ const STREAM_KEYS = ['science', 'commerce', 'humanities'];
 const FIELD_LABEL = 'text-[11px] font-semibold text-slate-400 uppercase tracking-wide block mb-1.5';
 const FIELD_INPUT = 'w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500';
 
-function ChipInput({ value, onChange, placeholder, emptyHint }) {
+/**
+ * Subject chips, picked from the vocabulary (public.subjects) rather than typed.
+ *
+ * This used to be a free-text input, which is exactly how 21 subjects — including
+ * `English Core` for a catalog that says `English` — ended up on student profiles
+ * while being unknown to every content screen (§12 of the handoff). The database
+ * now rejects unknown names too (assert_known_subjects, 20260813110000); this
+ * picker is so an admin never hits that error in the first place.
+ *
+ * `vocabulary` empty (fetch failed) falls back to free text rather than blocking
+ * all editing — the RPC is the real guard, so the worst case is a rejected save
+ * with a clear message, not a locked screen.
+ */
+function SubjectChips({ value, onChange, vocabulary, emptyHint }) {
   const [draft, setDraft] = useState('');
   const tags = Array.isArray(value) ? value : [];
-  function add() {
-    const name = draft.trim();
-    if (!name || tags.includes(name)) { setDraft(''); return; }
-    onChange([...tags, name]);
+  const available = vocabulary.filter((s) => !tags.includes(s.name));
+  const noVocabulary = vocabulary.length === 0;
+
+  function addRaw(name) {
+    const n = name.trim();
+    if (!n || tags.includes(n)) { setDraft(''); return; }
+    onChange([...tags, n]);
     setDraft('');
   }
+
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5 min-h-[26px]">
-        {tags.map((t, i) => (
-          <span key={i} className="flex items-center gap-1 bg-primary-900/40 border border-primary-700/40 text-primary-300 text-[11px] px-2 py-0.5 rounded-full">
-            {t}
-            <button type="button" onClick={() => onChange(tags.filter((_, idx) => idx !== i))} className="hover:text-red-400 ml-0.5"><X size={9} /></button>
-          </span>
-        ))}
+        {tags.map((t, i) => {
+          const known = noVocabulary || vocabulary.some((s) => s.name === t);
+          return (
+            <span key={i} title={known ? undefined : 'Not in the subject list — this save will be rejected'}
+              className={`flex items-center gap-1 border text-[11px] px-2 py-0.5 rounded-full ${known
+                ? 'bg-primary-900/40 border-primary-700/40 text-primary-300'
+                : 'bg-red-900/40 border-red-600/50 text-red-300'}`}>
+              {t}
+              <button type="button" onClick={() => onChange(tags.filter((_, idx) => idx !== i))} className="hover:text-red-400 ml-0.5"><X size={9} /></button>
+            </span>
+          );
+        })}
         {tags.length === 0 && <span className="text-[11px] text-slate-600 italic">{emptyHint ?? 'None'}</span>}
       </div>
-      <div className="flex gap-2">
-        <input
-          className="flex-1 text-sm bg-slate-800 border border-white/10 rounded-lg px-3 py-1.5 text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-          placeholder={placeholder} value={draft} onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} />
-        <button type="button" onClick={add} className="px-3 py-1.5 bg-primary-600 text-white text-xs rounded-lg hover:bg-primary-700 font-medium">Add</button>
-      </div>
+      {noVocabulary ? (
+        <div className="flex gap-2">
+          <input
+            className="flex-1 text-sm bg-slate-800 border border-white/10 rounded-lg px-3 py-1.5 text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            placeholder="Subject name — press Enter" value={draft} onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addRaw(draft); } }} />
+          <button type="button" onClick={() => addRaw(draft)} className="px-3 py-1.5 bg-primary-600 text-white text-xs rounded-lg hover:bg-primary-700 font-medium">Add</button>
+        </div>
+      ) : (
+        <select className="w-full text-sm bg-slate-800 border border-white/10 rounded-lg px-3 py-1.5 text-white focus:outline-none focus:ring-1 focus:ring-primary-500"
+          value="" onChange={(e) => { if (e.target.value) addRaw(e.target.value); }}>
+          <option value="">Add a subject…</option>
+          {available.map((s) => (
+            <option key={s.name} value={s.name}>
+              {s.name}{s.content_bearing === false ? '  (profile only — no content)' : ''}
+            </option>
+          ))}
+        </select>
+      )}
     </div>
   );
 }
 
 /** One choice/optional/language slot. Same shape for all three kinds. */
-function SlotEditor({ slot, onChange, onRemove, index, kind }) {
+function SlotEditor({ slot, onChange, onRemove, index, kind, vocabulary }) {
   const pool = slot.choose_from ?? [];
   const count = Number(slot.count);
   const autoAll = isAutoSelectAll({ ...slot, count });
@@ -119,14 +154,14 @@ function SlotEditor({ slot, onChange, onRemove, index, kind }) {
       </div>
       <div>
         <label className={FIELD_LABEL}>Subject pool</label>
-        <ChipInput value={pool} onChange={(v) => set({ choose_from: v })}
-          placeholder="Subject name — press Enter" emptyHint="Empty pool — the student would have nothing to pick." />
+        <SubjectChips value={pool} onChange={(v) => set({ choose_from: v })} vocabulary={vocabulary}
+          emptyHint="Empty pool — the student would have nothing to pick." />
       </div>
     </div>
   );
 }
 
-function NamedCombosEditor({ combos, onChange }) {
+function NamedCombosEditor({ combos, onChange, vocabulary }) {
   const list = Array.isArray(combos) ? combos : [];
   return (
     <div className="space-y-2">
@@ -143,9 +178,8 @@ function NamedCombosEditor({ combos, onChange }) {
             <button type="button" onClick={() => onChange(list.filter((_, idx) => idx !== i))}
               className="p-2 text-red-400 hover:bg-red-900/30 rounded-lg shrink-0"><X size={13} /></button>
           </div>
-          <ChipInput value={c.resulting_subjects ?? []}
+          <SubjectChips value={c.resulting_subjects ?? []} vocabulary={vocabulary}
             onChange={(v) => onChange(list.map((x, idx) => idx === i ? { ...x, resulting_subjects: v } : x))}
-            placeholder="Resulting subject — press Enter"
             emptyHint="No subjects — this combination can never match." />
         </div>
       ))}
@@ -193,7 +227,7 @@ function Modal({ title, onClose, children, footer }) {
   );
 }
 
-function StreamForm({ existing, boardKey, onClose, onSave, saving }) {
+function StreamForm({ existing, boardKey, onClose, onSave, saving, vocabulary }) {
   const [label,     setLabel]     = useState(existing?.label ?? '');
   const [streamKey, setStreamKey] = useState(existing?.stream_key ?? 'science');
   const [board,     setBoard]     = useState(existing?.board_key ?? boardKey ?? '');
@@ -253,14 +287,14 @@ function StreamForm({ existing, boardKey, onClose, onSave, saving }) {
 
       <div>
         <label className={FIELD_LABEL}><Lock size={10} className="inline mr-1" />Locked subjects — every student in this stream gets these</label>
-        <ChipInput value={mandatory} onChange={setMandatory} placeholder="Subject name — press Enter"
+        <SubjectChips value={mandatory} onChange={setMandatory} vocabulary={vocabulary}
           emptyHint="None locked — the whole subject set is chosen." />
       </div>
 
       <div className="space-y-2">
         <label className={FIELD_LABEL}><ListChecks size={10} className="inline mr-1" />Choice slots — the graded pick</label>
         {choice.map((s, i) => (
-          <SlotEditor key={i} slot={s} index={i} kind="Choice"
+          <SlotEditor key={i} slot={s} index={i} kind="Choice" vocabulary={vocabulary}
             onChange={(next) => setChoice(choice.map((x, idx) => idx === i ? next : x))}
             onRemove={choice.length > 1 ? () => setChoice(choice.filter((_, idx) => idx !== i)) : null} />
         ))}
@@ -272,7 +306,7 @@ function StreamForm({ existing, boardKey, onClose, onSave, saving }) {
         <label className={FIELD_LABEL}><Sparkles size={10} className="inline mr-1" />Optional slots — ungraded extra (CBSE&apos;s 6th subject)</label>
         {optional.length === 0 && <p className="text-[11px] text-slate-600 italic">None — correct for Kerala, which totals exactly 6 subjects.</p>}
         {optional.map((s, i) => (
-          <SlotEditor key={i} slot={s} index={i} kind="Optional"
+          <SlotEditor key={i} slot={s} index={i} kind="Optional" vocabulary={vocabulary}
             onChange={(next) => setOptional(optional.map((x, idx) => idx === i ? next : x))}
             onRemove={() => setOptional(optional.filter((_, idx) => idx !== i))} />
         ))}
@@ -282,7 +316,7 @@ function StreamForm({ existing, boardKey, onClose, onSave, saving }) {
 
       <div>
         <label className={FIELD_LABEL}><Tag size={10} className="inline mr-1" />Named combinations — badge shown when a pick matches exactly</label>
-        <NamedCombosEditor combos={combos} onChange={setCombos} />
+        <NamedCombosEditor combos={combos} onChange={setCombos} vocabulary={vocabulary} />
       </div>
 
       <Issues errors={errors} warnings={warnings} />
@@ -290,7 +324,7 @@ function StreamForm({ existing, boardKey, onClose, onSave, saving }) {
   );
 }
 
-function LanguageForm({ existing, onClose, onSave, saving }) {
+function LanguageForm({ existing, onClose, onSave, saving, vocabulary }) {
   const [board,     setBoard]     = useState(existing?.board_key ?? '');
   const [mandatory, setMandatory] = useState(existing?.mandatory_languages ?? []);
   // The nullable slot is the entire reason this table is separate from
@@ -326,7 +360,7 @@ function LanguageForm({ existing, onClose, onSave, saving }) {
       </div>
       <div>
         <label className={FIELD_LABEL}>Mandatory languages — every student on this board gets these</label>
-        <ChipInput value={mandatory} onChange={setMandatory} placeholder="e.g. English — press Enter" />
+        <SubjectChips value={mandatory} onChange={setMandatory} vocabulary={vocabulary} />
       </div>
       <div className="bg-slate-800/50 border border-white/8 rounded-xl p-3 space-y-3">
         <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
@@ -338,7 +372,7 @@ function LanguageForm({ existing, onClose, onSave, saving }) {
           Off = stored as null, and the student is never asked (CBSE). On = the slot below is stored and the
           language step appears (Kerala State).
         </p>
-        {hasChoice && <SlotEditor slot={slot} index={0} kind="Language choice" onChange={setSlot} onRemove={null} />}
+        {hasChoice && <SlotEditor slot={slot} index={0} kind="Language choice" onChange={setSlot} onRemove={null} vocabulary={vocabulary} />}
       </div>
       <Issues errors={errors} warnings={warnings} />
     </Modal>
@@ -387,15 +421,19 @@ export default function AdminStreamConfig() {
   const [toast,     setToast]     = useState('');
   const [streamModal,   setStreamModal]   = useState(null); // { existing } | { boardKey }
   const [languageModal, setLanguageModal] = useState(null);
+  // public.subjects — the vocabulary the pickers offer and the RPC enforces.
+  const [vocabulary,    setVocabulary]    = useState([]);
 
   const load = async () => {
     setLoading(true);
-    const [s, l] = await Promise.all([
+    const [s, l, v] = await Promise.all([
       supabase.from('stream_configs').select('*').eq('class_tier', CLASS_TIER).order('board_key').order('sort_order'),
       supabase.from('board_language_config').select('*').eq('class_tier', CLASS_TIER).order('board_key'),
+      supabase.from('subjects').select('name, kind, content_bearing').order('name'),
     ]);
     setStreams(Array.isArray(s.data) ? s.data : []);
     setLanguages(Array.isArray(l.data) ? l.data : []);
+    setVocabulary(Array.isArray(v.data) ? v.data : []);
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
@@ -543,11 +581,11 @@ export default function AdminStreamConfig() {
       </div>
 
       {streamModal && (
-        <StreamForm existing={streamModal.existing} boardKey={streamModal.boardKey}
+        <StreamForm existing={streamModal.existing} boardKey={streamModal.boardKey} vocabulary={vocabulary}
           onClose={() => setStreamModal(null)} onSave={saveStream} saving={saving} />
       )}
       {languageModal && (
-        <LanguageForm existing={languageModal.existing ?? { board_key: languageModal.boardKey }}
+        <LanguageForm existing={languageModal.existing ?? { board_key: languageModal.boardKey }} vocabulary={vocabulary}
           onClose={() => setLanguageModal(null)} onSave={saveLanguage} saving={saving} />
       )}
     </div>
