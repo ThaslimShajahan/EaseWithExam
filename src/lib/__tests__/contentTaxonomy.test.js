@@ -18,7 +18,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   SUBJECT_FAMILIES, CONTENT_TYPES, familyForSubject, promptGuideFor,
-  normaliseClassification,
+  normaliseClassification, buildKbRows,
 } from '../contentExtraction';
 import { chapterKeyFor } from '../syllabus';
 
@@ -261,5 +261,34 @@ describe('multi-book chapter_key collision', () => {
     expect(scoped('Political Theory')).toBe('c11_political_theory_introduction');
     expect(scoped('Constitution at Work')).toBe('c11_constitution_at_work_introduction');
     expect(scoped('Political Theory')).not.toBe(scoped('Constitution at Work'));
+  });
+});
+
+/* Phase 2 of the content-engine rebuild (docs/REBUILD_HANDOFF.md): buildKbRows
+ * gained chapter_key as a passthrough field. No existing test covered this
+ * function directly before now. */
+describe('buildKbRows — chapter_key passthrough (Phase 2)', () => {
+  const lesson = {
+    title: 'Fixture Chapter', marker_start: 1, marker_end: 1, page_start: 1, page_end: 1,
+    chunks: [{ heading: 'Intro', content: 'Some fixture content.', keywords: [] }],
+  };
+
+  it('carries a real chapter_key onto every row when one is supplied', () => {
+    const rows = buildKbRows({
+      lesson, chapterName: 'FIXTURE Chapter One', chapterKey: 'c11_fixture_book_ch01',
+      unit: null, subject: 'English', examType: 'CBSE Class 11', source: 'test',
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].chapter_key).toBe('c11_fixture_book_ch01');
+    expect(rows[0].chapter).toBe('FIXTURE Chapter One'); // display label, unchanged
+  });
+
+  it('defaults to null — a book with no approved manifest keeps working exactly as before', () => {
+    const rows = buildKbRows({
+      lesson, chapterName: 'Some AI-Guessed Title',
+      unit: null, subject: 'English', examType: 'CBSE Class 11', source: 'test',
+    });
+    expect(rows[0].chapter_key).toBeNull();
+    expect(rows[0].chapter).toBe('Some AI-Guessed Title');
   });
 });

@@ -16,6 +16,7 @@ import {
   runPYQExtraction, runNotesExtraction, buildKbRows, buildFigureRows, figuresForLesson,
   matchSyllabusChapter, normaliseMarks,
 } from '../lib/contentExtraction';
+import { assignChapters } from '../lib/chapterIdentity';
 import { getSubjectsForExam, BOARDS, CLASS_LEVELS, EXAM_TYPE_GROUPS } from '../lib/categories';
 import { getChapters } from '../lib/syllabus';
 import { listDriveFolderPdfs, fetchDriveFileBytes } from '../lib/driveFolder';
@@ -136,17 +137,58 @@ export async function savePYQRows({ questions, examType, subject, year, source, 
 async function saveNoteChunks({
   unit, lessons, examType, subject, chapter, source, callerUid, syllabusChapters,
   figures = [], equationsByPage = {},
+  // Phase 2 of the content-engine rebuild (docs/REBUILD_HANDOFF.md). `manifest`
+  // is the APPROVED chapter_manifests row's entries for this (examType,
+  // subject, book) — or null. Null is the common case today (most books have
+  // no manifest yet) and is NOT an error: this book keeps using the exact
+  // pre-Phase-2 pipeline below, unchanged. The new ordinal-anchored engine is
+  // opt-in per book via manifest approval, never a blanket cutover — making it
+  // mandatory would block every upload until every book has one, which is a
+  // much bigger scope than this slice.
+  manifest = null, filename = null, book = null, classLevel = null,
+  adminSelectedOrdinal = null,
 }) {
   const reviewQueueOn = await getFeatureFlag(FLAGS.CONTENT_REVIEW_QUEUE);
 
   let kbCount = 0;
   const chapterNames = [];
+  let anyFlagged = false;
+  // Deduped by chapter_key: several lessons in one file can resolve to the
+  // same chapter (e.g. two chunks of the same prose chapter), and
+  // admin_upsert_syllabus_node's own ON CONFLICT handles re-saves across
+  // files, but there is no reason to call it twice for one file's own save.
+  const syllabusEntriesToUpsert = new Map();
 
   for (let i = 0; i < lessons.length; i++) {
     const lesson = lessons[i];
     const chunks = lesson.chunks ?? [];
     if (!chunks.length) continue;
-    const chapterName = matchSyllabusChapter(lesson.title || chapter, syllabusChapters) || lesson.title || chapter || subject;
+
+    let chapterName, chapterKey = null;
+    if (manifest) {
+      // One representative page per LESSON, not per chunk — this pipeline's
+      // page data is lesson-scoped (lesson.page_start/page_end), individual
+      // chunks don't carry their own page number. A lesson maps to exactly
+      // one chapter (or is rejected outright), same granularity
+      // matchSyllabusChapter already operated at below.
+      const assigned = assignChapters({
+        manifest, filename, classLevel, book, adminSelectedOrdinal,
+        chunks: [{ pageNo: lesson.page_start ?? null }],
+      });
+      if (!assigned.ok) {
+        // REBUILD_HANDOFF.md's rule: disagree -> do not write, flag for
+        // review. Blocking the WHOLE upload rather than silently falling back
+        // to a model-guessed name is the entire point of Phase 2 — a fallback
+        // here would just rebuild the old failure mode one call site later.
+        throw new Error(`Chapter assignment failed for "${lesson.title || '(untitled lesson)'}" in "${filename}": ${assigned.reason}`);
+      }
+      chapterName = assigned.chunks[0].chapterName;
+      chapterKey  = assigned.chunks[0].chapterKey;
+      anyFlagged  = anyFlagged || assigned.flagged;
+      for (const e of assigned.syllabusEntries) syllabusEntriesToUpsert.set(e.chapterKey, e);
+    } else {
+      chapterName = matchSyllabusChapter(lesson.title || chapter, syllabusChapters) || lesson.title || chapter || subject;
+    }
     chapterNames.push(chapterName);
 
     if (reviewQueueOn) {
@@ -167,7 +209,7 @@ async function saveNoteChunks({
       kbCount += rows.length;
     } else {
       const kbRows = buildKbRows({
-        lesson, chapterName, unit, subject, examType, source, figures, equationsByPage,
+        lesson, chapterName, chapterKey, unit, subject, examType, source, figures, equationsByPage,
       });
 
       const ids = await adminSaveKnowledgeChunks(kbRows);
@@ -211,11 +253,34 @@ async function saveNoteChunks({
     if (noteErr) throw new Error(noteErr.message);
   }
 
+  // Single write path: the atomic syllabus_nodes upsert, in the same save as
+  // the content it describes — never a separate manual seeding step. Runs
+  // once per distinct chapter_key actually used in THIS file's save, after
+  // every lesson's content already saved successfully, so a syllabus_nodes
+  // failure can't orphan a chapter with real content pointing at it but no
+  // syllabus entry to show for it. Reuses the existing, already-secure RPC —
+  // this is not a new write surface.
+  for (const entry of syllabusEntriesToUpsert.values()) {
+    const { error: sylErr } = await supabase.rpc('admin_upsert_syllabus_node', {
+      p_caller:      callerUid,
+      p_exam_type:   examType,
+      p_subject:     subject,
+      p_chapter_name: entry.chapterName,
+      p_chapter_key: entry.chapterKey,
+      p_class_level: classLevel,
+      p_sort_order:  entry.sortOrder,
+    });
+    if (sylErr) throw new Error(`syllabus_nodes upsert failed for "${entry.chapterName}" (${entry.chapterKey}): ${sylErr.message}`);
+  }
+
   logChange(ENTITY.CONTENT_ITEM, 'bulk', ACTION.CREATE,
-    { count: kbCount, examType, subject, source, unit, lessons: chapterNames },
+    { count: kbCount, examType, subject, source, unit, lessons: chapterNames, chapterKeysWritten: [...syllabusEntriesToUpsert.keys()] },
     `Content Intake: ${kbCount} knowledge chunks across ${chapterNames.length} lesson(s)${unit ? ` in "${unit}"` : ''}`);
 
-  return { kbCount, chapterName: chapterNames.join(', '), unit, lessonCount: chapterNames.length };
+  return {
+    kbCount, chapterName: chapterNames.join(', '), unit, lessonCount: chapterNames.length,
+    flagged: anyFlagged, chapterKeysWritten: [...syllabusEntriesToUpsert.keys()],
+  };
 }
 
 /* ── Diagram image enrichment (PYQ only) ─────────────────────────── */
@@ -366,6 +431,12 @@ export default function AdminContentIntake() {
   const [subject,    setSubject]    = useState('');
   const [year,       setYear]       = useState('');
   const [chapterHint, setChapterHint] = useState('');
+  // Content-engine rebuild Phase 2 (docs/REBUILD_HANDOFF.md). Only relevant to
+  // multi-book subjects (CBSE English: Hornbill vs Woven Words) — chapter_key
+  // stays book-scoped null for the majority of single-book subjects, matching
+  // chapterKeyFor()'s own "keeps single-book subjects unscoped" design.
+  // Empty string here means null, not "unset book".
+  const [book, setBook] = useState('');
 
   const isBoard    = BOARDS.includes(examBase);
   const dbExamType = isBoard ? getDbExamType(examBase, classLevel) : examBase;
@@ -381,6 +452,26 @@ export default function AdminContentIntake() {
     getChapters(dbExamType, subject).then((chs) => { if (!cancelled) setSyllabusChapters(chs.map((c) => c.name)); });
     return () => { cancelled = true; };
   }, [dbExamType, subject, step]);
+
+  // The APPROVED chapter_manifests row's entries for (dbExamType, subject,
+  // book) — or null. Read-open RLS (chapter_manifests_read), so this is a
+  // plain select, no RPC needed. Null is the normal, non-error state for any
+  // book that hasn't had a manifest approved yet — see saveNoteChunks' own
+  // comment on why that's additive, not a blocker.
+  const [manifest, setManifest] = useState(null);
+  useEffect(() => {
+    if (!subject || step === 'type' || contentType !== 'notes') { setManifest(null); return; }
+    let cancelled = false;
+    // .is('book', null) rather than .eq('book', null) — PostgREST's `=`
+    // operator never matches NULL (standard SQL), only `IS` does. Getting
+    // this wrong would silently break every single-book subject's lookup,
+    // which is most of them.
+    let q = supabase.from('chapter_manifests').select('entries')
+      .eq('exam_type', dbExamType).eq('subject', subject).eq('status', 'approved');
+    q = book ? q.eq('book', book) : q.is('book', null);
+    q.maybeSingle().then(({ data }) => { if (!cancelled) setManifest(data?.entries ?? null); });
+    return () => { cancelled = true; };
+  }, [dbExamType, subject, book, step, contentType]);
 
   // Step 3 — items to process, regardless of source
   const [inputTab,  setInputTab]  = useState('file'); // file | url | folder
@@ -583,16 +674,22 @@ export default function AdminContentIntake() {
             onProgress: (msg) => setStepMsg({ message: msg }),
           });
           setStepMsg({ message: `Saving ${lessons.length} lesson(s)…` });
-          const { kbCount, chapterName, lessonCount } = await saveNoteChunks({
+          const { kbCount, chapterName, lessonCount, flagged } = await saveNoteChunks({
             unit, lessons, examType: dbExamType, subject, chapter: it.chapter || chapterHint,
             source: `${it.source}:${it.name}`, callerUid, syllabusChapters,
             figures, equationsByPage,
+            manifest, filename: it.name, book: book || null, classLevel,
           });
           setStepMsg({
             status: failedPages?.length ? 'partial' : 'done',
             message: `${kbCount} chunks saved across ${lessonCount} lesson${lessonCount !== 1 ? 's' : ''}${unit ? ` (${unit})` : ''} · "${chapterName}"`
               + (visionPageCount ? ` · ${visionPageCount} page(s) read by vision` : '')
               + (figures.length ? ` · ${figures.length} figure(s)` : '')
+              // flagged: the chapter was written but the printed-page-header
+              // signal wasn't read in this slice (see chapterIdentity.js
+              // assignChapters' own note) — expected, not a defect, surfaced
+              // so an admin knows the corroboration was partial, not absent.
+              + (flagged ? ' · chapter accepted with 2 of 3 signals (no printed-header check yet)' : '')
               + failNote,
           });
         }
@@ -709,7 +806,35 @@ export default function AdminContentIntake() {
                 <input type="text" placeholder="AI detects this automatically — only needed as a fallback" value={chapterHint} onChange={(e) => setChapterHint(e.target.value)}
                   className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500" />
               </div>
+              {contentType === 'notes' && (
+                <div className="flex-1">
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide block mb-1.5">Book (only if this subject has more than one)</label>
+                  <input type="text" placeholder="e.g. Hornbill — leave blank for single-book subjects" value={book} onChange={(e) => setBook(e.target.value)}
+                    className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-primary-500" />
+                </div>
+              )}
             </div>
+
+            {contentType === 'notes' && subject && (
+              manifest
+                ? (
+                  <div className="flex items-start gap-2 bg-emerald-900/20 border border-emerald-700/20 rounded-xl p-3">
+                    <CheckCircle2 size={13} className="text-emerald-400 mt-0.5 shrink-0" />
+                    <p className="text-xs text-emerald-300">
+                      Approved chapter manifest found ({manifest.length} chapter{manifest.length !== 1 ? 's' : ''}) —
+                      uploads will use real chapter identity, not an AI-guessed name.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-2 bg-slate-800/40 border border-white/5 rounded-xl p-3">
+                    <Info size={13} className="text-slate-500 mt-0.5 shrink-0" />
+                    <p className="text-xs text-slate-500">
+                      No approved chapter manifest for this book yet — uploads will use the existing
+                      AI-guessed chapter matching, same as before Phase 2.
+                    </p>
+                  </div>
+                )
+            )}
 
             {isMixed && contentType === 'pyq' && (
               <div className="flex items-start gap-2 bg-amber-900/20 border border-amber-700/20 rounded-xl p-3">

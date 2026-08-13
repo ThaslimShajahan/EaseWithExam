@@ -963,7 +963,7 @@ export function buildFigureRows(figures, { sourceTable = 'knowledge_base', sourc
  * binding is a later refinement.
  */
 export function buildKbRows({
-  lesson, chapterName, unit, subject, examType, source,
+  lesson, chapterName, chapterKey = null, unit, subject, examType, source,
   figures = [], equationsByPage = {},
 }) {
   const classLevel = classLevelFromExamType(examType);
@@ -996,6 +996,12 @@ export function buildKbRows({
       subject,
       exam_type:     examType || null,
       chapter:       chapterName,
+      // Ordinal-anchored identity (Phase 2 of the rebuild, src/lib/
+      // chapterIdentity.js assignChapters()) — null for any book without an
+      // approved manifest yet, meaning "no chapter_key system available for
+      // this book", not "unknown". `chapter` (above) stays the display label
+      // either way. See docs/REBUILD_HANDOFF.md Phase 2.
+      chapter_key:   chapterKey,
       class_level:   classLevel,
       unit:          unit || null,
       keywords:      Array.isArray(c.keywords) ? c.keywords.filter(Boolean).slice(0, 12) : [],
