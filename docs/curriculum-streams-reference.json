@@ -1,0 +1,78 @@
+{
+  "_note": "Reference data supplied by the owner on 2026-08-13 for the Part 2/3 onboarding + admin-curriculum work (streams/combinations for Class 11-12, admin-manageable). Not yet wired into any schema or UI -- see docs/REBUILD_HANDOFF.md section 6b for the design decision this backs. Preserved verbatim; do not summarise away the CBSE-vs-Kerala differences on the assumption they're minor -- they determine which subjects a student is even offered.",
+  "curriculum_comparison": {
+    "high_school_classes_8_to_10": {
+      "overview": "Students take a foundational set of core subjects without streaming.",
+      "subjects": [
+        {
+          "category": "Languages",
+          "cbse": "English, Hindi (or a regional language)",
+          "kerala_state": "Malayalam (Papers 1 & 2), English, Hindi/General Knowledge"
+        },
+        {
+          "category": "Mathematics",
+          "cbse": "Mathematics (Standard or Basic option in Class 10)",
+          "kerala_state": "Mathematics"
+        },
+        {
+          "category": "Science",
+          "cbse": "Science (Physics, Chemistry, and Biology combined)",
+          "kerala_state": "Physics, Chemistry, Biology (Taught and tested as 3 separate subjects)"
+        },
+        {
+          "category": "Social Science",
+          "cbse": "History, Geography, Civics, Economics",
+          "kerala_state": "History, Civics, Geography, Economics"
+        },
+        {
+          "category": "Technology_and_Skills",
+          "cbse": "IT, AI, or other skill subjects (Optional)",
+          "kerala_state": "Information Technology (Mandatory core subject)"
+        }
+      ]
+    },
+    "higher_secondary_classes_11_and_12": {
+      "overview": "Students choose a specific stream. CBSE offers mix-and-match flexibility with one mandatory language. Kerala Board requires two languages and uses strict predefined subject combinations.",
+      "streams": {
+        "science": {
+          "focus": "Engineering, medicine, research, and technology",
+          "cbse": {
+            "mandatory_core": ["English Core", "Physics", "Chemistry"],
+            "options": ["Mathematics", "Biology", "Computer Science", "Physical Education", "Psychology"],
+            "common_tracks": ["PCM (Physics, Chemistry, Math)", "PCB (Physics, Chemistry, Biology)", "PCMB (Physics, Chemistry, Math, Biology)"]
+          },
+          "kerala_state": {
+            "mandatory_languages": ["English", "Second Language (Malayalam, Hindi, Arabic, etc.)"],
+            "combinations": [
+              { "name": "Biology Science", "subjects": ["Physics", "Chemistry", "Biology", "Mathematics"] },
+              { "name": "Computer Science", "subjects": ["Physics", "Chemistry", "Mathematics", "Computer Science"] }
+            ]
+          }
+        },
+        "commerce": {
+          "focus": "Finance, accounting, business management, and CA/CS",
+          "cbse": {
+            "mandatory_core": ["English", "Accountancy", "Business Studies", "Economics"],
+            "options": ["Mathematics", "Applied Mathematics", "Informatics Practices", "Physical Education"]
+          },
+          "kerala_state": {
+            "mandatory_languages": ["English", "Second Language"],
+            "mandatory_core": ["Accountancy", "Business Studies", "Economics"],
+            "options": ["Computer Application", "Mathematics"]
+          }
+        },
+        "humanities_arts": {
+          "focus": "Law, civil services, journalism, psychology, and social sciences",
+          "cbse": {
+            "mandatory_core": ["English"],
+            "options": "Highly flexible pool including History, Political Science, Geography, Sociology, Psychology, Economics, Legal Studies, and Fine Arts."
+          },
+          "kerala_state": {
+            "mandatory_languages": ["English", "Second Language"],
+            "combinations": "Predefined blocks (e.g., History, Economics, Political Science, and Sociology)."
+          }
+        }
+      }
+    }
+  }
+}

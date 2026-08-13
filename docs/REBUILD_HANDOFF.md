@@ -243,6 +243,38 @@ committed.
    here so it surfaces again when Part 2 starts rather than requiring the
    owner to re-ask.
 
+3. **Onboarding needs board + medium + a Class-11/12 "stream", and the
+   stream's subject combinations must be admin-manageable, not hardcoded.**
+   This is bigger than item 2 alone — it's not just "which language", it's a
+   third dimension between class and subject. Classes 8–10 aren't streamed
+   (everyone takes the same core subjects), but 11–12 genuinely are: a
+   student picks Science / Commerce / Humanities, and CBSE vs Kerala State
+   don't even agree on how that choice works —
+   [`docs/curriculum-streams-reference.json`](curriculum-streams-reference.json)
+   is the owner-supplied reference, preserved verbatim, and it matters that
+   the two boards differ structurally, not just in subject names:
+
+   - **CBSE lets a student mix and match** inside a stream — Science has a
+     mandatory core (English, Physics, Chemistry) plus a pool of options
+     (Maths, Biology, Computer Science, Physical Education, Psychology), and
+     "PCM" / "PCB" / "PCMB" are just the common *combinations* people pick
+     from that pool, not the only legal ones.
+   - **Kerala State uses closed, named combinations** instead — "Biology
+     Science" (Physics, Chemistry, Biology, Mathematics) or "Computer
+     Science" (Physics, Chemistry, Mathematics, Computer Science) are the
+     entire choice; there is no pick-your-own-options step, and it requires
+     **two** languages (English + a second language) where CBSE requires one.
+
+   A model that treats "stream" as one flat list of subjects per board would
+   be wrong for CBSE (loses the mandatory-core-vs-optional-pool structure)
+   and wrong for Kerala (loses the closed-combination structure) in two
+   different ways. This needs real schema/UX design, not a quick admin
+   dropdown — **not built, not designed yet**. Belongs in Part 2/3 alongside
+   medium, after Part 1 core stabilises. The reference JSON also covers
+   8–10, where the CBSE/Kerala subject differences (combined Science vs three
+   separate Science subjects; IT mandatory vs optional) matter for content
+   tagging even though there's no streaming to model there.
+
 ## 6c. Phase 1 build state (in progress, uncommitted as of this writing)
 
 Owner decisions locked in before Phase 1 started: `chapter_manifests` is a real table (not JSON in the
