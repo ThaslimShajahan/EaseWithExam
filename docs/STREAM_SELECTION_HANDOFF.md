@@ -11,7 +11,9 @@ data (the flawed `exam_categories.streams` column) was created while restoring w
 (REBUILD_HANDOFF.md §10) — but the feature itself, its phases, and its own open items are tracked here,
 not there. If you're looking for chapter manifests or Study Notes, you're in the wrong file.
 
-Last updated: 2026-08-13, Phase 2 done + a live data correction. Phase 3 (admin editor) starting next.
+Last updated: 2026-08-13. **Phases 1, 2 and 3 done** (data model, onboarding UI, admin editor — the
+last of these also fixed a grant bug that still affects the content-engine thread, see §11).
+Phase 4 (downstream consumption) not started.
 Branch: `nonstem-stage-a-taxonomy`, same as the content rebuild (never pushed to `origin/main`).
 
 ---
@@ -74,7 +76,7 @@ chosen_slot_subjects, optional_6th?}`).
 | `stream_configs` + `board_language_config` schema, RPCs, RLS | migration `20260813040000` | Applied to live, both-halves verified (§7) |
 | `stream_configs.description` (Phase 1 gap fix) | migration `20260813060000` | Applied, backfilled from real source text |
 | `users.subjects` / `users.academic_track` | migration `20260813050000` | Applied; extends `upsert_own_user`/`update_own_user`, does not add a new RPC |
-| Pure selection logic (no React) | `src/lib/streamSelection.js` | 22 tests passing — see §8 |
+| Pure selection logic + admin validation (no React) | `src/lib/streamSelection.js` | 40 tests passing — see §8, §10 |
 | Data-fetching hook | `src/hooks/useStreamConfig.js` | Holds the onboarding flow at the Board step until the fetch resolves |
 | Onboarding UI (5 new step types) | `src/pages/OnboardingPage.jsx` | Built, real end-to-end Playwright proof (§8) |
 | `stream_selection_enabled` feature flag | `src/lib/featureFlags.js` `FLAGS.STREAM_SELECTION` | Registered and gated in the UI; **currently ON in the live DB, for testing** — turn off before considering this "launched" if that matters |
