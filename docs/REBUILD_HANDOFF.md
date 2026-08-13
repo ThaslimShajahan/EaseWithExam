@@ -4,8 +4,10 @@
 You have the repo and this file. That is enough. Everything below is either verifiable in the repo
 or was measured against the live database and recorded here.
 
-Last updated: 2026-08-13, mid-Phase 1.
-Branch: `nonstem-stage-a-taxonomy` (50+ commits ahead of `origin/main`, **never pushed**).
+Last updated: 2026-08-13, Phase 1 done and applied to live. Phase 2 not yet started.
+Branch: `nonstem-stage-a-taxonomy` (50+ commits ahead of `origin/main`, **never pushed**). This is git —
+the live *database* is separate and is now ahead of it: `chapter_manifests` exists live via a direct
+`supabase db push`, done on explicit owner instruction, independent of any git push.
 
 **⚠️ READ THIS BEFORE TOUCHING THE LIVE DATABASE.** On 2026-08-13, after Phase 0, the owner ordered a
 **full wipe of the live database** — all 62 tables in the `public` schema, keeping only `admins`
@@ -17,6 +19,8 @@ content/operational tables — is now at **0 rows**. See §9 for the full record
 almost certainly non-functional for any visitor right now** — there is no exam catalog, no feature
 flags, no logged-in users. This was deliberate and owner-confirmed, not an accident, but the next
 session must know about it before assuming any table has data or that the live app currently works.
+**One exception since:** `chapter_manifests` now exists (0 rows, schema-only) — the Phase 1 migration
+was applied on top of this wiped state on the same day. See §6c.
 
 ---
 
@@ -158,8 +162,8 @@ the documented intent.
 | # | Phase | State |
 |---|---|---|
 | **0** | Schema + contract audit, manifest format, fixtures from known failures | **DONE — owner approved** |
-| **1** | Chapter identity core: manifest extraction + corroboration wiring | **code done, tests passing, NOT YET COMMITTED — see §6c** |
-| 2 | Study Notes write path + atomic `syllabus_nodes` upsert + preview UI | not started |
+| **1** | Chapter identity core: manifest extraction + corroboration wiring | **DONE — committed, proven, applied to live — see §6c** |
+| **2** | Study Notes write path + atomic `syllabus_nodes` upsert + preview UI | **not started — awaiting owner approval to begin** |
 | 3 | Background job infra: queue, worker, idempotency, retry | not started |
 | 4 | Status tab UI | not started |
 | 5 | PYQ resolution + flagging UI | not started |
@@ -354,20 +358,39 @@ Verified clean after rollback: `chapter_manifests` table, the `book` column, and
 **absent** again; `admins` still exactly 2 rows; `knowledge_base` still 0. Nothing leaked out of the
 transaction.
 
-**Not covered by this pass:** an anon REST-API probe against `chapter_manifests` specifically (the
-kind done for `pyq_questions` in §1) — that needs the table to actually exist for another connection to
-see, which a rolled-back transaction precludes by construction. The RLS *shape* is confirmed (one
-read-only policy, same pattern as `pyq_questions` post-`20260812030000`), but a live anon HTTP call
-against this specific table has not been independently fired. Worth doing if the owner wants that exact
-layer proven, which requires actually applying the migration somewhere first.
+### Applied to live and independently re-verified (2026-08-13)
 
-**What's left for Phase 1:** decide where to apply the now-proven migration — local Docker (blocked
-until the unrelated `flashcard_progress` replay gap is fixed) or live (owner's call, standing "deploy
-only when told" rule applies).
-- The manifest **approval UI** (where the owner reviews a draft and clicks approve) does not exist —
-  that's naturally Phase 2/3 alongside the Study Notes upload screen, since it's the same admin surface.
-- Uncommitted work has NOT been through the owner's phase-boundary approval yet. Do not describe Phase 1
-  as "done" to the owner until they've seen this report and the commit has landed.
+Owner said "in live" explicitly — this is a real deploy, done on that instruction, not assumed. Applied
+via `npx supabase db push`. The push command printed a scary-looking warning about a missing certificate
+file, but that's the CLI's own post-push catalog-*caching* step failing, a separate concern from whether
+the DDL itself ran — **did not trust "Finished" on its own**, verified independently the same way
+everything else in this document was verified:
+
+- `supabase migration list` shows `local` and `remote` now match for `20260813020000`.
+- Direct schema query confirms: `chapter_manifests` exists (**0 rows** — nothing polluted it), the
+  `book` column and its index exist on `knowledge_base`, both RPCs exist, the partial unique index
+  exists, RLS is enabled with exactly the one `SELECT` policy. `admins` still exactly 2 rows,
+  `knowledge_base` still 0 — nothing else was touched.
+- **The one gap flagged above is now closed.** Fired real anon HTTP requests at the live table, since it
+  now actually exists for another connection to see: anon **can** read it (`GET` → 200, as designed);
+  anon **cannot** insert directly (`POST` → 401, `new row violates row-level security policy`); anon
+  **cannot** call `admin_upsert_chapter_manifest` (`POST` → 401, `permission denied for function`).
+  That last one is worth noting precisely: it's blocked at the `REVOKE`/grant level, before
+  `assert_verified_admin` even runs — anon cannot attempt the call at all, which is a stronger guarantee
+  than relying on the runtime identity check alone. No `HACK` row landed under any of these attempts
+  (`count=exact` → `0`).
+
+**Phase 1 is DONE.** Code committed (`121b01e`, `f4f5d5d`, `f9abbab`), migration proven twice — once
+against a rolled-back transaction (17 assertions covering the RPC logic, immutability, supersession, and
+the raw constraint) and once for real against live (schema + anon-boundary checks) — and now live.
+
+**Deliberately not built in Phase 1, on schedule for Phase 2/3:**
+- The manifest **approval UI** (where the owner reviews a draft and clicks approve) — belongs with the
+  Study Notes upload screen, since it's the same admin surface.
+- The chapter-picker dropdown for `adminSelectedOrdinal` (§6b item 1) — engine's ready, UI isn't.
+- Local Docker testing remains blocked by the unrelated `flashcard_progress` replay gap. Not fixed, not
+  needed now that live verification covers Phase 1, but still worth fixing before it blocks something
+  later — recorded here so it isn't rediscovered from scratch next time it matters.
 
 ---
 
