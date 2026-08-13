@@ -70,11 +70,29 @@ export function chapterKeyFor({ prefix = 'c', classLevel, book = null, ordinal }
  * over-splits would reject correct content; treating any extra entry as
  * interleaved would re-open the over-split hole. The manifest, approved by a
  * human, is what distinguishes the two.
+ *
+ * A FOURTH SIGNAL, ADDED FOR THE UPLOAD UI: adminSelectedOrdinal. An admin
+ * uploading a file can pick its chapter from the approved manifest at upload
+ * time — a picker, never free text, because free text is how 'Poorvi' and
+ * 'Critical Reflection' got in last time; a picker can only ever offer a real
+ * entry. A deliberate human pick is decisive: it settles a numbered proposal
+ * regardless of what the ordinal/printed signals say, which matters for
+ * hand-named files where a file ordinal cannot be parsed at all. It does NOT
+ * touch interleaved entries, which stay purely positional — an admin picking
+ * "chapter 1" says nothing about which of chapter 1's interleaved poems a
+ * given chunk belongs to, so overriding position there would be a guess
+ * wearing the authority of a real signal. And it cannot select an ordinal
+ * outside the manifest: the closed set still holds even here.
  */
 export const VERDICT = { ACCEPT: 'accept', ACCEPT_WITH_FLAG: 'accept_with_flag', REJECT: 'reject' };
 
-export function decideAssignments({ manifest, fileOrdinal, filePageRange, proposals }) {
+export function decideAssignments({ manifest, fileOrdinal, filePageRange, proposals, adminSelectedOrdinal = null }) {
   const byOrdinal = new Map(manifest.map((m) => [m.ordinal, m]));
+  if (adminSelectedOrdinal != null && !byOrdinal.has(adminSelectedOrdinal)) {
+    // Defence in depth: a UI picker only ever offers manifest entries, but this
+    // is library code and must not trust its caller to have enforced that.
+    throw new Error(`adminSelectedOrdinal ${adminSelectedOrdinal} is not in the manifest`);
+  }
   const out = [];
 
   const numbered = proposals.filter((p) => byOrdinal.get(p.ordinal)?.numbered !== false);
@@ -102,18 +120,36 @@ export function decideAssignments({ manifest, fileOrdinal, filePageRange, propos
       continue;
     }
 
+    // A decisive human pick resolves this proposal outright, ahead of the
+    // over-split check — it is exactly what settles a model that proposed the
+    // wrong chapter, or more than one, once an admin has looked at the file.
+    if (adminSelectedOrdinal != null) {
+      out.push(p.ordinal === adminSelectedOrdinal
+        ? { ...p, entry, verdict: VERDICT.ACCEPT, reason: 'admin-selected chapter at upload — corroboration signals overridden' }
+        : { ...p, entry, verdict: VERDICT.REJECT, reason: `admin selected ordinal ${adminSelectedOrdinal} at upload; this proposal (ordinal ${p.ordinal}) conflicts` });
+      continue;
+    }
+
     if (tooManyNumbered) {
       out.push({ ...p, entry, verdict: VERDICT.REJECT, reason: `${numbered.length} numbered chapters proposed from one file — over-split` });
       continue;
     }
 
-    const ordinalAgrees = fileOrdinal == null || entry.ordinal === fileOrdinal;
-    const printedAgrees = p.observedNumber == null || p.observedNumber === entry.ordinal;
+    /* The manifest carries the binding; it is NOT inferred from `ordinal`.
+     * Hornbill's Writing Skills files are kehb111-116 while the section prints
+     * them as 1-6, so `fileOrdinal === ordinal` would reject all six. Falling
+     * back to `ordinal` keeps the simple books — where all three coincide —
+     * working without every manifest having to restate it. */
+    const expectedFileOrd = entry.fileOrdinal ?? entry.ordinal;
+    const expectedPrinted = entry.printedNumber ?? entry.ordinal;
+
+    const ordinalAgrees = fileOrdinal == null || expectedFileOrd == null || expectedFileOrd === fileOrdinal;
+    const printedAgrees = p.observedNumber == null || expectedPrinted == null || p.observedNumber === expectedPrinted;
 
     if (!ordinalAgrees) {
-      out.push({ ...p, entry, verdict: VERDICT.REJECT, reason: `chose ordinal ${entry.ordinal} but filename says ${fileOrdinal}` });
+      out.push({ ...p, entry, verdict: VERDICT.REJECT, reason: `chose ordinal ${entry.ordinal} (file ${expectedFileOrd}) but filename says ${fileOrdinal}` });
     } else if (!printedAgrees) {
-      out.push({ ...p, entry, verdict: VERDICT.REJECT, reason: `chose ordinal ${entry.ordinal} but printed header says ${p.observedNumber}` });
+      out.push({ ...p, entry, verdict: VERDICT.REJECT, reason: `chose ordinal ${entry.ordinal} (printed ${expectedPrinted}) but printed header says ${p.observedNumber}` });
     } else if (p.observedNumber == null || fileOrdinal == null) {
       // Two of three agree; the third could not be read. Writable, but a human
       // should see which corroboration was unavailable.

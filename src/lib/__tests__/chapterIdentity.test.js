@@ -186,6 +186,61 @@ describe('PERMITTED — correct content must still be written', () => {
   });
 });
 
+describe('adminSelectedOrdinal — the upload-time picker signal', () => {
+  it('accepts a hand-named file the other signals cannot corroborate, once an admin picks its chapter', () => {
+    // "Poorvi" carried no parseable file ordinal and no printed number was
+    // read — exactly the shape that produced the 33-row failure. An admin
+    // PICKING the real chapter from the manifest should now settle it.
+    const [d] = decideAssignments({
+      manifest: politicalTheory,
+      fileOrdinal: null,
+      filePageRange: null,
+      proposals: [{ ordinal: 1, observedNumber: null }],
+      adminSelectedOrdinal: 1,
+    });
+    expect(d.verdict).toBe(VERDICT.ACCEPT);
+    expect(d.reason).toMatch(/admin-selected/);
+  });
+
+  it('rejects a model proposal that conflicts with what the admin picked', () => {
+    const [d] = decideAssignments({
+      manifest: politicalTheory,
+      fileOrdinal: 1,
+      filePageRange: [1, 14],
+      proposals: [{ ordinal: 3, observedNumber: 1 }],   // model still says "Equality"
+      adminSelectedOrdinal: 1,                          // admin says chapter 1
+    });
+    expect(d.verdict).toBe(VERDICT.REJECT);
+    expect(d.reason).toMatch(/admin selected ordinal 1.*conflicts/);
+  });
+
+  it('refuses an admin selection outside the manifest — the closed set still holds', () => {
+    expect(() => decideAssignments({
+      manifest: politicalTheory,
+      fileOrdinal: 1,
+      filePageRange: [1, 14],
+      proposals: [{ ordinal: 1, observedNumber: 1 }],
+      adminSelectedOrdinal: 99,
+    })).toThrow(/not in the manifest/);
+  });
+
+  it('does NOT override an interleaved entry — position still decides which poem a chunk belongs to', () => {
+    const decided = decideAssignments({
+      manifest: hornbill,
+      fileOrdinal: 1,
+      filePageRange: [1, 14],
+      proposals: [
+        { ordinal: 1, observedNumber: 1 },     // host chapter
+        { ordinal: 8, observedNumber: null },  // Laburnum Top, pp31 — outside this file
+      ],
+      adminSelectedOrdinal: 1,
+    });
+    expect(decided[0].verdict).toBe(VERDICT.ACCEPT);   // admin-confirmed host chapter
+    expect(decided[1].verdict).toBe(VERDICT.REJECT);   // still fails on page range, unaffected by the admin pick
+    expect(decided[1].reason).toMatch(/outside file span/);
+  });
+});
+
 describe('positional chunk assignment — headings cannot capture content', () => {
   const accepted = [
     { ordinal: 1, title: 'The Portrait of a Lady', pageStart: 1, pageEnd: 12 },

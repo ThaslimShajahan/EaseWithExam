@@ -4,8 +4,19 @@
 You have the repo and this file. That is enough. Everything below is either verifiable in the repo
 or was measured against the live database and recorded here.
 
-Last updated: 2026-08-13, end of Phase 0.
+Last updated: 2026-08-13, mid-Phase 1.
 Branch: `nonstem-stage-a-taxonomy` (50+ commits ahead of `origin/main`, **never pushed**).
+
+**⚠️ READ THIS BEFORE TOUCHING THE LIVE DATABASE.** On 2026-08-13, after Phase 0, the owner ordered a
+**full wipe of the live database** — all 62 tables in the `public` schema, keeping only `admins`
+(both rows, unchanged: `info@acenzos.com` and `thaslimshajahans@gmail.com`, both `role='superadmin'`,
+`is_active=true`). Every other table — `users`, `subscriptions`, all platform config
+(`feature_flags`, `exam_categories`, `quota_config`, `platform_settings`, `email_templates`,
+`plan_config`, `onboarding_category_display`), the audit log (`changelog`, 1,493 rows), and all
+content/operational tables — is now at **0 rows**. See §9 for the full record. **The live site is
+almost certainly non-functional for any visitor right now** — there is no exam catalog, no feature
+flags, no logged-in users. This was deliberate and owner-confirmed, not an accident, but the next
+session must know about it before assuming any table has data or that the live app currently works.
 
 ---
 
@@ -146,8 +157,8 @@ the documented intent.
 
 | # | Phase | State |
 |---|---|---|
-| **0** | Schema + contract audit, manifest format, fixtures from known failures | **DONE — awaiting owner approval** |
-| 1 | Chapter identity core: manifest extraction + corroboration wiring | not started |
+| **0** | Schema + contract audit, manifest format, fixtures from known failures | **DONE — owner approved** |
+| **1** | Chapter identity core: manifest extraction + corroboration wiring | **code done, tests passing, NOT YET COMMITTED — see §6c** |
 | 2 | Study Notes write path + atomic `syllabus_nodes` upsert + preview UI | not started |
 | 3 | Background job infra: queue, worker, idempotency, retry | not started |
 | 4 | Status tab UI | not started |
@@ -200,16 +211,96 @@ elsewhere (Reading Skills 1–99, Writing Skills 100–199; NEET uses 1–14 / 1
 
 ---
 
-## 7. Open questions for the owner
+## 6b. Two owner requests captured mid-Phase-1, not yet built
 
-1. **Manifest approval granularity** — approve every book's manifest before load (as stated), or only
-   when corroboration fails? Currently built assuming *every book*.
-2. **Where manifests live** — a new `chapter_manifests` table, or JSON committed to the repo? Affects
-   Phase 1. Not yet decided.
-3. **PYQ queue-and-wait** — how long does a PYQ upload wait for a syllabus before it escalates?
-4. Whether `knowledge_base` should finally gain a `book` column. `20260812040000` deliberately deferred
-   this pending evidence of a real within-subject name collision. **The audit found none** among loaded
-   books — but the tables are empty now, so adding it is free, and it would close the risk permanently.
+Both arrived while Phase 1 code was in progress. Neither was built immediately —
+building UI mid-phase would break the phase-gate process the owner set — but
+both are now **decided design**, and the engine change for the first is already
+committed.
+
+1. **Admin chapter picker at upload.** The admin should be able to pick a
+   file's chapter from the approved manifest at upload time, rather than
+   relying only on automatic corroboration. Owner asked for "add chapter
+   name"; scoped instead as a **picker over the approved manifest's entries**,
+   never free text — free text is exactly how `Poorvi` and `Critical
+   Reflection` got in. **Implemented, uncommitted — see §6c**: `decideAssignments()` in
+   `chapterIdentity.js` takes `adminSelectedOrdinal`. A decisive human pick
+   settles a numbered proposal outright (even overriding a model that proposed
+   the wrong chapter), but does **not** override interleaved/positional
+   entries — an admin picking "chapter 1" says nothing about which of chapter
+   1's interleaved poems a chunk belongs to. An ordinal outside the manifest
+   still throws; the closed set holds even for the admin path. Covered by 4
+   tests in `chapterIdentity.test.js`. **The UI dropdown itself is Phase 2/3
+   work** (Study Notes upload screen) — the engine is ready for it now.
+
+2. **Medium as an admin-manageable category.** "Add medium in admin
+   categories — English medium, Malayalam, etc." `src/admin/
+   AdminCategorySettings.jsx` already manages `exam_categories` rows keyed by
+   `category_kind` (`board` / `competitive`); a `medium` kind fits the same
+   pattern. **Not built yet** — it depends on the `medium` schema column and
+   the script/character-set + subject detection logic from Part 2 of the
+   original spec, which comes after Part 1 (this phase) stabilises. Recorded
+   here so it surfaces again when Part 2 starts rather than requiring the
+   owner to re-ask.
+
+## 6c. Phase 1 build state (in progress, uncommitted as of this writing)
+
+Owner decisions locked in before Phase 1 started: `chapter_manifests` is a real table (not JSON in the
+repo), every book's manifest requires owner approval before load, `knowledge_base` gained a `book`
+column while the tables were empty (2026-08-13 wipe), and a PYQ upload with no matching syllabus
+escalates to the owner after **48 hours**.
+
+**Files, all written, all passing, NONE committed yet:**
+
+- `src/lib/chapterManifest.js` — `fileOrdinalFrom()` (the third corroboration signal, parses NCERT
+  short codes and hand-named filenames), `validateManifest()` (structural checks — duplicate ordinals,
+  overlapping page ranges, unreachable interleaved entries — that must pass before a manifest can be
+  shown for owner approval), `candidatesForFile()`.
+- `src/lib/manifestExtraction.js` — `draftManifestFromContentsPage()` draws a DRAFT manifest from a
+  book's contents page using the same `extractPagesWithVision` + `chatComplete` pipeline as
+  `runNotesExtraction`, so it doesn't fork the extraction path. `requireApprovedManifest()` is the gate
+  every future per-file loader must call — refuses anything whose `status` isn't `'approved'`.
+- `src/lib/chapterIdentity.js` — modified from Phase 0 to add the `adminSelectedOrdinal` signal (see
+  §6b item 1): a picker-based owner override at upload time, engine-side only, no UI yet.
+- `supabase/migrations/20260813020000_chapter_manifests.sql` — the `chapter_manifests` table, its
+  partial unique index (one approved manifest per book; NULLs-are-distinct trap from `20260812040000`
+  applies again, handled with `coalesce(book,'')`), `knowledge_base.book`, and two admin RPCs
+  (`admin_upsert_chapter_manifest`, `admin_approve_chapter_manifest`) gated by `assert_verified_admin`
+  exactly like the existing PYQ RPCs. **Statically checked** (paren/dollar-quote balance, RPC signatures
+  match their `revoke`/`grant` lines) but **never executed against a real Postgres** — see next section
+  for why the Docker-based local test didn't happen.
+- `src/lib/__tests__/chapterManifest.test.js` (15 tests) and 4 new tests appended to
+  `chapterIdentity.test.js` (now 21). **36 tests total for Phase 1, all passing.** Fixtures include the
+  real corpus filenames (`kehb111.pdf` etc.) and the Hornbill Writing-Skills banding case, where the
+  printed chapter number (1–6) and the filename number (11–16) genuinely differ — a naive
+  `fileOrdinal === ordinal` rule would reject that whole section, and there's a test asserting it doesn't.
+
+**What's NOT done for Phase 1 yet:**
+
+- The migration has **never been executed**, not locally and not on the live database. A Docker-based
+  local Supabase stack was started specifically to test it for real (not just statically) before this
+  session got redirected into a much bigger, separate task — see §9. **This is the next concrete step**
+  once whatever comes after §9 is resolved: either run it locally via `supabase start` + `supabase db
+  push` (writes nothing live, fully disposable), or apply it to the live database now that the tables it
+  touches are empty anyway.
+- The manifest **approval UI** (where the owner reviews a draft and clicks approve) does not exist —
+  that's naturally Phase 2/3 alongside the Study Notes upload screen, since it's the same admin surface.
+- Uncommitted work has NOT been through the owner's phase-boundary approval yet. Do not describe Phase 1
+  as "done" to the owner until they've seen this report and the commit has landed.
+
+---
+
+## 7. Open questions — RESOLVED (kept for history; see §6c for the decisions in force)
+
+All four were answered by the owner before Phase 1 started:
+
+1. Manifest approval granularity → **every book's manifest**, no exception.
+2. Where manifests live → **`chapter_manifests` table**, not JSON (needs to be queryable at runtime
+   and carry the approval workflow as stateful data).
+3. PYQ queue-and-wait → **escalates to the owner after 48 hours** with no matching syllabus.
+4. `knowledge_base.book` → **added**, in `20260813020000`, while the table was empty.
+
+No open questions remain for Phase 1 as scoped. New ones will accrue here as later phases raise them.
 
 ## 8. Known bugs still open
 
@@ -220,3 +311,98 @@ elsewhere (Reading Skills 1–99, Writing Skills 100–199; NEET uses 1–14 / 1
 3. Political Science "Equality" contamination — moot (data wiped). The new design prevents the class
    structurally: `keps101` choosing ordinal 3 against filename ordinal 1 is **rejected, not written**.
    Covered by a passing test.
+
+## 9. Live database: full wipe, 2026-08-13
+
+**Read the warning at the top of this file first if you haven't.**
+
+This was a *separate, deliberate* owner instruction, unrelated to the Phase 0 content-tables wipe
+documented in §1. It happened mid-Phase-1, while testing whether the `chapter_manifests` migration
+should be verified against a real Postgres before being trusted.
+
+### What was asked, and how the scope was resolved
+
+The owner's first instruction — "clear all data in the live, except user account" — was **not acted on
+immediately**. It covers 62 tables with wildly different blast radii (real user accounts vs. platform
+config vs. an audit log), and a wrong reading would have been destructive and irreversible with no
+backup taken. A clarifying question was asked (`AskUserQuestion`, four scope presets) before touching
+anything. The owner interrupted that question with a more precise, more sweeping instruction: **"clear
+all, only keep the super admins in the table, nothing else needed."**
+
+That was executed as: **wipe every row in every `public`-schema table except `admins`**; `admins` itself
+gets zero changes. Confirmed first that both existing `admins` rows already had `role='superadmin'`, so
+nothing needed to be added or removed from that table — it truly is untouched, not filtered-and-kept.
+
+### A mistake caught before it mattered, recorded so the pattern isn't repeated
+
+The first inventory query (`query_to_xml`-based per-table row counts) reported **55 tables**. A second,
+independent method (plain `information_schema.tables` count) reported **62**. Rather than trust either
+number, a third method was used — a `plpgsql` loop with **per-table exception handling**, so a query
+that fails on one table cannot silently vanish from the result set the way the first method did. That
+confirmed **62 tables, zero errors**, and *that* number is what both the before- and after-counts below
+are built from. **Lesson for future work in this repo:** `query_to_xml`-style dynamic per-table
+aggregation over `information_schema.tables` can silently drop tables with no error surfaced. Don't
+trust it for anything where completeness matters — use explicit per-table `EXECUTE` inside a
+`BEGIN/EXCEPTION` block instead.
+
+### Foreign-key safety check, done before executing
+
+`TRUNCATE ... CASCADE` on 61 tables at once risks cascading into a table you meant to protect, if that
+table is reachable via any FK path. Checked first: **zero foreign keys touch `admins` in either
+direction.** It is fully isolated at the schema level, so nothing else could pull it into the cascade,
+and it could not pull anything else in either.
+
+### Execution
+
+A single dynamic statement, built from a live `information_schema.tables` query at execution time (not
+a hand-typed table list, which could drift from what's actually there):
+
+```sql
+do $$
+declare v_tables text;
+begin
+  select string_agg(format('public.%I', table_name), ', ')
+    into v_tables
+    from information_schema.tables
+    where table_schema = 'public' and table_type = 'BASE TABLE' and table_name <> 'admins';
+  execute format('truncate table %s restart identity cascade', v_tables);
+end $$;
+```
+
+Run via `npx supabase db query --linked --file ...` — the Supabase CLI, linked to the live project,
+using a connection that bypasses RLS entirely (not the anon key; this is why `pyq_questions` could not
+be cleared by the app's anon key earlier in §1 but could be cleared this way here).
+
+### Before / after (both counted with the exception-safe method — no table could have hidden here)
+
+| | Before | After |
+|---|---|---|
+| Total tables (`public` schema) | 62 | 62 |
+| Rows in `admins` | 2 | **2 — unchanged** |
+| Rows everywhere else | 2,272 (across 61 tables) | **0** |
+| Query errors during counting | 0 | 0 |
+
+`admins` verified **byte-identical** on `uid`, `role`, `is_active`, `email` for both rows
+(`info@acenzos.com`, `thaslimshajahans@gmail.com`, both `superadmin`/active) — not just "still 2 rows",
+the actual values were re-read and diffed after the wipe.
+
+### Consequence — the live site is very likely broken right now
+
+Everything the running app depends on to function for a visitor is gone: `exam_categories` (the
+board/class/subject catalog), `feature_flags`, `quota_config`, `platform_settings`, `email_templates`,
+`plan_config`, `onboarding_category_display`. There are also zero rows in `users`, so nobody is
+currently a recognised account holder except the two admins. This was the explicit, understood
+consequence of the scope the owner chose — not a surprise side effect — but any session picking this
+work up needs to know the live app is not in a demoable state until platform config is reseeded, and
+should not assume "the live site works" as a baseline fact anymore.
+
+### Not yet decided / not yet done
+
+- **Reseeding platform config** — nothing has been reseeded. `exam_categories`, `feature_flags`, etc.
+  are all still at 0 rows as of this writing. Whether/when that happens is the owner's call.
+- **Whether this was in preparation for testing the new content engine on a truly clean live DB**, or a
+  broader relaunch reset, was not stated explicitly. Worth confirming with the owner rather than
+  assuming either.
+- The Phase 1 migration (`20260813020000`) has still not been applied anywhere — this wipe made the live
+  `knowledge_base`/`chapter_manifests` target empty, which is exactly the condition Phase 1 was written
+  to take advantage of, but applying it is a separate, not-yet-taken step.
