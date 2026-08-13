@@ -341,3 +341,63 @@ admin surface must apply the same one-line grant fix first, or every save there 
 
 **General rule for this codebase:** never grant an RPC to `authenticated` alone. Grant to
 `anon, authenticated` and gate inside the body with `assert_verified_admin` / `assert_verified_self`.
+
+---
+
+## 12. ⚠️ Subject-catalog drift: stream_configs vs Categories (OPEN — blocks Phase 4)
+
+**Audited 2026-08-13, on owner request, before building admin student-edit on top of it.**
+**Finding: they are two independent sources with no shared key, no constraint, no validation — and
+they have already drifted.**
+
+### Three sources of "what subjects exist", not one
+
+| # | Source | Edited via | Consumed by |
+|---|---|---|---|
+| A | `exam_categories.subjects` (DB) | Admin → Categories | `loadCategories()` → `getSubjectsForExam()` → Practice Generator, Syllabus (`useSyllabusSubjects`), Admin Content Intake, Admin Study Notes, Admin Paper Gen |
+| B | `stream_configs` + `board_language_config` (DB) | Admin → Streams (new, §10) | Onboarding → `users.subjects` / `users.academic_track` |
+| C | `FALLBACK_CATEGORIES` / `SCHOOL_SUBJECTS_11_12` (hardcoded, `src/lib/categories.js:22-23`) | code only | boot fallback when the DB read fails |
+
+Nothing links A and B. `admin_upsert_stream_config` validates `stream_key` but never checks that a
+subject name exists anywhere. The Streams editor's subject fields are free text.
+
+### Measured drift, live, today
+
+Subjects onboarding can assign that **do not exist in Categories** for that board + class 11/12:
+
+| Board | Count | Subjects |
+|---|---|---|
+| CBSE | 12 | Applied Mathematics, **English Core**, Fine Arts, Geography, History, Home Science, Informatics Practices, Legal Studies, Physical Education, Political Science, Psychology, Sociology |
+| Kerala State | 14 | Arabic, Computer Applications, Geography, Hindi, History, Journalism, Malayalam, Political Science, Psychology, Sanskrit, Sociology, Statistics, Syriac, Urdu |
+
+**26 total.** The sharpest case: onboarding assigns **`English Core`** while Categories has
+**`English`** — the same real subject under two names, already live.
+
+### Why this blocks Phase 4
+
+Phase 4's entire job is to scope Practice Generator / Syllabus to a student's actual `subjects`
+instead of the full board list — i.e. to feed **B's values into A's consumers**.
+`getSubjectsForExam()` resolves against A. A CBSE Science student whose stream gave them
+`Applied Mathematics`, or any student carrying `English Core`, lands on a subject the content side
+has never heard of: no syllabus nodes, no content, no PYQs — a silently empty screen, with nothing
+in the UI to explain why. Same failure class as the Content Library/Syllabus desync: two catalogs of
+one concept, no source of truth.
+
+### Proposal (NOT yet decided — owner to choose)
+
+**Recommended: make Categories the subject vocabulary of record; make `stream_configs` reference it
+rather than restate it.** Streams decide *which* subjects a stream offers and how many are picked;
+Categories decides *what subjects exist*. Enforce in three places, cheapest first:
+
+1. **Editor** — the Streams editor's subject inputs become pickers sourced from Categories for that
+   board+class, not free text. Free text is how all 26 got in.
+2. **RPC** — `admin_upsert_stream_config` rejects any subject absent from the board+class catalog,
+   alongside its existing `stream_key` check, so SQL and manual writes can't bypass the UI.
+3. **Reconciliation** — the 26 existing names can't just start failing (the live rows would become
+   unsaveable). Each is either **added to Categories** (Psychology, Sociology, Legal Studies,
+   Malayalam… are real subjects the catalog simply lacks) or **renamed to match** (`English Core` →
+   `English`). Needs an owner pass: these are curriculum facts, not cleanup.
+
+Rejected alternatives: making B canonical (Categories also serves 8–10, competitive exams and all
+content tooling; streams cover only 11–12 on two boards), and a third shared `subjects` table
+(cleanest long-term, largest migration — revisit if a fourth consumer appears).
