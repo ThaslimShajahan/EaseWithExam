@@ -216,7 +216,7 @@ function GenerateModal({ onClose, onStarted }) {
         <div className="bg-primary-50 rounded-xl p-3 border border-primary-100 text-xs text-primary-700 leading-relaxed space-y-1">
           <p className="font-semibold text-primary-900">Paper details</p>
           <p>{questionCount} questions · {chapters.length ? `focused on: ${chapters.join(', ')}` : 'full-syllabus spread across all chapters'} · {getMarkingLabel(examPat) || 'standard marking'}</p>
-          <p>Question types: {(EXAM_QTYPES[examType] || ['MCQ']).join(', ')}</p>
+          <p>Question types: {defaultQTypesFor(examType).join(', ')}</p>
           <p>Estimated duration: {getTestDurationMinutes(examPat)} min · {examPat?.totalMarks ?? '—'} total marks</p>
         </div>
 
