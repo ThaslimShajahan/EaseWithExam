@@ -459,3 +459,43 @@ adding it introduces no new vocabulary and carries no naming risk.
      exists those subjects are exactly the "in a profile, unknown to the catalog" state being fixed.
 
    Recommending **(a)** — fix the drift completely now, refine presentation later.
+
+---
+
+## 13. §12 drift — RESOLVED
+
+`9326eb0`. Owner decisions from §12a implemented exactly: `English Core` → `English` (rename),
+11 subjects added to Categories as **core** (Applied Mathematics, History, Geography, Political
+Science, Sociology, Psychology, Computer Applications, Statistics, Journalism, Informatics
+Practices, Legal Studies — the last two moved from the original "deferred" proposal to core on
+owner correction: full examined CBSE subjects, not enrichment), 9 subjects **deferred** behind a
+new `content_bearing` flag (6 languages + PE/Fine Arts/Home Science).
+
+**New table: `public.subjects`** (migration `20260813100000`) — the vocabulary of record, 40 rows
+(33 content-bearing, 7 hidden). Separates "does this subject exist" (a row here) from "do we serve
+content for it" (`content_bearing`) from "which board+class offers it" (`exam_categories`,
+unchanged) from "which stream offers it" (`stream_configs`, unchanged).
+
+**Enforced, not just documented** (migration `20260813110000`): `admin_upsert_stream_config` and
+`admin_upsert_board_language_config` now call `assert_known_subjects()` against `public.subjects`
+before writing — locked subjects, both slot kinds, and named-combination `resulting_subjects` all
+checked, including the retired `English Core` string. A typo or unknown name is rejected at write
+time with a clear message, not just visible on the next audit. Live-verified: all 6 real stream
+rows still validate clean; `Malayalam`/`Syriac`/`Urdu` (content_bearing=false) still accepted —
+proving the check is against the vocabulary, not the content-facing catalog.
+
+**`src/lib/categories.js`** — `getSubjectsForExam()` now filters to `content_bearing` by default.
+All 6 existing call sites (Practice Generator, Syllabus, Content Intake, Study Notes, Paper Gen)
+get clean dropdowns with **no call-site change**. `{ includeNonContent: true }` opts into the full
+set. Fails open on a fetch failure — an empty vocabulary means no filtering, not a blanked screen.
+
+**Admin → Platform → Subjects** (new tab, `src/admin/AdminSubjects.jsx`) — add/edit subjects, no
+delete (would recreate a dangling reference; retire via `content_bearing = false` instead). The
+Streams editor's subject inputs (`AdminStreamConfig.jsx`) are now **pickers sourced from this
+vocabulary**, not free text — free text is how the original 21 got in.
+
+**Re-measured live after the fix**: drift is now exactly the 9 intentionally-deferred subjects
+(languages + activities), not leftover drift — the design's intended remainder.
+
+**Next**: admin student-edit (add stream/subject editing to `admin_update_user`, writing `subjects`
++ `academic_track`), then content-engine Phase 2.
