@@ -326,13 +326,20 @@ export function AuthProvider({ children }) {
 
   /* ── Onboarding completion ─────────────────────────────── */
 
-  const completeOnboarding = async ({ targetExam, syllabus, classLevel }) => {
+  const completeOnboarding = async ({ targetExam, syllabus, classLevel, subjects, academicTrack }) => {
     if (!currentUser) throw new Error('Not authenticated');
     const fields = {
       onboarding_completed: true,
       target_exam:          targetExam,
       syllabus,
       class_level:          classLevel,
+      // Only present for students who completed Class 11/12 stream selection
+      // (see 20260813050000) — every other signup writes neither key, and
+      // upsert_own_user/update_own_user coalesce-preserve whatever was there
+      // before when a key is absent, so this never overwrites existing
+      // stream data with nothing.
+      ...(subjects ? { subjects } : {}),
+      ...(academicTrack ? { academic_track: academicTrack } : {}),
     };
     // update_own_user is UPDATE-only (matches every row genuinely reaching
     // onboarding in production, since loading already gates the UI until

@@ -709,3 +709,121 @@ named combinations)/Humanities (3 locked, 1-of-4 choice, no named combinations);
 Onboarding UI, `users.academic_track`, admin editor, downstream consumption (`useStudentScope`,
 Practice Generator, Syllabus, Classes 8–10 regression check) — none built. Stopping for review per the
 task's explicit phase gate.
+
+## 13. SECURITY FINDING (unfixed, logged, owner-deferred) — anon can overwrite any user profile
+
+Found 2026-08-13 while extending `upsert_own_user` for stream selection (§14). **Unrelated to this
+rebuild, pre-existing since `20260806005045_users_rls_lockdown.sql`.**
+
+`public.upsert_own_user(p_uid text, p_fields jsonb)` and `public.update_own_user(p_uid text, p_fields
+jsonb)` are `GRANT EXECUTE ... TO anon` with **no caller-identity check in the function body** — no
+`verified_uid()` comparison, nothing binding the call to the caller's actual Firebase identity. `p_uid`
+is trusted as given.
+
+**Confirmed empirically, not theoretically** — a request with only the public anon key (which ships in
+the client bundle by design) successfully created a full `users` row for an arbitrary, made-up UID via
+`upsert_own_user`. Test row deleted immediately after confirming. **Right now, anyone can overwrite any
+real student's `target_exam`, `syllabus`, `class_level`, `display_name`, `onboarding_completed` by
+knowing or guessing their `firebase_uid`.**
+
+**Owner decision (asked, not assumed):** log this, continue Phase 2 now, fix separately later. Rationale
+accepted: §14 extends this RPC with two more coalesced fields (`subjects`, `academic_track`), which grows
+the blast radius on an already fully-open door rather than creating a new exposure category — full
+profile takeover was already possible.
+
+**The actual fix, when it happens:** bind both RPCs to `verified_uid()` (`where p_uid = verified_uid()`
+or equivalent), matching the pattern every admin RPC in this project already uses via
+`assert_verified_admin`. Needs care: it touches the live onboarding/profile-save path every student uses,
+so verify against a real signup/onboarding flow before shipping, not just a unit test.
+
+**Do not lose this.** If you are a future session reading this file, this is still open until someone
+explicitly closes it — check git log / live RPC definitions for `verified_uid()` inside
+`upsert_own_user` before assuming it's fixed.
+
+## 14. Stream selection: Phase 2 DONE — onboarding UI, save path, real end-to-end proof
+
+Built on top of Phase 1's `stream_configs`/`board_language_config`. Owner explicitly requested a real
+run trace, not a claim — this entry documents what was actually verified, including two real bugs the
+walkthrough caught that code review alone had missed.
+
+### What was built
+
+- `src/lib/streamSelection.js` — pure logic, no React: `classTierFor`, `hasStreamsFor`,
+  `needsLanguageChoice`, `isAutoSelectAll`, `availableOptionalSubjects` (the required optional-pool
+  filtering), `matchedCombinationName` (the required "no invented name" handling), `flattenSubjects`,
+  `buildAcademicTrack`. 19 tests, all passing, both explicit owner requirements directly asserted.
+- `src/hooks/useStreamConfig.js` — fetches `stream_configs` + `board_language_config` for a board+tier;
+  `loading` stays true (holding the flow at the Board step) until the fetch resolves, so a slow fetch
+  can never let a student advance past where the Stream step should have been inserted.
+- `src/pages/OnboardingPage.jsx` — extended with 5 new step types (`stream`, `language`,
+  `streamSubjects`, `optionalSixth`, `confirm`), inserted between Board and the competitive-exam step,
+  purely data-driven (`streamsApply`/`needsLanguageChoice`/optional-slot presence — never a `board_key`
+  string comparison).
+- `src/context/AuthContext.jsx` — `completeOnboarding` now optionally passes `subjects`/`academicTrack`
+  through to the save RPC; absent for every non-stream signup, so nothing else changes.
+- Migration `20260813050000_users_academic_track.sql` — `users.subjects text[]` +
+  `users.academic_track jsonb`, both additive/nullable. **Extends** `upsert_own_user`/`update_own_user`
+  (hard-coded field allow-lists — confirmed by reading them, not assumed) rather than adding a new RPC,
+  since onboarding already saves through that exact call.
+- Migration `20260813060000_stream_configs_description.sql` — a small Phase-1 gap fix: `stream_configs`
+  shipped without a `description` column, but the stream-picker cards need real one-line text, not a
+  hardcoded UI string. Backfilled from the same verified source text as the original seed.
+- `stream_selection_enabled` feature flag registered in `featureFlags.js` and created in the DB
+  (initially off; on now, for testing — see below).
+
+### Two real bugs the walkthrough caught, not code review
+
+1. **The flag was created but never wired into the component.** Confirmed by grep before assuming
+   otherwise: `getFeatureFlag`/`FLAGS` did not appear anywhere in the first draft of
+   `OnboardingPage.jsx`. Fixed by gating `streamsApply` on `useFeatureFlag(FLAGS.STREAM_SELECTION)`, its
+   `loading` folded into the same Board-step hold as the data fetch.
+2. **Kerala's board key never matched.** Onboarding stores UPPER_SNAKE keys (`KERALA_STATE`);
+   `stream_configs.board_key` uses the display form (`Kerala State`), same convention as
+   `exam_categories.board_key`. Comparing them directly meant Kerala silently skipped the entire stream
+   sequence and jumped straight to the competitive-exam step — CBSE only "worked" in the first
+   walkthrough pass by coincidence, because its onboarding key and board_key happen to be the identical
+   string. **This exact bug class was already solved once**: `categories.js` has `BOARD_KEY_ALIASES` /
+   `resolveBoard()` for precisely this, added after a prior incident ("state-board students resolved to
+   no combo at all" — see that function's own comment). Reused `resolveBoard()` rather than re-solving
+   it; would not have found this without a real click-through run, since the CBSE-only path never
+   exercises the mismatch.
+
+### Real end-to-end evidence (Playwright against the live dev server, port 5174)
+
+**CBSE Class 11 → Science**: no Language step (CBSE has no second-language choice, confirmed by
+`needsLanguageChoice` returning false for its `board_language_config` row); "Choose your subjects" step
+shows `English Core` as the sole locked chip, then "Choose 4 subjects (0/4 selected)" over
+Physics/Chemistry/Mathematics/Biology/Computer Science — exactly the Phase 1 §12 correction, not the
+original over-locked shape.
+
+**Kerala Class 11 → Science**: dedicated Language step appears (`English` locked, then a 6-item
+Malayalam/Hindi/Arabic/Urdu/Sanskrit/Syriac choice); "Choose your subjects" shows
+Physics/Chemistry/Mathematics locked, then "Choose one (0/1 selected)" over Biology/Computer Science;
+picking Biology and reaching Confirm shows a **`Course Code 1`** badge (a real `matchedCombinationName`
+hit, not invented) plus the resolved list `English, Malayalam, Physics, Chemistry, Mathematics, Biology`
+— 6 subjects total, no optional-6th step ever appeared (Kerala's `optional_slots` is empty, so the step
+correctly never gets inserted), matching "Kerala totals exactly 6, no additional pick" precisely.
+
+**Full completion, checked in the database, not just the UI**: ran the flow to "Get Started" for a
+synthetic Kerala Class 11 / Science / Malayalam / Computer Science signup, reached `/dashboard`, then
+queried the real row:
+
+```
+syllabus: "KERALA_STATE"                          (unchanged raw form, as before)
+academic_track: { board: "Kerala State", stream: "science",
+                   language_choice: "Malayalam", chosen_slot_subjects: ["Computer Science"] }
+subjects: ["English","Malayalam","Physics","Chemistry","Mathematics","Computer Science"]
+onboarding_completed: true
+```
+
+`academic_track.board` is the **resolved** form (`"Kerala State"`), matching `stream_configs`'
+convention — confirms the board-key fix reaches all the way through to what's persisted, not just the
+UI's step-gating. Test row deleted after verification; `walkthrough-%` UIDs confirmed at 0 remaining.
+
+421 tests pass (402 + 19 new), build clean.
+
+### Not built
+
+Admin editor (Phase 3, next) and Phase 4 downstream consumption (`useStudentScope`, Practice Generator,
+Syllabus scoping, Classes 8-10 regression check). `users.subjects`/`academic_track` are written but
+nothing reads them yet — by design, per the column comments in `20260813050000`.
