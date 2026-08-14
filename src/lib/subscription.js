@@ -410,7 +410,7 @@ export async function createRazorpayOrder({ planId, firebaseUid }) {
  * before. Does NOT re-create the order — reuses order.order_id, so what the
  * user reviewed in the summary is exactly what gets charged.
  */
-export async function openRazorpayCheckout({ order, plan, planId, firebaseUid, email, name, onSuccess, onFailure }) {
+export async function openRazorpayCheckout({ order, plan, planId, firebaseUid, email, name, onSuccess, onFailure, onVerifying }) {
   const loaded = await loadRazorpayScript();
   if (!loaded) { onFailure?.('Payment gateway unavailable. Please try again.'); return; }
 
@@ -433,6 +433,12 @@ export async function openRazorpayCheckout({ order, plan, planId, firebaseUid, e
     prefill: { name, email },
     theme: { color: '#6366f1' },
     handler: async (response) => {
+      // Fired the instant Razorpay's own modal reports success, before
+      // verifyAndActivateSubscription's network round-trip starts — this is
+      // the gap a student previously saw as "nothing happening," tempting a
+      // refresh/back-nav mid-verification. Caller shows a full-screen
+      // "verifying" overlay from here until onSuccess/onFailure settles.
+      onVerifying?.();
       try {
         const sub = await verifyAndActivateSubscription(firebaseUid, {
           plan: planId,
@@ -466,7 +472,7 @@ export async function openRazorpayCheckout({ order, plan, planId, firebaseUid, e
  * PaywallModal no longer use it directly — see createRazorpayOrder/
  * openRazorpayCheckout above, called with an OrderSummaryModal in between.
  */
-export async function initiateRazorpayPayment({ planId, firebaseUid, email, name, onSuccess, onFailure }) {
+export async function initiateRazorpayPayment({ planId, firebaseUid, email, name, onSuccess, onFailure, onVerifying }) {
   let order, plan;
   try {
     ({ order, plan } = await createRazorpayOrder({ planId, firebaseUid }));
@@ -474,5 +480,5 @@ export async function initiateRazorpayPayment({ planId, firebaseUid, email, name
     onFailure?.(err.message);
     return;
   }
-  await openRazorpayCheckout({ order, plan, planId, firebaseUid, email, name, onSuccess, onFailure });
+  await openRazorpayCheckout({ order, plan, planId, firebaseUid, email, name, onSuccess, onFailure, onVerifying });
 }

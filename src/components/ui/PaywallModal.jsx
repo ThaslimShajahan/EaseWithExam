@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Zap, Check, Crown } from 'lucide-react';
+import { X, Zap, Check, Crown, Loader2 } from 'lucide-react';
 import { PLANS, createRazorpayOrder, openRazorpayCheckout, computeGst, formatRupees } from '../../lib/subscription';
 import { usePaymentsEnabled, PAYMENTS_CLOSED_TITLE, PAYMENTS_CLOSED_BODY } from '../../lib/paymentsGate';
 import { usePlatformSettings } from '../../hooks/usePlatformSettings';
@@ -49,6 +49,12 @@ export default function PaywallModal({ onClose, feature, firebaseUid, email, nam
     const { order, plan, planId } = pendingOrder;
     await openRazorpayCheckout({
       order, plan, planId, firebaseUid, email, name,
+      // Same gap PricingPage covers — Razorpay's modal closes the instant
+      // its own handler fires, well before verifyAndActivateSubscription's
+      // round-trip resolves. Without this step the paywall briefly showed
+      // the plan picker again, which read as "payment lost," inviting a
+      // close/retry during a real in-flight verification.
+      onVerifying: () => setStep('verifying'),
       onSuccess: async (tx) => {
         await refreshSubscription(); // flip isPremium immediately without reload
         setTransaction(tx);
@@ -67,7 +73,11 @@ export default function PaywallModal({ onClose, feature, firebaseUid, email, nam
       <motion.div
         className="fixed inset-0 z-[999] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+        onClick={(e) => {
+          // Backdrop-click-to-close disabled mid-verification — same reason
+          // there's no X button in the 'verifying' step above.
+          if (e.target === e.currentTarget && step !== 'verifying') onClose();
+        }}
       >
         <motion.div
           className="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto"
@@ -79,6 +89,17 @@ export default function PaywallModal({ onClose, feature, firebaseUid, email, nam
           {step === 'confirmation' ? (
             <div className="px-6 py-6">
               <PaymentConfirmation transaction={transaction} onContinue={onClose} continueLabel="Continue" />
+            </div>
+          ) : step === 'verifying' ? (
+            // No close button on purpose — same "don't close this page"
+            // reasoning as PricingPage's VerifyingOverlay, just inline in
+            // this modal's own shell instead of a second stacked overlay.
+            <div className="px-6 py-14 flex flex-col items-center text-center">
+              <Loader2 size={40} className="animate-spin text-primary-500 mb-5" />
+              <h2 className="text-lg font-bold text-slate-900 mb-2">Verifying your payment…</h2>
+              <p className="text-sm text-slate-500 leading-relaxed max-w-xs">
+                This only takes a few seconds. Please don't close this page — your subscription is being activated.
+              </p>
             </div>
           ) : (
           <>

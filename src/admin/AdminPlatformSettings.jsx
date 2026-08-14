@@ -137,6 +137,39 @@ export default function AdminPlatformSettings() {
     }
   }
 
+  // For a SettingRow that groups several independent keys under one logical
+  // setting (e.g. the campaign's heading + form URL) — one button, one
+  // savingKey/saved sentinel (groupKey, not a real settings key) instead of
+  // N separate SaveBtns. Added 2026-08-15: the campaign section originally had
+  // one SaveBtn per field, which read as "two broken saves" rather than one
+  // working one — see the same day's changelog entry.
+  async function saveSettings(groupKey, entries) {
+    setSavingKey(groupKey); setErr('');
+    try {
+      for (const [key, value] of entries) {
+        const { error } = await supabase.rpc('admin_set_platform_setting', {
+          p_caller: callerUid, p_key: key, p_value: value,
+        });
+        if (error) throw error;
+        logChange(ENTITY.SYSTEM, key, ACTION.UPDATE,
+          { before: settings[key] ?? null, after: value },
+          `Platform setting "${key}" updated`);
+      }
+      setSettings(prev => {
+        const next = { ...prev };
+        for (const [key, value] of entries) next[key] = value;
+        return next;
+      });
+      invalidatePlatformSettings();
+      setSaved(groupKey);
+      setTimeout(() => setSaved(''), 2500);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setSavingKey('');
+    }
+  }
+
   // Same flow as the logo, separate key/state so one upload can't clobber the
   // other's spinner or error.
   async function handleAvatarUpload(e) {
@@ -371,11 +404,24 @@ export default function AdminPlatformSettings() {
                 className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-primary-500" />
               <p className="text-[11px] text-slate-500 mt-1">Opens in a new tab when a visitor clicks "Join now". Any form URL works — Google Forms, Typeform, etc.</p>
             </div>
-            <div className="flex justify-end gap-2">
-              <SaveBtn onClick={() => saveSetting('landing_campaign_label', lv('landing_campaign_label'))}
-                loading={savingKey === 'landing_campaign_label'} saved={saved === 'landing_campaign_label'} />
-              <SaveBtn onClick={() => saveSetting('landing_campaign_form_url', lv('landing_campaign_form_url'))}
-                loading={savingKey === 'landing_campaign_form_url'} saved={saved === 'landing_campaign_form_url'} />
+            {/* Found 2026-08-15 chasing a report of "the section isn't
+                showing even though it's enabled": both saves were working
+                correctly the whole time — the section's own render
+                condition (CampaignSection in LandingPage.jsx) requires
+                enabled AND a non-empty form URL, and reads as invisible
+                with no explanation when only one is set. This makes that
+                requirement visible instead of a silent no-op. */}
+            {lv('landing_campaign_enabled') === 'true' && !lv('landing_campaign_form_url')?.trim() && (
+              <p className="text-[11px] text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded-lg px-3 py-2">
+                Enabled, but the section won't show yet — a form URL is also required.
+              </p>
+            )}
+            <div className="flex justify-end">
+              <SaveBtn onClick={() => saveSettings('landing_campaign', [
+                ['landing_campaign_label', lv('landing_campaign_label')],
+                ['landing_campaign_form_url', lv('landing_campaign_form_url')],
+              ])}
+                loading={savingKey === 'landing_campaign'} saved={saved === 'landing_campaign'} />
             </div>
           </div>
         </SettingRow>

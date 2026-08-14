@@ -10,6 +10,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import Button from '../components/ui/Button';
 import OrderSummaryModal from '../components/ui/OrderSummaryModal';
+import VerifyingOverlay from '../components/ui/VerifyingOverlay';
 
 /* Feature comparison rows — the first 5 free-tier values are overridden with live
  * quota_config numbers once loaded (see buildCompare below); these are just the
@@ -202,6 +203,9 @@ export default function PricingPage() {
   // added 2026-08-14. null means no review in progress; its presence is
   // what makes OrderSummaryModal render below.
   const [pendingOrder, setPendingOrder] = useState(null);
+  // True from the instant Razorpay's handler fires until verification
+  // settles — added 2026-08-15, see VerifyingOverlay.
+  const [verifying, setVerifying] = useState(false);
 
   // Treat "still loading" as closed — see paymentsGate. A false-then-true flip
   // would render a live purchase button for a frame before withdrawing it.
@@ -261,11 +265,16 @@ export default function PricingPage() {
       firebaseUid: currentUser.uid,
       email: userProfile?.email || currentUser.email,
       name:  userProfile?.display_name || currentUser.displayName || 'Student',
+      onVerifying: () => setVerifying(true),
       onSuccess: async (transaction) => {
         await refreshSubscription(); // re-fetch subscription so isPremium flips immediately
         navigate('/payment-success', { state: { transaction } });
+        // Deliberately no setVerifying(false) here — this component is about
+        // to unmount on navigation; clearing first would flash the picker UI
+        // underneath for a frame.
       },
       onFailure: (msg) => {
+        setVerifying(false);
         if (msg !== 'Payment cancelled') setError(msg);
       },
     });
@@ -407,6 +416,8 @@ export default function PricingPage() {
           onCancel={() => setPendingOrder(null)}
         />
       )}
+
+      {verifying && <VerifyingOverlay />}
     </div>
   );
 }
