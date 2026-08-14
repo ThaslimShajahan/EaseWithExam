@@ -1,0 +1,21 @@
+-- Reschedules send-expiry-reminders-daily from once-daily to hourly.
+--
+-- WHY: verified live (2026-08-14) that cron.job_run_details was completely
+-- empty for this job — it had never executed even once, because it was
+-- created after that day's single daily tick (03:30 UTC / 09:00 IST) had
+-- already passed, and pg_cron does not catch up missed slots. A grant created
+-- and expiring within the same day can fall entirely inside that dead window
+-- and receive zero reminder touches. Hourly cadence shrinks the dead window
+-- from up to 24h to under 1h.
+--
+-- SAFE TO RUN MORE OFTEN: the function's own guard (`target_stage >
+-- reminder_stage`, in send_expiry_reminders() from 20260814090000) is what
+-- makes a stage fire exactly once regardless of how many times the job ticks
+-- — running hourly means the guard is CHECKED 24x more often, not that a
+-- notification fires 24x more often. Verified again after this migration
+-- (see the session's own report), same pattern as the original manual test.
+--
+-- cron.schedule(jobname, ...) with a jobname that already exists UPDATES the
+-- existing job in place rather than creating a duplicate — this is not a new
+-- job, it is jobid 3 reconfigured.
+select cron.schedule('send-expiry-reminders-daily', '0 * * * *', 'select public.send_expiry_reminders();');
