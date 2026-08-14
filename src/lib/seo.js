@@ -23,7 +23,6 @@
  *   homepage, because that is the URL that actually gets shared.
  */
 import { useEffect } from 'react';
-import { trackPageView } from './analytics';
 
 export const SITE_URL = 'https://www.easewithexam.com';
 
@@ -143,8 +142,12 @@ export function useSeo(path) {
     }
     link.setAttribute('href', url);
 
-    // No-op until a vendor is configured — see lib/analytics.js.
-    trackPageView(path);
+    // Pageview tracking deliberately does NOT live here. This effect returns
+    // early for any route without a PAGE_SEO entry — 6 public pages — so every
+    // authenticated screen (dashboard, practice, exam-center, progress…) would
+    // never have been counted. usePageViews() in App.jsx fires on the router
+    // itself instead, which sees all of them. Keeping it here as well would
+    // double-count these 6.
 
     // Claim the title for as long as this page is mounted. Platform settings
     // load asynchronously, so PlatformChrome's effect can fire long after this

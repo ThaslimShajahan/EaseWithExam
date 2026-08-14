@@ -25,6 +25,59 @@
          Prerendering (Tier 2) is what makes the per-route values static. -->
     <meta name="description" content="AI exam preparation for NEET, JEE, CBSE and Kerala State board students in India. Unlimited practice, real exam-pattern mock tests, and a tutor that explains." />
     <meta name="robots" content="index, follow" />
+
+    <!-- Google tag (gtag.js). Lives here rather than being injected by React so
+         it loads on every route — this file IS every route, the app is a SPA
+         with a single HTML entry.
+
+         send_page_view:false is a DELIBERATE change from the snippet Google
+         hands you. By default `config` fires a page_view immediately, and then
+         never again — client-side navigations are invisible to it, so a student
+         moving through /practice, /exam-center and /progress would register as
+         one single pageview on the landing URL. Worse, the app's own route
+         tracking would fire a SECOND page_view for that first screen, so the
+         landing page would be double-counted while every other screen counted
+         zero. Turning the automatic one off makes src/lib/analytics.js the
+         single sender: exactly one page_view per route, first load included. -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-HJND4GQL5D"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+
+      /* Consent Mode v2 defaults, set BEFORE config — order matters: anything
+         sent before a default is applied is processed under the old assumption.
+
+         Advertising storage is denied everywhere and stays denied: this site
+         runs no ads and no remarketing, so granting it would collect data
+         nothing uses. Analytics storage defaults to granted, which is what
+         makes the pageviews in this build actually arrive.
+
+         India (the audience) has no Consent-Mode requirement of its own; the
+         DPDP Act 2023 is a notice-and-consent regime, and the cookie banner in
+         PlatformChrome.jsx is the mechanism for that. The EEA/UK/CH override
+         below exists because those regions DO require prior consent, and a
+         visitor from there would otherwise be measured without it — cheap to
+         set now, painful to retrofit after the fact. Under a denied default
+         GA4 still receives cookieless pings, so the traffic is not lost. */
+      gtag('consent', 'default', {
+        ad_storage:            'denied',
+        ad_user_data:          'denied',
+        ad_personalization:    'denied',
+        analytics_storage:     'granted',
+        functionality_storage: 'granted',
+        security_storage:      'granted',
+      });
+      gtag('consent', 'default', {
+        region: ['AT','BE','BG','HR','CY','CZ','DK','EE','FI','FR','DE','GR','HU','IE','IT','LV','LT','LU','MT','NL','PL','PT','RO','SK','SI','ES','SE','IS','LI','NO','GB','CH'],
+        ad_storage:        'denied',
+        ad_user_data:      'denied',
+        ad_personalization:'denied',
+        analytics_storage: 'denied',
+      });
+
+      gtag('js', new Date());
+      gtag('config', 'G-HJND4GQL5D', { send_page_view: false });
+    </script>
     <link rel="canonical" href="https://www.easewithexam.com/" />
     <title>NEET, JEE &amp; CBSE Exam Prep with an AI Tutor | EaseWithExam</title>
 

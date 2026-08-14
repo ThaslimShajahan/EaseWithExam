@@ -1,6 +1,7 @@
-import { lazy, Suspense } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { lazy, Suspense, useEffect } from 'react';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
+import { trackPageView } from './lib/analytics';
 import { COACHING_MODULE_ENABLED } from './lib/moduleStatus';
 import AppShell from './components/layout/AppShell';
 import SkeletonLoader from './components/ui/SkeletonLoader';
@@ -132,7 +133,28 @@ function RequireAuthFullScreen({ children }) {
   return children;
 }
 
+/**
+ * One GA4 pageview per client-side route change, for EVERY route.
+ *
+ * Sits on the router rather than in useSeo() because that hook bails out for any
+ * path without a PAGE_SEO entry, which is all 40-odd authenticated screens. The
+ * gtag config in index.html sets send_page_view:false, so this is the only
+ * sender — the first load included, fired by this effect on mount.
+ *
+ * `search` is in the dependency list on purpose: several screens are addressed
+ * only by query string (/progress?tab=analytics, /exam-center?mode=…), and
+ * without it those read as one page. The hash is left out — it is used for
+ * in-page anchors, not navigation.
+ */
+function usePageViews() {
+  const { pathname, search } = useLocation();
+  useEffect(() => {
+    trackPageView(`${pathname}${search}`);
+  }, [pathname, search]);
+}
+
 export default function App() {
+  usePageViews();
   return (
     <>
       <PlatformChrome />

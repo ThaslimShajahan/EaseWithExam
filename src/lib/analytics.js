@@ -1,44 +1,50 @@
 /**
- * Analytics hook — deliberately unwired.
+ * Analytics — GA4, wired 2026-08-14 (owner's call).
  *
- * No vendor is connected yet (owner's call, 2026-08-11). This exists so that
- * connecting one later is a config change and a single init() body, rather than
- * a hunt for every place a pageview should fire.
+ * The gtag.js loader lives in index.html, not here, because that file is served
+ * for every route and so guarantees the tag is present site-wide with no
+ * dependency on React having mounted. What this module owns is the part a raw
+ * gtag snippet gets WRONG in a single-page app: pageviews after the first one.
  *
- * Google Search Console is already verified for the property and needs nothing
- * in the bundle — it reads the sitemap and the served HTML, not a script tag.
- * What is missing is *behaviour* data: which pages people land on, and whether
- * they stay. Until a vendor is chosen, trackPageView() is a no-op and costs
- * nothing at runtime.
+ * WHY THE SNIPPET ALONE IS NOT ENOUGH
+ * `gtag('config', ID)` sends one page_view when the script loads and nothing
+ * afterwards. React Router changes the URL without a document load, so every
+ * screen after the entry point is invisible. index.html therefore sets
+ * send_page_view:false and this module sends every pageview itself — including
+ * the first — so there is exactly one sender and no double count.
  *
- * TO CONNECT GA4
- *   1. Set VITE_GA4_ID=G-XXXXXXXXXX in .env (and on the build machine).
- *   2. Fill in init() below with the gtag snippet.
- *   3. Gate it on the existing cookie-consent state in PlatformChrome — GA4
- *      sets cookies, and the banner already exists to cover exactly that.
- *
- * TO CONNECT PLAUSIBLE
- *   1. Set VITE_PLAUSIBLE_DOMAIN=www.easewithexam.com.
- *   2. Inject the script in init(). No consent gate needed — no cookies.
+ * Google Search Console is verified separately and needs nothing in the bundle.
  */
 
-export const ANALYTICS_ID =
-  import.meta.env?.VITE_GA4_ID || import.meta.env?.VITE_PLAUSIBLE_DOMAIN || null;
+/** True once the gtag stub from index.html exists. It is defined synchronously
+ *  by the inline script, well before React mounts, so this is really asking
+ *  "was the tag left in the page?" — false in tests and in any build where the
+ *  snippet was stripped, which is why every function below tolerates it. */
+const hasGtag = () => typeof window !== 'undefined' && typeof window.gtag === 'function';
 
-export const isAnalyticsEnabled = () => Boolean(ANALYTICS_ID);
-
-/** Loads the vendor script. No-op until one is configured. */
-export function initAnalytics() {
-  if (!isAnalyticsEnabled()) return;
-  // Intentionally empty — see the header. Landing a vendor here without the
-  // consent gate would ship tracking cookies ahead of the banner that discloses
-  // them, so this stays a no-op until that is wired together.
-}
+export const isAnalyticsEnabled = () => hasGtag();
 
 /**
- * Records a pageview. Called from useSeo() so it fires on the same signal that
- * updates the canonical — one place that already knows a route changed.
+ * Records a pageview for a client-side route change.
+ *
+ * page_path is passed explicitly rather than letting GA read location: gtag
+ * would otherwise report whatever the URL was when the event fired, and React
+ * Router updates history before effects run, which is usually right but not
+ * guaranteed for redirects. Passing the path the app believes it is on keeps
+ * the report and the app in agreement.
  */
-export function trackPageView(_path) {
-  if (!isAnalyticsEnabled()) return;
+export function trackPageView(path) {
+  if (!hasGtag()) return;
+  window.gtag('event', 'page_view', {
+    page_path:     path,
+    page_location: window.location.href,
+    page_title:    document.title,
+  });
+}
+
+/** A named event. Thin wrapper so call sites never touch window.gtag directly
+ *  and a vendor swap stays a one-file change. */
+export function trackEvent(name, params = {}) {
+  if (!hasGtag()) return;
+  window.gtag('event', name, params);
 }
