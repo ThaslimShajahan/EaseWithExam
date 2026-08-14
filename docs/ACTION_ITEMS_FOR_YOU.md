@@ -6,6 +6,61 @@ shipped in a degraded state. The narrative of what changed and why lives in
 
 ---
 
+## ⚠️ OPEN — an approved chapter manifest cannot be edited, and the workaround is SQL (2026-08-14)
+
+**Two defects that must be fixed together, because fixing either alone makes the other worse.**
+
+**1. There is no supported way to edit an approved manifest.** Verified: zero RPCs matching
+unapprove / reopen / revert. `admin_upsert_chapter_manifest` updates only
+`where id = p_id and status = 'draft'` and otherwise raises "approved manifests are immutable". The
+guard is correct in principle — editing in place would change chapter identity under content already
+loaded against it — but its own comment says to "supersede and create a new draft instead", and **no
+supersede mechanism exists**. The partial unique index `chapter_manifests_approved_uniq` permits only
+one approved row per (exam_type, subject, book), so a replacement cannot be approved while the old one
+stands.
+
+Consequence, hit for real tonight: the Poorvi manifest was approved with `fileOrdinal` unset on all 15
+entries, which makes every bulk upload refuse. Fixing it required a **direct SQL UPDATE against the
+approved row**, bypassing the guard. That was safe only because zero content had been loaded at the
+time. It will not be safe next time.
+
+**2. `.maybeSingle()` fragility, introduced the same session.** `AdminContentIntake.jsx:548-551`
+selects `chapter_manifests` for (exam_type, subject, book) with **no status filter**. A draft and an
+approved row coexisting for one book returns two rows and `.maybeSingle()` errors — breaking the
+Content Intake screen. That is exactly the state the "supersede with a new draft" path would create.
+
+**Suggested shape (not built, not approved):** an `admin_reopen_chapter_manifest(p_caller, p_id)` that
+flips approved → draft, refusing when content already references that manifest's chapter_keys; plus a
+status filter on the intake lookup so a draft can never shadow the approved row. An "Unapprove" button
+in the Chapter Manifests screen, gated on the same check.
+
+**Priority:** medium. Nothing is blocked today — the Poorvi manifest is correct and Units 2–5 can
+load. It becomes urgent the first time a manifest needs correcting *after* content has been loaded
+against it, which is the case the guard exists for and the case with no safe path.
+
+---
+
+## ⏸ DEFERRED BY DESIGN — Tier 2 of the background job runner (2026-08-14)
+
+**Tier 1 is done and committed** (`7a27c3a`): `content_jobs` + two admin RPCs, and
+`scripts/bulk-load-unit-notes.mjs` writes a row per file. Persistence only.
+
+**Tier 2 — a real queue plus a Status tab in the admin UI, estimated 4–6 hours — is deliberately
+deferred until the Unit 5 browser crash below is characterised.** Owner-agreed.
+
+The reason is not scheduling. Resume-after-crash semantics are the central design question for a work
+queue, and designing them around a failure mode nobody has characterised is guesswork that would have
+to be redone. The manual Unit 5 upload through Content Intake is the free experiment: it runs the same
+extraction pipeline, so if it succeeds where the loader crashed, the difference is the loader's
+headless environment rather than the extraction logic — and that one fact changes what Tier 2 should
+do on restart.
+
+**Already decided, do not re-litigate:** the worker stays **local**, not server-side. Server-side
+means uploading PDFs to storage and running Playwright on a host with admin credentials and AI keys —
+a materially different project with its own attack surface and cost profile.
+
+---
+
 ## 🐞 OPEN, NOT BLOCKING — browser crash loading Unit 5 via the bulk loader (2026-08-14)
 
 **Owner-reported. Not reproduced, not diagnosed, no fix attempted.** Recorded so

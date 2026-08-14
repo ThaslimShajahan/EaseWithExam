@@ -633,37 +633,54 @@ Phase 8 — that's the upload itself. Phase 9 — unrelated layer.
 Written as a pick-up-and-resume list. Every claim here was verified against live DB / git / the actual
 files on the date above, not recalled. Where something is unverified, it says so.
 
-### 13.1 IMMEDIATE — CBSE Class 8 English (Poorvi) upload
+### 13.1 IMMEDIATE — CBSE Class 8 English (Poorvi): Unit 1 DONE, Units 2–5 remain
 
-**No manifest exists.** `chapter_manifests` = **0 rows**. Nothing has been drafted, so there are no
-entries to correct — there is no "entry 15". The only manifest content that exists anywhere is the
-page ranges below, read from the PDF and recorded here for when the manifest is created.
+**Manifest: approved, 15 entries, whole book.** `chapter_manifests` id
+`7d0c927d-fb1b-44a8-87d7-643ac30f5a76`, `book = NULL`, `key_prefix = 'c'`. Five units × three
+chapters. `fileOrdinal` is set on every entry, derived from its unit heading ("Unit 3: …" → 3), so
+each unit PDF matches exactly the chapters it contains.
 
-**Confirmed chapter list** — read directly from `~/Downloads/UNIT 1 WIT AND WISDOM.pdf` (48 pages).
-Printed folios match PDF pages exactly (page 16 prints "16", 26 prints "26", 47 prints "47"), so
-printed and file pagination are the same numbering for this file:
+> `fileOrdinal` had to be written by direct SQL because `admin_upsert_chapter_manifest` refuses to
+> touch an approved manifest (`where id = p_id and status = 'draft'`). That guard is correct — it
+> protects chapter identity for content already loaded — and zero content existed at the time. **There
+> is still no supported way to edit an approved manifest; see 13.7.**
 
-| Ordinal | Title | Printed pages | Notes |
+**Unit 1: LOADED AND VERIFIED at DB level (2026-08-14).** Three chapters, exactly as the manifest
+specified:
+
+| chapter_key | chapter_name | unit | kb chunks |
 |---|---|---|---|
-| 1 | The Wit that Won Hearts | **1–16** | prose |
-| 2 | A Concrete Example | **17–26** | poem ("My next-door neighbour, Mrs. Jones…") |
-| 3 | Wisdom Paves the Way | **27–47** | prose |
+| `c8_ch01` | The Wit that Won Hearts | Unit 1: Wit and Wisdom | 25 |
+| `c8_ch02` | A Concrete Example | Unit 1: Wit and Wisdom | 13 |
+| `c8_ch03` | Wisdom Paves the Way | Unit 1: Wit and Wisdom | 26 |
 
-Titles render in small caps in the PDF (`t he Wit that Won h earts`, `a Con C rete e xample`,
-`Wisdom p aves the Way`). Page 48 repeats the third title in running text; the range stays 27–47.
-**"Poorvi" is the BOOK's title on the even-page running header — never a chapter.**
+64 chunks total, 3 `study_notes`, 3 `syllabus_nodes`, 0 NULL `chapter_key`, 0 orphans, page ranges
+matching the manifest (1–16 / 17–26 / 27–48). **The content genuinely split** — verified by content,
+not metadata: ch1 contains the Tenali story and not the poem; ch2 the poem and not the story. The
+first upload merged two texts into one lesson named "Poorvi" (the book's running header), so this is
+the proof the rebuild actually works, not just that it ran.
 
-**Data state: fully clean.** Verified by four independent scopings (exam_type+subject, exact wrong
-chapter names, `source_ref::text ILIKE '%WIT AND WISDOM%'`, `chapter_key LIKE 'c8_%'`):
-`knowledge_base` 0, `study_notes` 0, `syllabus_nodes` 0, `content_figures` 0, `chapter_manifests` 0,
-`pyq_questions` 0 (incl. 0 `KB_NOTE` rows). These tables are globally empty, not just empty for this
-book. Pre-deletion record kept in the session scratchpad (`deleted-record-*.json`).
+**Units 2–5: NOT LOADED.** `syllabus_nodes` holds 3 rows, `knowledge_base` 64 chunks, all Unit 1.
+Nothing else exists under any exam_type or subject (verified unfiltered).
 
-**🚧 BLOCKER — the re-upload cannot proceed yet.** Production serves `index-CvYb36QF.js`, the bundle
-from BEFORE this work. It has no Chapter Manifests tab, no fail-closed gate and the old AI-driven
-split. Uploading now reproduces the identical failure into a freshly emptied database.
+**How to load the rest:**
 
-**Next steps, in order:**
+- **Units 2, 3, 4 — bulk loader.** Unit 1 self-skips via the already-loaded guard:
+  ```bash
+  ADMIN_UID=<uid> BASE_URL=http://localhost:5173 \
+    node scripts/bulk-load-unit-notes.mjs \
+      --dir="<folder>" --exclude="UNIT 5 SCIENCE AND CURIOCITY.pdf" --dry-run
+  ```
+  Run `--dry-run` first. The queue sorts by File #, so even if the exclude is mistyped, 2–4 complete
+  before 5 is reached.
+- **Unit 5 — MANUALLY through Content Intake.** The bulk loader crashed the browser on File #5
+  (owner-reported, undiagnosed — see `ACTION_ITEMS_FOR_YOU.md`). Content Intake is the proven path
+  and Unit 1 went through it successfully.
+
+**Filenames parse correctly** — verified against the real `fileOrdinalFrom`, including `UNIT2` with
+no space → 2 (the regex allows zero spaces after the label).
+
+**Old next-steps list (now historical):**
 
 1. **Commit** the 13 changed/new files (see §13.6). *(Not done — no instruction given.)*
 2. **`git push origin main`** — the harness has denied this 3 times; the owner must run it.
@@ -780,22 +797,34 @@ separate Acenzos billing product's job. No action needed.
 
 | | |
 |---|---|
+**End of session, 2026-08-14.**
+
+| | |
+|---|---|
 | Branch | `main` |
-| vs `origin/main` | **4 commits ahead, 0 behind** |
-| Commits ahead | `4720862`, `31e89ff`, `2ee256c`, `8aaf027` |
-| Uncommitted | **13 files** — 10 modified, 3 new (see below) |
-| Live production bundle | `assets/index-CvYb36QF.js` |
-| Local `dist/` bundle | `assets/index-DZojuc5c.js` — built with today's code, **never deployed** |
-| Migrations | all applied through `20260814040000` |
+| vs `origin/main` | **12 commits ahead, 0 behind** |
+| Working tree | **clean — nothing uncommitted** |
+| Live production bundle | `assets/index-CvYb36QF.js` — **pre-dates this entire session** |
+| Migrations | applied through `20260814050000` |
 
-Uncommitted: `AdminContentHub.jsx`, `AdminContentIntake.jsx`, `AdminContentLibrary.jsx`,
-`AdminContentMap.jsx`, `AdminSyllabus.jsx`, `chapterIdentity.js`, `chapterManifest.js`,
-`contentExtraction.js`, `manifestExtraction.js`, `chapterIdentity.test.js` + new
-`AdminChapterManifest.jsx`, `manifestGating.test.js`,
-`supabase/migrations/20260814040000_syllabus_unit_and_update_fix.sql`.
+Session commits, newest first: `7a27c3a` content_jobs · `ee91aa2` Unit 5 crash log · `a448f43` docs ·
+`f0d6963` prerender + canonical · `8ac95bd` GA4 · `8c8915e` ESLint · `b417533` bulk loader ·
+`087b47f` manifest engine. Plus `4720862`, `31e89ff`, `2ee256c`, `8aaf027` from earlier.
 
-> ⚠️ **`20260814040000` is APPLIED TO PRODUCTION but its file is UNCOMMITTED.** A fresh clone, or CI,
-> would not contain a migration the live database already has. This is the highest-priority commit.
+> ⚠️ **NOTHING FROM THIS SESSION IS DEPLOYED.** Production runs the pre-session bundle: no Chapter
+> Manifests tab, no fail-closed gate, no GA4, no prerendering, and `/about` still serves
+> `canonical="https://www.easewithexam.com/"`. The Unit 1 load succeeded because it was done against a
+> LOCAL dev server, not production.
+>
+> ⚠️ **The database is TWO migrations ahead of the deployed frontend** (`20260814040000`,
+> `20260814050000`). Verified safe — the deployed 9-argument `admin_upsert_syllabus_node` call still
+> resolves against the new 10-arg function, since `p_unit` defaults to null.
+>
+> ⚠️ **Deploy with `npm run build:seo`, NOT `npm run build`.** Plain `vite build` emits the empty SPA
+> shell and silently reverts prerendering and the canonical fix. `docs/DEPLOY.md` step 1 is updated.
+>
+> `git push` has been blocked by the environment's permission guardrail every time it was attempted
+> this session — the owner must run it.
 
 ### 13.7 Known bugs
 
@@ -831,3 +860,62 @@ Uncommitted: `AdminContentHub.jsx`, `AdminContentIntake.jsx`, `AdminContentLibra
 7. `isMixed` (mixed-subject PYQ papers) is **unreachable through the UI** — code exists, no control.
 8. Content Library groups nothing by unit — it now shows a unit badge per row, but full grouping was
    not built.
+9. **Browser crash loading Unit 5 through the bulk loader** — owner-reported, undiagnosed, NOT
+   blocking (Unit 5 goes through Content Intake manually). Full entry, including what to capture and
+   three unverified leads, in `ACTION_ITEMS_FOR_YOU.md`. **This crash is the gate on Tier 2** — see
+   13.9.
+10. **No way to edit an approved manifest.** Verified: 0 RPCs matching unapprove/reopen/revert.
+    `admin_upsert_chapter_manifest` refuses anything not in `status='draft'`, and its own comment says
+    to "supersede and create a new draft instead" — but no supersede mechanism exists, and the partial
+    unique index `chapter_manifests_approved_uniq` allows only one approved row per
+    (exam_type, subject, book). Tonight's `fileOrdinal` fix had to be applied by direct SQL.
+11. **`.maybeSingle()` fragility, introduced this session.** `AdminContentIntake.jsx:548-551` selects
+    `chapter_manifests` for (exam_type, subject, book) with **no status filter**, so a draft and an
+    approved row coexisting for one book makes that screen error. This is exactly the state the RPC's
+    own "supersede with a new draft" advice would produce — so #10 and #11 must be fixed together.
+
+### 13.8 SEO & Analytics (this session)
+
+All built, **none deployed**.
+
+| Item | Committed | Live |
+|---|---|---|
+| GA4 `G-HJND4GQL5D` + Consent Mode v2 | `8ac95bd` | ❌ `grep googletagmanager` on live → 0 |
+| SPA route pageviews (`usePageViews`) | `8ac95bd` | ❌ |
+| Prerendering, 5 public routes | `f0d6963` | ❌ live body still `<div id="root"></div>` |
+| Per-route canonical fix | `f0d6963` | ❌ live `/about` still canonicalises to `/` |
+
+- **Titles/descriptions were already correct** and were NOT changed — every one names exam prep and
+  NEET/JEE/CBSE/Kerala.
+- `robots.txt` correct and not blocking; `sitemap.xml` live with 5 URLs; **owner confirms the sitemap
+  is already submitted** to Search Console.
+- **`cookie_banner_enabled` was `false`** at end of session; owner said they would enable it. GA4 sets
+  `_ga` cookies the moment this deploys, so it should be on first.
+- Still open and NOT needing a Google account: **the nginx 404 change**
+  (`deploy/nginx-easewithexam.conf`, ready, needs a maintenance window). Until applied every
+  non-existent path returns HTTP 200, which lets Google index unlimited duplicate homepages.
+- Content strategy is logged as ongoing post-launch work in `ACTION_ITEMS_FOR_YOU.md` — head terms
+  are not winnable, the brand term is, and everything else needs pages that do not exist.
+
+### 13.9 Background job runner — Tier 1 done, Tier 2 DEFERRED
+
+**Tier 1 shipped** (`7a27c3a`, migration `20260814050000` applied): `content_jobs` plus
+`admin_record_content_job` / `admin_list_content_jobs`, and `bulk-load-unit-notes.mjs` writes a row
+per file. Persistence only — **no queue, no claim/resume, no worker orchestration, and no UI.** Read
+it via the RPC or the Supabase dashboard.
+
+Design points worth not re-deriving: the row is opened *before* the work starts, so a crash that kills
+the process still leaves a row naming the file in flight; recording failures are logged and swallowed
+so the audit trail can never abort a content load; nothing is recorded on `--dry-run`; skips are
+recorded because "deliberately not processed" and "never came up" are different facts.
+
+**Tier 2 (real queue + Status tab, ~4–6h) is deliberately deferred until the Unit 5 crash is
+characterised.** Owner-agreed. The reason is not scheduling: resume semantics are the central design
+question for a queue, and designing them around an uncharacterised failure mode would be guesswork.
+The manual Unit 5 upload is the free experiment — it runs the same pipeline, so if it succeeds where
+the loader crashed, the difference is the loader's headless environment rather than the extraction
+logic, and that single fact shapes the design.
+
+**Decided and not to be re-litigated:** the worker stays **local**, not server-side. Server-side means
+uploading PDFs to storage plus a host running Playwright with admin credentials and AI keys — a
+different project with its own attack surface.
