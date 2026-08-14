@@ -180,7 +180,7 @@ the documented intent.
 |---|---|---|
 | **0** | Schema + contract audit, manifest format, fixtures from known failures | **DONE — owner approved** |
 | **1** | Chapter identity core: manifest extraction + corroboration wiring | **DONE — committed, proven, applied to live — see §6c** |
-| **2** | Study Notes write path + atomic `syllabus_nodes` upsert + preview UI | **not started — awaiting owner approval to begin** |
+| **2** | Study Notes write path + atomic `syllabus_nodes` upsert + preview UI | **built; gate reachable only since 2026-08-14 — see §13. NOT yet verified end-to-end.** |
 | 3 | Background job infra: queue, worker, idempotency, retry | not started |
 | 4 | Status tab UI | not started |
 | 5 | PYQ resolution + flagging UI | not started |
@@ -587,7 +587,13 @@ manifests, Study Notes, PYQ resolution, and the non-STEM taxonomy.
 
 ---
 
-## 12. Phase 2 — DONE (Study Notes AND PYQ), and why Phases 3-9 aren't blocking
+## 12. Phase 2 — Study Notes AND PYQ
+>
+> ⚠️ **This section's "DONE" was overstated. Corrected 2026-08-14 — see §13.**
+> The engine described below was real and worked, but nothing in the codebase could ever create an
+> APPROVED manifest, so the `if (manifest)` branch was unreachable and **every** Study Notes upload
+> silently took the fallback path. "Additive, not a cutover" (below) is precisely what made the
+> protection absent by default rather than merely optional. §13 records the fix and the real state.
 
 **Study Notes write path** (`f720796`, `e2a2693`, `4c84014`, `adf3a90`):
 - `knowledge_base.chapter_key` (migration `20260814000000`), additive/nullable.
@@ -619,3 +625,209 @@ uploads. Phase 4 (status tab) — "visible to the whole admin team"; there is no
 essential part IS the PYQ work above; the separate flagging UI is covered by the inline result
 message. Phase 6 (pure views) — read-side refactor. Phase 7 (taxonomy) — already measured 0% defect.
 Phase 8 — that's the upload itself. Phase 9 — unrelated layer.
+
+---
+
+## 13. CURRENT PENDING STATE — compiled 2026-08-14, all threads
+
+Written as a pick-up-and-resume list. Every claim here was verified against live DB / git / the actual
+files on the date above, not recalled. Where something is unverified, it says so.
+
+### 13.1 IMMEDIATE — CBSE Class 8 English (Poorvi) upload
+
+**No manifest exists.** `chapter_manifests` = **0 rows**. Nothing has been drafted, so there are no
+entries to correct — there is no "entry 15". The only manifest content that exists anywhere is the
+page ranges below, read from the PDF and recorded here for when the manifest is created.
+
+**Confirmed chapter list** — read directly from `~/Downloads/UNIT 1 WIT AND WISDOM.pdf` (48 pages).
+Printed folios match PDF pages exactly (page 16 prints "16", 26 prints "26", 47 prints "47"), so
+printed and file pagination are the same numbering for this file:
+
+| Ordinal | Title | Printed pages | Notes |
+|---|---|---|---|
+| 1 | The Wit that Won Hearts | **1–16** | prose |
+| 2 | A Concrete Example | **17–26** | poem ("My next-door neighbour, Mrs. Jones…") |
+| 3 | Wisdom Paves the Way | **27–47** | prose |
+
+Titles render in small caps in the PDF (`t he Wit that Won h earts`, `a Con C rete e xample`,
+`Wisdom p aves the Way`). Page 48 repeats the third title in running text; the range stays 27–47.
+**"Poorvi" is the BOOK's title on the even-page running header — never a chapter.**
+
+**Data state: fully clean.** Verified by four independent scopings (exam_type+subject, exact wrong
+chapter names, `source_ref::text ILIKE '%WIT AND WISDOM%'`, `chapter_key LIKE 'c8_%'`):
+`knowledge_base` 0, `study_notes` 0, `syllabus_nodes` 0, `content_figures` 0, `chapter_manifests` 0,
+`pyq_questions` 0 (incl. 0 `KB_NOTE` rows). These tables are globally empty, not just empty for this
+book. Pre-deletion record kept in the session scratchpad (`deleted-record-*.json`).
+
+**🚧 BLOCKER — the re-upload cannot proceed yet.** Production serves `index-CvYb36QF.js`, the bundle
+from BEFORE this work. It has no Chapter Manifests tab, no fail-closed gate and the old AI-driven
+split. Uploading now reproduces the identical failure into a freshly emptied database.
+
+**Next steps, in order:**
+
+1. **Commit** the 13 changed/new files (see §13.6). *(Not done — no instruction given.)*
+2. **`git push origin main`** — the harness has denied this 3 times; the owner must run it.
+3. **Deploy** per `docs/DEPLOY.md`, block-by-block.
+4. **Create the manifest**: Admin → Content → **Chapter Manifests**. CBSE / Class 8 / English,
+   **Book left blank**. Either draft from the contents page or add 3 rows by hand using the table
+   above. Set **File # = 1 on all three** (see 13.1a). Save, then **Approve** (manual, always).
+5. **Upload** `UNIT 1 WIT AND WISDOM.pdf` on the Intake screen with **Book blank** — must match the
+   manifest key exactly, blank matches blank.
+6. **Verify at DB level** — expect exactly 3 chapters, each with `chapter_key`, `unit`, real page
+   ranges. Do not trust the success banner; that is what failed last time.
+
+#### 13.1a How chapter-wise files work against one manifest (NEW guidance, not previously given)
+
+The manifest describes the **book**. `File #` (`fileOrdinal` on each entry) is what maps a **file** to
+its entries. `fileOrdinalFrom()` (`src/lib/chapterManifest.js:27`) reads it from the filename, in this
+order: an NCERT code (`kehb101` → 1), a labelled number (`chapter|unit|lesson|theme N`), then a bare
+leading digit.
+
+- **One file per unit** (this case): every entry in that unit gets the **same** File #, equal to the
+  number in the filename. `UNIT 1 WIT AND WISDOM.pdf` → `fileOrdinal` **1**, so all three entries take
+  File # = 1. `extractNotesByManifest()` then splits that one file into three chapters by page range.
+- **One file per chapter** (the more common NCERT shape): each entry gets its **own** File # matching
+  its own file. A file then covers exactly one entry and produces one chapter.
+- **Mixed within a book is fine** — File # is per entry, so some entries can share a unit file while
+  others have their own.
+
+⚠️ **Known limitation, not yet solved:** `extractNotesByManifest` assumes a file's first page is the
+first covered entry's `pageStart` (`offset = ordered[0].pageStart`). That is correct for a clean
+per-chapter or per-unit extract. It is **wrong if the PDF carries front matter before the chapter
+starts**, and there is currently **no UI field for a page offset** — the boundaries would shift
+silently. If a file has leading front matter, trim it before uploading. Worth building an explicit
+"first printed page in this file" field.
+
+### 13.2 Content engine rebuild — phase status
+
+**Genuinely complete AND verified end-to-end (live, with real evidence):**
+- Phase 0 (schema/contract audit, manifest format, fixtures).
+- Phase 1 (chapter identity core) — migrations applied, unit-tested.
+- PYQ `chapter_key` slice — `20260814010000`/`20260814020000` applied; deployed and live.
+- The 4 feature flags flipped ON, functionally evidenced: `blueprint_v2_enabled`,
+  `paper_mode_v2_enabled`, `misconception_engine_enabled`, `atomic_quota_rpc_enabled` (all `true` in
+  `feature_flags` as of this compile). `CONTENT_REVIEW_QUEUE` has **no row** = false, intentionally.
+
+**Built and unit-tested but NOT verified end-to-end (all of 2026-08-14's work):** manifest admin UI,
+fail-closed gate, manifest-driven split, `unit` threading, grouping UIs. 475/475 tests pass and the
+build is clean, but **there has been no real browser run and no real upload through this path.**
+Treat the first real upload as the actual test.
+
+**Left of the original plan:** Phase 3 (background job queue, worker, idempotency, retry) — not
+started; Phase 4 (status tab) — not started; Phase 5 (PYQ flagging UI) — essential part shipped, the
+separate UI is not built; Phase 6 (Content Map + Library as pure views) — not started, both still
+build their own trees client-side; Phase 7 (non-STEM taxonomy re-verification **post-wipe**) — the
+original 0%-defect measurement predates the 2026-08-13 wipe and has **not** been re-run against
+reloaded content, because there is no reloaded content yet; Phase 8 (verification/pilot/full reload) —
+blocked on the first real upload; Phase 9 (student exam UI) — not started, unrelated layer.
+
+**The audit DID get completed.** Every content write path and what protects it:
+
+| Write path | Writes to | Chapter identity from | Corroboration engine? |
+|---|---|---|---|
+| Intake → **Notes** | kb, study_notes, syllabus_nodes | `assignChapters` + manifest-driven split | ✅ **now mandatory** (fail-closed) |
+| Intake → **PYQ** | pyq_questions | `matchSyllabusChapterKeyed`, reject-per-question | ❌ never used a manifest, by design (§2) |
+| Content Review (approve) | knowledge_base | none — rows pre-shaped upstream | ❌ |
+| Admin → Study Notes | study_notes | operator-typed | ❌ (fine — human authored) |
+| Admin → Syllabus | syllabus_nodes | operator-typed | ❌ (fine — human authored) |
+| `scripts/bulk-load-corpus.mjs` | knowledge_base | `matchSyllabusChapter` | ❌ **same gap Notes had** |
+| `scripts/bulk-load-pyq.mjs` | pyq_questions | `matchSyllabusChapterKeyed` | ❌ (matches PYQ design) |
+| `scripts/run-pilot.mjs` | knowledge_base | — | ❌ |
+| `scripts/backfill-study-notes.mjs` | study_notes | derived from kb | ❌ |
+| `src/lib/questionGen.js:1462` | pyq_questions | AI-generated questions | ❌ |
+
+**`assignChapters` is imported by exactly ONE production file** (`AdminContentIntake.jsx`). The
+bulk-load scripts remain the closest analogue of the gap that was just closed in the UI: if a bulk
+reload is ever run, it will use AI-guessed chapter names. **Not fixed — decide before using them.**
+
+### 13.3 Stream / subject config thread
+
+- Phases 1, 2, 3 **DONE** (see `docs/STREAM_SELECTION_HANDOFF.md` §7, §8, §10). §12 subject-catalog
+  drift **RESOLVED** (§13 of that file).
+- **Admin student-edit for stream selection: NOT BUILT.** Verified — no `academic_track` or stream
+  handling in `AdminStudents.jsx` or `AdminStudentLookup.jsx`.
+- **Phase 4 (downstream consumption) not started**: `useStudentScope()`, Practice Generator and
+  Syllabus scoping to the student's real subjects, the "complete your profile" nudge, and the
+  Classes 8–10 no-regression check.
+- Open: Kerala Commerce/Humanities `named_combinations` still empty (awaiting real DHSE data — must
+  not be invented); `stream_selection_enabled` is **ON** in live and was only turned on for testing —
+  decide whether it should be off until Phase 4 lands; no deactivate/delete RPC for stream configs
+  (needs a migration if wanted).
+
+### 13.4 Security thread
+
+- **Batch 2 — NOT STARTED.** 9 RPCs, invite/privilege-escalation surface.
+- **The (a)/(b) decision is still OPEN.** `approve_coaching_admin_request`,
+  `reject_coaching_admin_request` and `get_coaching_centre_admin_requests` authorize against
+  `coaching_centres.created_by`, **a column that does not exist** (`centre_invites` has it;
+  `coaching_centres` does not). They throw before doing anything. Decision needed: **(a)** add the
+  identity/ownership column and a real check, or **(b)** something else — an owner call, not a
+  technical one, because it defines the coaching-centre ownership model.
+- **Gate is documented and current**: `docs/SECURITY_INCIDENTS.md` line 111, a fenced block headed
+  “🚨 HARD GATE — Batch 2 MUST ship before the first coaching centre exists”, with the check
+  `select count(*) from coaching_centres`. **Verified live today: `coaching_centres` = 0,
+  `centre_invites` = 0 — the gate has NOT triggered.** Batch 2 is still "next", not "overdue".
+- Batches 3–6 open (68 catalogued RPCs total, grouped by risk in that file).
+
+### 13.5 Billing integration
+
+**Confirmed paused. Nothing was started.** No local plan code, no GST/invoice logic added.
+`src/admin/AdminBilling.jsx` exists and is unchanged — a payment **log**, explicitly not a tax
+invoice (its own header says so, and the screen says so to the user). Tax invoicing remains the
+separate Acenzos billing product's job. No action needed.
+
+### 13.6 Git / deploy state
+
+| | |
+|---|---|
+| Branch | `main` |
+| vs `origin/main` | **4 commits ahead, 0 behind** |
+| Commits ahead | `4720862`, `31e89ff`, `2ee256c`, `8aaf027` |
+| Uncommitted | **13 files** — 10 modified, 3 new (see below) |
+| Live production bundle | `assets/index-CvYb36QF.js` |
+| Local `dist/` bundle | `assets/index-DZojuc5c.js` — built with today's code, **never deployed** |
+| Migrations | all applied through `20260814040000` |
+
+Uncommitted: `AdminContentHub.jsx`, `AdminContentIntake.jsx`, `AdminContentLibrary.jsx`,
+`AdminContentMap.jsx`, `AdminSyllabus.jsx`, `chapterIdentity.js`, `chapterManifest.js`,
+`contentExtraction.js`, `manifestExtraction.js`, `chapterIdentity.test.js` + new
+`AdminChapterManifest.jsx`, `manifestGating.test.js`,
+`supabase/migrations/20260814040000_syllabus_unit_and_update_fix.sql`.
+
+> ⚠️ **`20260814040000` is APPLIED TO PRODUCTION but its file is UNCOMMITTED.** A fresh clone, or CI,
+> would not contain a migration the live database already has. This is the highest-priority commit.
+
+### 13.7 Known bugs
+
+**Fixed and verified:**
+- `ExamCenterPage.jsx:219` `EXAM_QTYPES` crash — **FIXED** (`e6a24d8`), now `defaultQTypesFor(examType)`
+  at `:137` and `:219`. Deployed and live. Regression-covered in `qTypeResolution.test.js`.
+- `AdminContentLibrary.jsx` `examTagFilter` crash — fixed, committed, live.
+
+**Fixed today but NOT yet committed or deployed:**
+- `admin_upsert_syllabus_node` UPDATE branch silently ignored `subject`, `exam_type`, `class_level`
+  and `chapter_key`, making the Syllabus editor's subject-rename a **silent no-op** that reported
+  success. Fixed in `20260814040000` (**applied to live DB**), proven with a rolled-back probe that
+  changed subject English→Hindi.
+- `assignChapters` applied `adminSelectedOrdinal` **only when candidates were empty**, so any
+  multi-chapter file produced N candidates, `decideAssignments` rejected the non-selected ones, and
+  any REJECT blocks the whole file — a unit PDF could never assign. Now the pick narrows the
+  candidate set. Found by the new tests, not by inspection.
+
+**Open / unresolved:**
+1. **The original 500 on `admin_upsert_syllabus_node` was never root-caused.** Not reproducible; the
+   RPC executes cleanly. Ruled out: ON CONFLICT target (index exists), the auth gate (raises 42501 →
+   403 not 500), subject validation (English is valid). It came from `AdminSyllabus.jsx` at ~06:13
+   UTC on 2026-08-14, 61s after the upload finished — not from the upload. The real error text is in
+   Supabase → Logs (API/Postgres) at that timestamp and has **not** been retrieved.
+2. **`runNotesExtraction` still batches by character count and merges lessons by title** for every
+   caller that is not the new manifest path — i.e. the bulk-load scripts. The root cause is contained,
+   not removed.
+3. **No per-chunk page numbers** anywhere in the notes pipeline (only per lesson). This is what makes
+   a merged lesson unrecoverable, and why the split had to move upstream.
+4. **No page-offset field** for files with leading front matter (see 13.1a).
+5. 4 dead feature flags — remove vs re-scope, **undecided**.
+6. `CONTENT_REVIEW_QUEUE` has two known gaps and stays OFF — **undecided**.
+7. `isMixed` (mixed-subject PYQ papers) is **unreachable through the UI** — code exists, no control.
+8. Content Library groups nothing by unit — it now shows a unit badge per row, but full grouping was
+   not built.

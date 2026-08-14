@@ -382,18 +382,82 @@ tell you whether anyone who lands stays. Pick one when you want that:
 
 Set `VITE_GA4_ID` or `VITE_PLAUSIBLE_DOMAIN` and fill in `initAnalytics()`.
 
-### Not done, deliberately — the two things that actually cap rankings
+> **RESOLVED 2026-08-14 — GA4 is wired.** Measurement ID `G-HJND4GQL5D`, loader in
+> `index.html`, Consent Mode v2 defaults set before `config` (ads denied
+> everywhere; analytics granted by default, denied for EEA/UK/CH). Route changes
+> fire through `usePageViews()` in `App.jsx`, not the gtag default — see the
+> comment in `src/lib/analytics.js` for why `send_page_view:false` is required in
+> a SPA. **Still yours to do:** turn on the cookie banner
+> (`cookie_banner_enabled`, Admin → Platform Settings) — GA4 sets `_ga` cookies
+> and the banner is the DPDP notice mechanism.
 
-Recorded so they are not mistaken for oversights. Both are Tier 2, both are real
-projects, and neither should be rushed before launch:
+### Not done, deliberately — the thing that actually caps rankings
 
-- **The site serves a blank page to crawlers.** Pure client-side React; a
-  Googlebot fetch returns `<div id="root"></div>`. Needs prerendering.
+> **RESOLVED 2026-08-14 — the blank-page-to-crawlers problem is fixed.**
+> `scripts/prerender.mjs` renders the five public routes in headless Chromium
+> after `vite build` and writes real HTML. Run `npm run build:seo` instead of
+> `npm run build` when deploying, or the shipped HTML reverts to the empty shell.
+> It also fixed a worse bug found while building it: every route served
+> `<link rel="canonical" href="https://www.easewithexam.com/">`, so `/about` and
+> `/privacy` each declared themselves duplicates of the homepage to any crawler
+> that does not run JS. The script refuses to emit a file whose canonical is
+> still wrong.
+
+What remains is not an engineering task:
+
 - **There is almost nothing to index.** Five public URLs. Every study note,
   syllabus chapter and PYQ is behind auth. This caps rankings harder than
-  rendering does — metadata cannot make pages that do not exist rank.
+  rendering ever did — metadata cannot make pages that do not exist rank.
 
 ---
+
+## 🔄 ONGOING, POST-LAUNCH — SEO content strategy (opened 2026-08-14)
+
+**Deliberately not built. This is a content-production project, not a code
+change, and it is the single biggest determinant of whether the site is ever
+found.** Logged separately from the engineering work so it is not mistaken for
+something a deploy can finish.
+
+### The honest position
+
+Every technical SEO blocker is now closed: `robots.txt` is correct, `sitemap.xml`
+is live and accurate, titles and descriptions are specific and mention the actual
+subjects, and the public routes are prerendered with correct per-page canonicals.
+**None of that will produce traffic on its own**, because the site has five
+indexable pages and four of them are about/privacy/terms/contact boilerplate.
+
+- **Head terms are not winnable.** "exam prep", "study tool", "online classes"
+  are held by BYJU'S, Vedantu, Unacademy, Khan Academy — brands with years of
+  domain authority and tens of thousands of indexed pages. No amount of tag
+  tuning changes that, and any advice that claims otherwise is selling something.
+- **The brand term is winnable.** `ease with exam` / `easewithexam` should rank
+  within weeks of being indexed, because nothing else competes for it. That is
+  the correct near-term success measure — not "exam prep".
+- **Everything else needs pages that do not exist yet.** Ranking for
+  "NEET biology chapter-wise PYQ", "CBSE class 10 science notes",
+  "Kerala SCERT class 10 syllabus" requires a public page per topic, written to
+  be genuinely useful, indexed, and eventually linked to.
+
+### Realistic timeline
+
+Weeks to months **after** the content exists, even executed perfectly. A new
+domain with no backlink profile does not rank quickly regardless of quality.
+Anyone promising faster is guessing. Expect: indexed in days, brand term in
+weeks, long-tail informational terms in months, competitive terms possibly never
+without sustained investment.
+
+### What this would involve, when you choose to start
+
+1. Decide whether some content comes out from behind auth — a public,
+   crawlable subset of study notes or syllabus pages is the single highest-value
+   move available, and it is a **product decision**, not a technical one.
+2. A publishing surface (blog//guides routes) and the sitemap generation to go
+   with it. Modest engineering; the prerender script already generalises.
+3. Actual writing, on a sustained cadence. This is the part that cannot be
+   automated away and the part that decides the outcome.
+
+**Do not start this before launch.** It competes for the same hours as the
+content engine, and the content engine is what makes the product worth finding.
 
 ## RESOLVED 2026-08-11 — 10 stale Class 8 Mathematics syllabus rows deactivated
 
