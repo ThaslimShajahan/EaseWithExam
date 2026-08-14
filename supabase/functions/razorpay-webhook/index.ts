@@ -66,6 +66,14 @@ const PLAN_DAYS: Record<string, number> = {
   premium_monthly: 30,
   premium_yearly:  365,
   neet_complete:   1095,
+  // Missing here caused a real bug 2026-08-14/15: this webhook won a race
+  // against razorpay-verify for a real payment (Razorpay's webhook delivery
+  // reached the server before the browser's own confirmation call did),
+  // activated with the ?? 30 fallback since this map didn't have the key,
+  // and granted 30 days instead of 1. Keep this in sync with
+  // razorpay-verify's copy — there is no shared module between edge
+  // functions, so a new plan must be added to both by hand.
+  verification_1rs: 1,
 };
 
 function verifySignature(body: string, signature: string): boolean {
