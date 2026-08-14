@@ -477,25 +477,52 @@ function FAQ() {
  * as everything else in Admin > Platform > Settings.
  */
 function CampaignSection() {
-  const { landing_campaign_enabled, landing_campaign_form_url, landing_campaign_label, loaded } = usePlatformSettings();
+  const {
+    landing_campaign_enabled, landing_campaign_form_url, landing_campaign_label,
+    landing_campaign_image_url, landing_campaign_description, loaded,
+  } = usePlatformSettings();
+  const [imageBroken, setImageBroken] = useState(false);
   if (!loaded || landing_campaign_enabled !== 'true' || !landing_campaign_form_url) return null;
 
+  // 2026-08-15 redesign: was a centered single column; now splits into image
+  // + text when an image is set. hasImage also requires the <img> to have
+  // actually loaded — a broken URL (deleted asset, typo) falls back to the
+  // full-width text layout below rather than showing an empty/broken box.
+  const hasImage = !!landing_campaign_image_url && !imageBroken;
+
+  // Text-first in DOM (badge/heading/description/CTA), image second — matches
+  // this page's own Hero section (grid lg:grid-cols-2, copy in the first
+  // column, visual in the second) so a returning visitor sees the same
+  // reading order twice, and on mobile the actionable content (what this is,
+  // how to join) appears before a decorative image rather than after it.
   return (
     <section className="px-4 sm:px-6 py-8">
-      <div className="max-w-4xl mx-auto bg-gradient-to-br from-primary-600 to-primary-700 rounded-[2rem] p-6 sm:p-10 text-center">
-        <span className="inline-flex items-center gap-1.5 bg-white/15 text-white text-[11px] font-bold px-3 py-1 rounded-full mb-4">
-          <Sparkles size={11} /> Limited time
-        </span>
-        <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-          {landing_campaign_label || 'Special campaign'}
-        </h2>
-        <p className="text-primary-100 mt-2 text-sm max-w-md mx-auto">
-          Fill in the form below to take part.
-        </p>
-        <a href={landing_campaign_form_url} target="_blank" rel="noopener noreferrer"
-          className="mt-6 inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-white text-primary-700 font-bold hover:bg-slate-100 transition-colors">
-          Join now <ArrowUpRight size={16} />
-        </a>
+      <div className={`max-w-4xl mx-auto bg-gradient-to-br from-primary-600 to-primary-700 rounded-[2rem] overflow-hidden ${hasImage ? 'grid lg:grid-cols-2 items-center' : ''}`}>
+        <div className={`p-6 sm:p-10 ${hasImage ? 'lg:py-10' : 'text-center'}`}>
+          <span className="inline-flex items-center gap-1.5 bg-white/15 text-white text-[11px] font-bold px-3 py-1 rounded-full mb-4">
+            <Sparkles size={11} /> Limited time
+          </span>
+          <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+            {landing_campaign_label || 'Special campaign'}
+          </h2>
+          <p className={`text-primary-100 mt-2 text-sm ${hasImage ? 'max-w-sm' : 'max-w-md mx-auto'} whitespace-pre-line`}>
+            {landing_campaign_description || 'Fill in the form below to take part.'}
+          </p>
+          <a href={landing_campaign_form_url} target="_blank" rel="noopener noreferrer"
+            className="mt-6 inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-white text-primary-700 font-bold hover:bg-slate-100 transition-colors">
+            Join now <ArrowUpRight size={16} />
+          </a>
+        </div>
+        {hasImage && (
+          <div className="h-56 lg:h-full lg:min-h-[320px]">
+            <img
+              src={landing_campaign_image_url}
+              alt={landing_campaign_label || 'Campaign'}
+              onError={() => setImageBroken(true)}
+              className="w-full h-full object-cover"
+            />
+          </div>
+        )}
       </div>
     </section>
   );

@@ -21,9 +21,15 @@ const DEFAULTS = {
   // unless enabled AND a form URL is set — deliberately independent of
   // quota_overrides (per-student grants), see that component's own comment
   // for why the two must not share one signal.
-  landing_campaign_enabled:  'false',
-  landing_campaign_form_url: '',
-  landing_campaign_label:    '',
+  landing_campaign_enabled:     'false',
+  landing_campaign_form_url:    '',
+  landing_campaign_label:       '',
+  // Two-column redesign, 2026-08-15. Both optional/additive — empty image
+  // means CampaignSection renders full-width text only (no broken/empty
+  // image box); empty description falls back to the section's own default
+  // copy, same as an empty label already falls back to "Special campaign".
+  landing_campaign_image_url:   '',
+  landing_campaign_description: '',
   // GST/tax rate for the order-summary review step (OrderSummaryModal) and
   // the payment confirmation page. Deliberately empty by default — whether
   // the flat prices charged today are tax-inclusive, tax-exempt, or need a

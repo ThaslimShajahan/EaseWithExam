@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Settings, Upload, Image, Cookie, Palette, Globe, CheckCircle2, Loader2, AlertTriangle, Trash2, Sparkles, Percent } from 'lucide-react';
+import { Settings, Upload, Image, Cookie, Palette, Globe, CheckCircle2, Loader2, AlertTriangle, Trash2, Sparkles, Percent, ArrowUpRight } from 'lucide-react';
 import { supabase, adminClearAllData } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { invalidatePlatformSettings } from '../hooks/usePlatformSettings';
@@ -95,6 +95,7 @@ export default function AdminPlatformSettings() {
   const callerUid = getCallerUid();
   const logoRef   = useRef();
   const avatarRef = useRef();
+  const campaignImageRef = useRef();
 
   const [settings,    setSettings]    = useState({});
   const [loading,     setLoading]     = useState(true);
@@ -103,6 +104,7 @@ export default function AdminPlatformSettings() {
   const [err,         setErr]         = useState('');
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [uploadingCampaignImage, setUploadingCampaignImage] = useState(false);
   const [localVals,   setLocalVals]   = useState({});
 
   useEffect(() => {
@@ -209,6 +211,29 @@ export default function AdminPlatformSettings() {
       setErr('Upload failed: ' + e.message);
     } finally {
       setUploadingLogo(false);
+    }
+  }
+
+  // Same flow as the logo/avatar uploads — auto-saves on upload rather than
+  // waiting for the campaign section's Save button, since an image change is
+  // its own visual commit, same reasoning as the logo/avatar precedent.
+  async function handleCampaignImageUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { setErr('Please select an image file'); return; }
+    if (file.size > 2 * 1024 * 1024) { setErr('Image file too large (max 2 MB)'); return; }
+    setUploadingCampaignImage(true); setErr('');
+    try {
+      const path = `platform/campaign_${Date.now()}.${file.name.split('.').pop()}`;
+      const { error: upErr } = await supabase.storage.from('platform-assets').upload(path, file, { upsert: true });
+      if (upErr) throw upErr;
+      const { data } = supabase.storage.from('platform-assets').getPublicUrl(path);
+      await saveSetting('landing_campaign_image_url', data.publicUrl);
+      setLocalVals(prev => ({ ...prev, landing_campaign_image_url: data.publicUrl }));
+    } catch (e2) {
+      setErr('Upload failed: ' + e2.message);
+    } finally {
+      setUploadingCampaignImage(false);
     }
   }
 
@@ -376,7 +401,19 @@ export default function AdminPlatformSettings() {
             <label className="flex items-center gap-3 cursor-pointer">
               <button type="button"
                 onClick={() => {
-                  const next = lv('landing_campaign_enabled') !== 'true' ? 'true' : 'false';
+                  const turningOn = lv('landing_campaign_enabled') !== 'true';
+                  // Added 2026-08-15: this toggle auto-saves immediately (by
+                  // design — same as the cookie banner toggle), which is
+                  // exactly how a placeholder "test" heading ended up live on
+                  // the public site earlier tonight — nothing stopped a
+                  // stray click from enabling an empty campaign. Enabling
+                  // now requires a real heading first; disabling is always
+                  // allowed with no gate.
+                  if (turningOn && !lv('landing_campaign_label')?.trim()) {
+                    setErr('Add a heading below before enabling — an empty/placeholder campaign should not go live.');
+                    return;
+                  }
+                  const next = turningOn ? 'true' : 'false';
                   setLv('landing_campaign_enabled')({ target: { value: next } });
                   saveSetting('landing_campaign_enabled', next);
                 }}
@@ -398,12 +435,54 @@ export default function AdminPlatformSettings() {
                 className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-primary-500" />
             </div>
             <div>
+              <label className="text-xs text-slate-500 block mb-1">Description</label>
+              <textarea value={lv('landing_campaign_description')} onChange={setLv('landing_campaign_description')}
+                placeholder="Fill in the form below to take part." rows={3}
+                className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-primary-500 resize-none" />
+              <p className="text-[11px] text-slate-500 mt-1">A few lines under the heading. Leave blank to use the default line above as a placeholder.</p>
+            </div>
+            <div>
               <label className="text-xs text-slate-500 block mb-1">Signup form URL</label>
               <input value={lv('landing_campaign_form_url')} onChange={setLv('landing_campaign_form_url')}
                 placeholder="https://forms.gle/…"
                 className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-primary-500" />
               <p className="text-[11px] text-slate-500 mt-1">Opens in a new tab when a visitor clicks "Join now". Any form URL works — Google Forms, Typeform, etc.</p>
             </div>
+
+            {/* Image — same upload flow as the platform logo/EWE avatar
+                above, reused rather than rebuilt. Optional: an unset image
+                falls back to the original full-width text layout, not a
+                broken/empty box (see CampaignSection). */}
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Image (optional)</label>
+              {lv('landing_campaign_image_url') && (
+                <div className="flex items-center gap-3 p-3 bg-slate-900 rounded-xl border border-white/5 mb-2">
+                  <img src={lv('landing_campaign_image_url')} alt="Campaign" className="h-10 w-16 object-cover rounded" />
+                  <div className="flex-1">
+                    <p className="text-xs text-slate-400 truncate">{lv('landing_campaign_image_url').split('/').pop()}</p>
+                    <p className="text-[10px] text-emerald-400 mt-0.5">Two-column layout active</p>
+                  </div>
+                  <button
+                    onClick={() => saveSetting('landing_campaign_image_url', '')}
+                    className="text-[11px] text-slate-400 hover:text-red-400 transition-colors"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+              <button
+                onClick={() => campaignImageRef.current?.click()}
+                disabled={uploadingCampaignImage}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-white/10 text-slate-300 text-sm font-semibold hover:bg-white/5 disabled:opacity-50 transition-colors"
+              >
+                {uploadingCampaignImage
+                  ? <><Loader2 size={14} className="animate-spin" /> Uploading…</>
+                  : <><Upload size={14} /> {lv('landing_campaign_image_url') ? 'Replace image' : 'Upload image'}</>}
+              </button>
+              <input ref={campaignImageRef} type="file" accept="image/*" className="hidden" onChange={handleCampaignImageUpload} />
+              <p className="text-[11px] text-slate-500 mt-1">PNG or JPG · max 2 MB · without one the section stays full-width text, same as before.</p>
+            </div>
+
             {/* Found 2026-08-15 chasing a report of "the section isn't
                 showing even though it's enabled": both saves were working
                 correctly the whole time — the section's own render
@@ -416,12 +495,43 @@ export default function AdminPlatformSettings() {
                 Enabled, but the section won't show yet — a form URL is also required.
               </p>
             )}
+
             <div className="flex justify-end">
               <SaveBtn onClick={() => saveSettings('landing_campaign', [
                 ['landing_campaign_label', lv('landing_campaign_label')],
+                ['landing_campaign_description', lv('landing_campaign_description')],
                 ['landing_campaign_form_url', lv('landing_campaign_form_url')],
               ])}
                 loading={savingKey === 'landing_campaign'} saved={saved === 'landing_campaign'} />
+            </div>
+
+            {/* Live preview — mirrors CampaignSection's own two-column
+                markup exactly (same breakpoint, same fallback-to-full-width
+                when no image), fed from localVals so it updates as the
+                admin types, before saving. */}
+            <div>
+              <p className="text-xs text-slate-500 mb-2">Preview</p>
+              <div className={`rounded-2xl overflow-hidden bg-gradient-to-br from-primary-600 to-primary-700 ${lv('landing_campaign_image_url') ? 'sm:grid sm:grid-cols-2 sm:items-center' : ''}`}>
+                <div className={`p-5 ${lv('landing_campaign_image_url') ? '' : 'text-center'}`}>
+                  <span className="inline-flex items-center gap-1.5 bg-white/15 text-white text-[10px] font-bold px-2.5 py-1 rounded-full mb-3">
+                    <Sparkles size={10} /> Limited time
+                  </span>
+                  <h3 className="text-lg font-extrabold text-white tracking-tight">
+                    {lv('landing_campaign_label') || 'Special campaign'}
+                  </h3>
+                  <p className={`text-primary-100 mt-1.5 text-xs whitespace-pre-line ${lv('landing_campaign_image_url') ? '' : 'max-w-sm mx-auto'}`}>
+                    {lv('landing_campaign_description') || 'Fill in the form below to take part.'}
+                  </p>
+                  <span className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white text-primary-700 text-xs font-bold">
+                    Join now <ArrowUpRight size={13} />
+                  </span>
+                </div>
+                {lv('landing_campaign_image_url') && (
+                  <div className="h-32 sm:h-full">
+                    <img src={lv('landing_campaign_image_url')} alt="" className="w-full h-full object-cover" />
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </SettingRow>
