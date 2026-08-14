@@ -4,6 +4,7 @@ import { chatComplete, embedText } from './aiProxy';
 import { getFeatureFlag, FLAGS } from './featureFlags';
 import { getChapterPatternStats, scorePaperAgainstPattern } from './patternStats';
 import { getChapters } from './syllabus';
+import { isLanguageSubject } from './categories';
 import { examTypesFor } from './examMapping';
 import { attachDiagrams } from './diagrams';
 // getExamPattern() checks admin-uploaded paper_templates overrides before
@@ -22,7 +23,14 @@ const LETTER_IDX = { A: 0, B: 1, C: 2, D: 3 };
 // extract from 'X' and answer…") — a STEM concept question doesn't need the
 // original NCERT wording, but quoting a made-up passage instead of the actual
 // prescribed chapter isn't a real practice paper. See fetchVerbatimPassages().
-const LANGUAGE_SUBJECTS = new Set(['English', 'Hindi', 'Sanskrit']);
+//
+// Was a hardcoded Set of English/Hindi/Sanskrit here. It had already drifted:
+// the subjects vocabulary (20260813100000) carries 7 languages, so Malayalam,
+// Arabic, Urdu and Syriac silently lost BOTH the verbatim-passage lookup and
+// the anti-fabrication guardrail below. Now derived from subjects.kind via
+// isLanguageSubject() (imported at the top), so adding a language in
+// Admin → Platform → Subjects can't reopen that gap. See categories.js for
+// the fallback behaviour.
 
 /* Exams that use per-question integer marks with no negative marking */
 const CBSE_STYLE_EXAMS = new Set([
@@ -779,7 +787,7 @@ async function fetchKBChunks(subject, topicHints, { examType = null, contentType
 // unparaphrased text sliced directly from the source PDF. Only chapters that
 // have it (older uploads predate this column and won't) are usable here.
 async function fetchVerbatimPassages(subject, examType, limit = 2) {
-  if (!LANGUAGE_SUBJECTS.has(subject)) return [];
+  if (!isLanguageSubject(subject)) return [];
   try {
     let q = supabase
       .from('study_notes')
@@ -1076,7 +1084,7 @@ ${studyNotes.map((r, i) => `[Note ${i + 1}]\n${r.content.slice(0, 400)}`).join('
 These are the EXACT, unedited text of chapters from the actual prescribed textbook. For any extract-based / reading-comprehension / literature-appreciation question, you MUST quote the passage below WORD FOR WORD inside the "question" field (as the printed extract students read), then ask original sub-questions about it. Never invent a substitute passage when one is given here — that would not be a real practice paper for this chapter.
 
 ${verbatimPassages.map((p, i) => `[Passage ${i + 1} — "${p.title || p.chapter}"]\n${p.source_text.slice(0, 6000)}`).join('\n\n---\n\n')}`
-    : (LANGUAGE_SUBJECTS.has(subject)
+    : (isLanguageSubject(subject)
       ? '\n\nNOTE: No verbatim chapter text uploaded yet for this book/exam — do not fabricate a fake "extract from [chapter]"; either write a clearly original unseen-passage comprehension question, or a direct grammar/vocabulary/writing question that does not depend on quoting the prescribed textbook.'
       : '');
 

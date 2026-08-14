@@ -123,6 +123,28 @@ export async function refreshCategories() {
  */
 let NON_CONTENT_SUBJECTS = new Set();
 
+/**
+ * Language-kind subjects, from the same vocabulary (subjects.kind = 'language').
+ *
+ * questionGen.js uses this to decide whether a paper needs verbatim prescribed
+ * passages (real textbook text quoted into extract/comprehension questions) and
+ * — when none exist yet — the "do not fabricate a fake extract" guardrail. A
+ * language missing from this set silently loses BOTH, which is how a generated
+ * Malayalam paper could invent a passage and present it as prescribed text.
+ *
+ * Derived, not hardcoded, for the reason this whole vocabulary exists: the
+ * previous hardcoded literal listed only English/Hindi/Sanskrit and had already
+ * drifted from the 7 languages actually in the table. A static list re-drifts
+ * the moment a language is added through Admin → Platform → Subjects.
+ *
+ * FALLBACK_LANGUAGE_SUBJECTS covers boot/failed load, same fail-open shape as
+ * NON_CONTENT_SUBJECTS above — it is the pre-drift core three, which is the
+ * safest floor: those three are certainly languages, so the guardrail still
+ * applies to them even with no DB.
+ */
+const FALLBACK_LANGUAGE_SUBJECTS = new Set(['English', 'Hindi', 'Sanskrit']);
+let LANGUAGE_SUBJECTS = new Set();
+
 async function _fetchAndApply() {
   try {
     const [{ data, error }, subjectsRes] = await Promise.all([
@@ -131,12 +153,15 @@ async function _fetchAndApply() {
         .select('exam_key, label, category_kind, board_key, class_key, group_label, subjects, sort_order')
         .eq('is_active', true)
         .order('sort_order'),
-      supabase.from('subjects').select('name, content_bearing'),
+      supabase.from('subjects').select('name, content_bearing, kind'),
     ]);
 
     if (Array.isArray(subjectsRes?.data) && subjectsRes.data.length) {
       NON_CONTENT_SUBJECTS = new Set(
         subjectsRes.data.filter((s) => s.content_bearing === false).map((s) => s.name),
+      );
+      LANGUAGE_SUBJECTS = new Set(
+        subjectsRes.data.filter((s) => s.kind === 'language').map((s) => s.name),
       );
     }
 
@@ -185,6 +210,21 @@ export function getSubjectsForExam(examType, { includeNonContent = false } = {})
   const all = CATEGORIES[examType]?.subjects ?? ['Mathematics', 'Science', 'English'];
   if (includeNonContent || NON_CONTENT_SUBJECTS.size === 0) return all;
   return all.filter((s) => !NON_CONTENT_SUBJECTS.has(s));
+}
+
+/**
+ * True when this subject is a LANGUAGE (subjects.kind = 'language'), which
+ * decides whether question generation quotes real prescribed passages and, when
+ * none are uploaded yet, applies the "do not fabricate a fake extract"
+ * guardrail. See the LANGUAGE_SUBJECTS declaration above.
+ *
+ * Falls back to the pre-drift core three before the vocabulary loads (or if the
+ * fetch fails) rather than returning false for everything — a false here
+ * silently drops the anti-fabrication guardrail, so the failure mode has to be
+ * "still guarded" and never "guard removed".
+ */
+export function isLanguageSubject(name) {
+  return (LANGUAGE_SUBJECTS.size ? LANGUAGE_SUBJECTS : FALLBACK_LANGUAGE_SUBJECTS).has(name);
 }
 
 /** True when the platform serves no content for this subject — i.e. it may sit

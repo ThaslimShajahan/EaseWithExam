@@ -15,6 +15,7 @@ import {
   isExamTag,
   prettyExamTag,
   normalizeExamType,
+  isLanguageSubject,
 } from '../categories';
 
 describe('CATEGORIES', () => {
@@ -213,5 +214,33 @@ describe('exam tags', () => {
     expect(prettyExamTag('cbse_class_8')).toBe('CBSE Class 8');
     expect(prettyExamTag('kerala_state_class_10')).toBe('Kerala State Class 10');
     expect(prettyExamTag('neet')).toBe('NEET');
+  });
+});
+
+/* isLanguageSubject decides whether question generation quotes REAL prescribed
+ * passages and, when none exist, applies the "do not fabricate a fake extract"
+ * guardrail (questionGen.js). It replaced a hardcoded English/Hindi/Sanskrit
+ * Set that had already drifted from the 7 languages in the subjects table.
+ *
+ * These tests run with no DB loaded, so they exercise the FALLBACK path
+ * specifically — the case that matters most, because a false here silently
+ * removes the anti-fabrication guardrail. */
+describe('isLanguageSubject — fallback behaviour with no vocabulary loaded', () => {
+  it('still recognises the core three, so the guardrail survives a failed load', () => {
+    expect(isLanguageSubject('English')).toBe(true);
+    expect(isLanguageSubject('Hindi')).toBe(true);
+    expect(isLanguageSubject('Sanskrit')).toBe(true);
+  });
+
+  it('does not treat STEM subjects as languages', () => {
+    expect(isLanguageSubject('Physics')).toBe(false);
+    expect(isLanguageSubject('Mathematics')).toBe(false);
+    expect(isLanguageSubject('Biology')).toBe(false);
+  });
+
+  it('never throws on junk input', () => {
+    expect(isLanguageSubject(null)).toBe(false);
+    expect(isLanguageSubject(undefined)).toBe(false);
+    expect(isLanguageSubject('')).toBe(false);
   });
 });
