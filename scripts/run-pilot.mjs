@@ -2,14 +2,22 @@
  * Phase 1 pilot runner.
  *
  *   npm run dev                       (note the port)
- *   BASE_URL=http://localhost:5175 node scripts/run-pilot.mjs A
- *   BASE_URL=http://localhost:5175 node scripts/run-pilot.mjs B
+ *   ADMIN_UID=<firebase-uid> BASE_URL=http://localhost:5175 node scripts/run-pilot.mjs A
+ *   ADMIN_UID=<firebase-uid> BASE_URL=http://localhost:5175 node scripts/run-pilot.mjs B
  *
  * Drives the REAL production modules (src/lib/pdfVision.js and
  * src/lib/contentExtraction.js) inside a browser page served by Vite — not a
  * reimplementation. The admin UI itself needs a Firebase-authenticated admin
- * session that can't be minted headlessly, so this exercises the layer directly
- * underneath it: extract -> classify -> build rows -> insert.
+ * session; this used to run unauthenticated because none could be minted
+ * headlessly. That's no longer true — src/lib/devAuth.js (2026-08-12) mints
+ * one via a Firebase Admin SDK custom token, the same mechanism
+ * scripts/bulk-load-pyq.mjs and scripts/bulk-load-corpus.mjs already use.
+ * ADMIN_UID is now required: knowledge_base's RLS lockdown (20260815020000)
+ * means adminSaveKnowledgeChunks refuses an unauthenticated caller, so an
+ * unauthenticated run would fail at the one write this pilot exists to
+ * exercise, and previously-"expected" denials (content_figures below) would
+ * no longer be the interesting case — real auth end-to-end is a strictly
+ * more representative test of the actual pipeline.
  *
  * Pilot A  = a real text-layer chapter with figures and equations.
  * Pilot B  = a REAL scanned paper (easy with exam/_pilot/scanned-paper.pdf).
@@ -24,10 +32,18 @@ import { chromium } from 'playwright';
 import { copyFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getAuth } from './firebaseAdmin.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const BASE = process.env.BASE_URL || 'http://localhost:5173';
 const WHICH = (process.argv[2] || 'A').toUpperCase();
+const ADMIN_UID = process.env.ADMIN_UID || '';
+if (!ADMIN_UID) {
+  console.error('\nADMIN_UID is required. knowledge_base writes go through');
+  console.error('admin_insert_knowledge_chunks, which refuses an unauthenticated caller.');
+  console.error('Usage: ADMIN_UID=<firebase-uid> node scripts/run-pilot.mjs A\n');
+  process.exit(1);
+}
 
 const PILOTS = {
   A: {
@@ -76,6 +92,17 @@ page.on('console', (m) => { if (m.type() === 'error') console.error('  [console]
 
 await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
 
+const customToken = await getAuth().createCustomToken(ADMIN_UID);
+const signedInAs = await page.evaluate(async (token) => {
+  const { signInWithMintedToken } = await import('/src/lib/devAuth.js');
+  return signInWithMintedToken(token);
+}, customToken);
+if (signedInAs !== ADMIN_UID) {
+  console.error(`\nSigned in as ${signedInAs}, expected ${ADMIN_UID} — aborting.\n`);
+  await browser.close();
+  process.exit(1);
+}
+
 const out = await page.evaluate(async (p) => {
   const [{ extractPagesWithVision, needsVision }, ce, { supabase, adminSaveKnowledgeChunks }] = await Promise.all([
     import('/src/lib/pdfVision.js'),
@@ -108,16 +135,17 @@ const out = await page.evaluate(async (p) => {
     figures: ex.figures, equationsByPage: ex.equationsByPage,
   }));
 
-  const inserted = await adminSaveKnowledgeChunks(rows);
+  const inserted = await adminSaveKnowledgeChunks(rows, p.adminUid);
 
   // Same figure-row builder the intake screen uses.
   const figRows = lessons.flatMap((lesson) => ce.buildFigureRows(
     ce.figuresForLesson(lesson, ex.figures),
     { sourceId: inserted?.[0]?.id ?? null, examType: p.examType, subject: p.subject, chapter: lesson.title || p.chapter },
   ));
-  // content_figures writes require a verified admin (see the RLS policy). The
-  // pilot runs unauthenticated, so a denial here is CORRECT — reported as
-  // "denied", not silently counted as success.
+  // content_figures writes require a verified admin (see the RLS policy) —
+  // now genuinely satisfied, since this pilot signs in for real (see the
+  // header comment). A denial here would now mean something is actually
+  // wrong, not the expected/documented outcome it used to be.
   let figInserted = 0;
   let figError = null;
   if (figRows.length) {
@@ -164,7 +192,7 @@ const out = await page.evaluate(async (p) => {
     figureDetail: ex.figures.map((f) => ({ page: f.page_no, kind: f.kind, cropped: f.cropped, caption: f.caption, url: f.image_url })),
     equationSamples: Object.entries(ex.equationsByPage).flatMap(([pg, list]) => list.slice(0, 12).map((l) => `p${pg}: ${l}`)),
   };
-}, { ...pilot, src: pilot.src });
+}, { ...pilot, src: pilot.src, adminUid: ADMIN_UID });
 
 await browser.close();
 rmSync(stageDir, { recursive: true, force: true });
@@ -190,7 +218,7 @@ line('rows inserted', out.insertedCount);
 line('content_type histogram', JSON.stringify(out.typeHistogram));
 line('difficulty histogram', JSON.stringify(out.diffHistogram));
 line('content_figures rows', out.figureError
-  ? `${out.figureRows} built, 0 inserted — ${out.figureError} (expected: pilot is unauthenticated, RLS requires a verified admin)`
+  ? `${out.figureRows} built, 0 inserted — ${out.figureError} (unexpected now that this pilot authenticates for real — investigate)`
   : `${out.figureRowsInserted} inserted / ${out.figureRows} built`);
 line('rows read back by source', out.readBack);
 

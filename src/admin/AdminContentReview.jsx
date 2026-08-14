@@ -54,7 +54,7 @@ async function moveKBNotesToKB(kbNoteItems) {
     tags:        [item.chapter, item.subject, examTypeToTag(item.exam_type)].filter(Boolean),
   }));
   // adminSaveKnowledgeChunks adds embeddings before inserting
-  await adminSaveKnowledgeChunks(rows);
+  await adminSaveKnowledgeChunks(rows, getCallerUid());
 }
 
 export default function AdminContentReview() {

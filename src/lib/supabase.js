@@ -485,7 +485,12 @@ async function _addEmbeddings(rows) {
   return { rows: out, failedCount };
 }
 
-export async function adminSaveKnowledgeChunks(chunks) {
+// callerUid added 2026-08-15 — knowledge_base's RLS lockdown
+// (20260815020000) means this now writes through admin_insert_knowledge_chunks
+// instead of a raw client insert. See that migration for why: the table's
+// old `knowledge_base_open` policy granted ALL commands to public with no
+// check at all.
+export async function adminSaveKnowledgeChunks(chunks, callerUid) {
   if (!chunks?.length) return;
 
   const { rows, failedCount } = await _addEmbeddings(chunks);
@@ -501,9 +506,12 @@ export async function adminSaveKnowledgeChunks(chunks) {
   // Postgres's statement_timeout and is cancelled outright — the whole chapter
   // lost after all the extraction work was already paid for (seen on
   // keph104.pdf, "Laws of Motion", 51 rows). 20 matches _addEmbeddings above.
+  // insertFn now calls the RPC — its return shape ({data, error}, data being
+  // the jsonb_agg'd [{id}, ...] array) is drop-in compatible with what
+  // insertInBatches already expects from a raw .insert().select('id').
   const { inserted, error, failedSlice, failedAt } =
     await insertInBatches(rows, (slice) =>
-      supabase.from('knowledge_base').insert(slice).select('id'));
+      supabase.rpc('admin_insert_knowledge_chunks', { p_caller: callerUid, p_rows: slice }));
 
   if (error) {
     // Batching costs the all-or-nothing guarantee a single statement gave us:
@@ -513,8 +521,8 @@ export async function adminSaveKnowledgeChunks(chunks) {
     // starts from clean ground.
     let cleanupNote = '';
     if (inserted.length) {
-      const { error: delErr } = await supabase
-        .from('knowledge_base').delete().in('id', inserted.map((r) => r.id));
+      const { error: delErr } = await supabase.rpc('admin_delete_knowledge_chunks',
+        { p_caller: callerUid, p_ids: inserted.map((r) => r.id) });
       cleanupNote = delErr
         ? ` — WARNING: ${inserted.length} row(s) from this batch remain in knowledge_base, cleanup failed (${delErr.message})`
         : ` — rolled back ${inserted.length} row(s) already inserted`;
@@ -589,7 +597,9 @@ export async function adminDeleteAllPapers() {
 export async function adminClearAllData(callerUid) {
   const DUMMY = '00000000-0000-0000-0000-000000000000';
   await Promise.allSettled([
-    supabase.from('knowledge_base').delete().neq('id', DUMMY),
+    // knowledge_base no longer accepts a direct delete (20260815020000) —
+    // same reason pyq_questions and exam_blueprints already needed an RPC.
+    supabase.rpc('admin_clear_knowledge_base', { p_caller: callerUid }),
     supabase.from('question_cache').delete().neq('id', DUMMY),
     // pyq_questions no longer accepts a direct delete (20260812020000) — the
     // same reason exam_blueprints already needed an RPC here.

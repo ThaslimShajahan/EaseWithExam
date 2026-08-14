@@ -402,7 +402,10 @@ function ChapterSuggestModal({ open, mode, exam, dbExamType, classLevel, subject
         setInserting(false);
         return;
       }
-      const { error: err } = await supabase.from('syllabus_nodes').insert(freshRows);
+      // syllabus_nodes no longer accepts a direct insert (20260815020000).
+      const { error: err } = await supabase.rpc('admin_insert_syllabus_nodes', {
+        p_caller: callerUid, p_rows: freshRows,
+      });
       if (err) throw err;
       logChange(ENTITY.SYLLABUS_NODE, subject, ACTION.CREATE,
         { after: { subject, count: freshRows.length, source: mode } },
@@ -905,11 +908,10 @@ export default function AdminSyllabus() {
   async function migrateOldFormat() {
     setMigrating(true);
     try {
-      const { error } = await supabase
-        .from('syllabus_nodes')
-        .update({ exam_type: dbExamType })
-        .eq('exam_type', examTab)
-        .eq('class_level', classLevel);
+      // syllabus_nodes no longer accepts a direct update (20260815020000).
+      const { error } = await supabase.rpc('admin_migrate_syllabus_exam_type', {
+        p_caller: callerUid, p_old_exam_type: examTab, p_new_exam_type: dbExamType, p_class_level: classLevel,
+      });
       if (!error) {
         setToast(`Migrated ${oldFormatCount} chapters to new format.`);
         setOldFormatCount(0);
@@ -958,7 +960,10 @@ export default function AdminSyllabus() {
       return;
     }
 
-    const { error } = await supabase.from('syllabus_nodes').insert(freshRows);
+    // syllabus_nodes no longer accepts a direct insert (20260815020000).
+    const { error } = await supabase.rpc('admin_insert_syllabus_nodes', {
+      p_caller: callerUid, p_rows: freshRows,
+    });
 
     setSeeding(false);
     if (!error) {

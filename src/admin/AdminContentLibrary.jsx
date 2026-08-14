@@ -67,7 +67,12 @@ async function deletePYQ(id) {
 }
 
 async function deleteKBChunk(id) {
-  await supabase.from('knowledge_base').delete().eq('id', id);
+  // knowledge_base no longer accepts a direct delete (20260815020000) —
+  // same reason deletePYQ above already goes through an RPC.
+  const { error } = await supabase.rpc('admin_delete_knowledge_chunks', {
+    p_caller: getCallerUid(), p_ids: [id],
+  });
+  if (error) throw new Error(error.message);
 }
 
 /* ── Small components ────────────────────────────────────── */

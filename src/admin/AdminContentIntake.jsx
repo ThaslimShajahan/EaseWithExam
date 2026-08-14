@@ -277,7 +277,7 @@ export async function saveNoteChunks({
         lesson, chapterName, chapterKey, book, unit: lessonUnit, subject, examType, source, figures, equationsByPage,
       });
 
-      const ids = await adminSaveKnowledgeChunks(kbRows);
+      const ids = await adminSaveKnowledgeChunks(kbRows, callerUid || getCallerUid());
       kbCount += kbRows.length;
 
       const lessonFigures = figuresForLesson(lesson, figures);

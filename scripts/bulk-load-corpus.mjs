@@ -21,9 +21,17 @@
  *   currently disabled for anyway. With it off, vision fires only on genuinely
  *   thin-text pages (~3% measured).
  *
- * NOT WRITTEN: study_notes rows. That path goes through admin_upsert_study_note,
- * which needs an authenticated admin session this script does not have. Phase
- * 2-5 read knowledge_base, which is what this populates.
+ * NOT WRITTEN: study_notes rows (that path goes through
+ * admin_upsert_study_note, a different RPC this script has never called).
+ * Phase 2-5 read knowledge_base, which is what this populates.
+ *
+ * ADMIN_UID required (unless --dry-run) as of 2026-08-15: knowledge_base's
+ * RLS lockdown (20260815020000) means adminSaveKnowledgeChunks now writes
+ * through admin_insert_knowledge_chunks, a SECURITY DEFINER RPC gated on a
+ * real Firebase-authenticated admin session — the same devAuth.js mechanism
+ * scripts/bulk-load-pyq.mjs already uses, not a new pattern.
+ *
+ *   ADMIN_UID=<firebase-uid> BASE_URL=... node scripts/bulk-load-corpus.mjs
  */
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
@@ -33,6 +41,7 @@ import { fileURLToPath } from 'node:url';
 // Plain ESM with no imports of its own, so it loads in node exactly as it does
 // in the browser — one mapping table, not a copy that can drift.
 import { resolveCorpusFile, workbookUnitFor } from '../src/lib/corpusMapping.js';
+import { getAuth } from './firebaseAdmin.mjs';
 
 const ROOT   = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /**
@@ -58,6 +67,13 @@ const arg = (name, dflt) => {
 };
 const DRY_RUN     = process.argv.includes('--dry-run');
 const RESET       = process.argv.includes('--reset');
+const ADMIN_UID   = process.env.ADMIN_UID || '';
+if (!DRY_RUN && !ADMIN_UID) {
+  console.error('\nADMIN_UID is required (unless --dry-run). knowledge_base writes go through');
+  console.error('admin_insert_knowledge_chunks, which refuses an unauthenticated caller.');
+  console.error('Usage: ADMIN_UID=<firebase-uid> node scripts/bulk-load-corpus.mjs\n');
+  process.exit(1);
+}
 const LIMIT       = Number(arg('limit', Infinity));
 /* Run the corpus in class-sized batches rather than one long unattended pass.
  * A 229-file run is hours of paid model calls, and a fault 180 files in is
@@ -315,7 +331,7 @@ function startCorpusServer() {
 /* ── The per-file pipeline, run inside the browser ──────────────────── */
 
 async function processFile(page, job, corpusOrigin) {
-  return page.evaluate(async ({ url, subject, examType, source, forceUnit, chapterCandidates, contentTypeOverride }) => {
+  return page.evaluate(async ({ url, subject, examType, source, forceUnit, chapterCandidates, contentTypeOverride, adminUid }) => {
     const [{ extractPagesWithVision }, ce, { adminSaveKnowledgeChunks }] = await Promise.all([
       import('/src/lib/pdfVision.js'),
       import('/src/lib/contentExtraction.js'),
@@ -362,7 +378,7 @@ async function processFile(page, job, corpusOrigin) {
     // A workbook is exercises, whatever the classifier decided per chunk.
     if (contentTypeOverride) for (const r of rows) r.content_type = contentTypeOverride;
 
-    const inserted = await adminSaveKnowledgeChunks(rows);
+    const inserted = await adminSaveKnowledgeChunks(rows, adminUid);
 
     return {
       pages: ex.pageCount,
@@ -381,6 +397,7 @@ async function processFile(page, job, corpusOrigin) {
     forceUnit:           job.forceUnit ?? null,
     chapterCandidates:   job.chapterCandidates ?? null,
     contentTypeOverride: job.contentTypeOverride ?? null,
+    adminUid:            ADMIN_UID || null,
   });
 }
 
@@ -456,6 +473,19 @@ async function openPage() {
   const ctx  = await browser.newContext();
   const page = await ctx.newPage();
   await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
+  // Each browser context is its own isolated storage — a page from the pool
+  // that never signs in gets no benefit from another page's session. Skipped
+  // entirely in --dry-run, which never reaches a write RPC.
+  if (!DRY_RUN) {
+    const customToken = await getAuth().createCustomToken(ADMIN_UID);
+    const signedInAs = await page.evaluate(async (token) => {
+      const { signInWithMintedToken } = await import('/src/lib/devAuth.js');
+      return signInWithMintedToken(token);
+    }, customToken);
+    if (signedInAs !== ADMIN_UID) {
+      throw new Error(`Signed in as ${signedInAs}, expected ${ADMIN_UID} — aborting.`);
+    }
+  }
   return page;
 }
 
