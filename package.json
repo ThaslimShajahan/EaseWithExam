@@ -16,7 +16,10 @@
     "nginx:routes": "node scripts/gen-nginx-routes.mjs",
     "nginx:check": "node scripts/gen-nginx-routes.mjs --check",
     "pilot": "node scripts/run-pilot.mjs",
-    "fixture:scan": "node scripts/make-scanned-fixture.mjs"
+    "fixture:scan": "node scripts/make-scanned-fixture.mjs",
+    "lint": "eslint src scripts",
+    "prerender": "node scripts/prerender.mjs",
+    "build:seo": "vite build && node scripts/prerender.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
@@ -40,6 +43,8 @@
     "@vitest/coverage-v8": "^4.1.10",
     "autoprefixer": "^10.4.19",
     "cross-env": "^10.1.0",
+    "eslint": "^10.8.1",
+    "globals": "^17.11.0",
     "jsdom": "^29.1.1",
     "playwright": "^1.62.1",
     "postcss": "^8.4.38",
