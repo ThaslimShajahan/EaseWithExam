@@ -2,10 +2,13 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search, Loader2, AlertTriangle, User, GraduationCap,
-  BarChart3, Zap, MessageSquare, Calendar, Target,
-  Building2, Trophy,
+  BarChart3, Zap, Target,
+  Building2, Trophy, Sparkles, Crown, Clock, Pencil,
 } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabase, adminGetAllSubscriptions, adminGetQuotaOverride } from '../lib/supabase';
+import { pickExpiryInfo } from '../lib/quota';
+import { formatCountdown } from '../components/dashboard/ExpiryBadge';
+import StudentPicker from '../components/admin/StudentPicker';
 
 function getCallerUid() {
   try {
@@ -16,24 +19,19 @@ function getCallerUid() {
 
 const IST_DATE = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
-async function fetchStudentProfile(query) {
-  const { data, error } = await supabase.rpc('admin_search_users', {
-    p_caller: getCallerUid(), p_query: query.trim(), p_limit: 5,
-  });
-  if (error) throw error;
-  return data ?? [];
-}
-
 async function fetchStudentDetail(uid) {
   const today = IST_DATE();
+  const callerUid = getCallerUid();
   const [
     { data: profile },
     { data: quota },
     { data: gamification },
     { data: sessions },
     { data: coachingRow },
+    subscriptions,
+    override,
   ] = await Promise.all([
-    supabase.rpc('admin_get_user', { p_caller: getCallerUid(), p_uid: uid }),
+    supabase.rpc('admin_get_user', { p_caller: callerUid, p_uid: uid }),
     supabase.from('daily_usage_quota').select('*').eq('user_id', uid).eq('usage_date', today).maybeSingle(),
     supabase.from('user_gamification').select('*').eq('user_id', uid).maybeSingle(),
     supabase.from('test_sessions').select('id, score, total_marks, created_at').eq('firebase_uid', uid).order('created_at', { ascending: false }).limit(10),
@@ -43,13 +41,25 @@ async function fetchStudentDetail(uid) {
     // (real columns: firebase_uid, name, brand_color), so this 400'd
     // silently every time and the coaching badge never rendered.
     supabase.rpc('student_get_own_centre', { p_uid: uid }),
+    // get_user_subscription is self-scoped (verified_uid() = p_uid), so an
+    // admin looking up ANOTHER student cannot call it — admin_list_subscriptions
+    // already exists (AdminBilling.jsx) and is filtered to this one uid
+    // client-side rather than adding a new per-user RPC for a handful of rows.
+    adminGetAllSubscriptions(callerUid).then((rows) => rows.find((s) => s.user_id === uid) ?? null),
+    // admin_get_quota_override is SECURITY DEFINER — correctly bypasses
+    // quota_overrides_self_read (`user_id = verified_uid()`) for an admin
+    // caller, which a direct client select on quota_overrides cannot.
+    adminGetQuotaOverride(callerUid, uid),
   ]);
 
   const coaching = coachingRow?.[0]
     ? { coaching_centres: { centre_name: coachingRow[0].centre_name, centre_brand_color: coachingRow[0].brand_color } }
     : null;
 
-  return { profile, quota, gamification, sessions: sessions ?? [], coaching };
+  const hasOverride = !!override?.id;
+  const expiry = pickExpiryInfo(hasOverride ? override.expires_at : null, subscriptions);
+
+  return { profile, quota, gamification, sessions: sessions ?? [], coaching, subscription: subscriptions, override: hasOverride ? override : null, expiry };
 }
 
 function StatPill({ label, value, color = 'bg-slate-700 text-slate-300' }) {
@@ -61,9 +71,31 @@ function StatPill({ label, value, color = 'bg-slate-700 text-slate-300' }) {
   );
 }
 
+function ExpiryLine({ expiry }) {
+  if (expiry.kind === 'grant') {
+    return (
+      <span className="flex items-center gap-1 text-[10px] font-bold bg-emerald-900/40 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-700/30">
+        <Sparkles size={9} /> Grant — {formatCountdown(expiry.expiresAt)}
+      </span>
+    );
+  }
+  if (expiry.kind === 'subscription') {
+    return (
+      <span className="flex items-center gap-1 text-[10px] font-bold bg-amber-900/40 text-amber-400 px-2 py-0.5 rounded-full border border-amber-700/30">
+        <Crown size={9} /> {formatCountdown(expiry.expiresAt)}
+      </span>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1 text-[10px] font-medium bg-slate-800 text-slate-500 px-2 py-0.5 rounded-full border border-white/5">
+      <Clock size={9} /> No expiry
+    </span>
+  );
+}
+
 function StudentCard({ detail }) {
-  const { profile, quota, gamification, sessions, coaching } = detail;
-  const pct = (used, limit) => limit > 0 ? Math.round((used / limit) * 100) : 0;
+  const { profile, quota, gamification, sessions, coaching, subscription, override, expiry } = detail;
+  const planName = subscription?.isActive ? subscription.plan : 'Free';
 
   return (
     <motion.div
@@ -93,11 +125,10 @@ function StudentCard({ detail }) {
                 <Building2 size={9} /> {coaching.coaching_centres.centre_name}
               </span>
             )}
-            {profile?.is_premium && (
-              <span className="text-[10px] font-bold bg-amber-900/50 text-amber-400 px-2 py-0.5 rounded-full border border-amber-700/30">
-                Premium
-              </span>
-            )}
+            <span className="text-[10px] font-bold bg-slate-700 text-slate-300 px-2 py-0.5 rounded-full capitalize">
+              {planName.replace('_', ' ')}
+            </span>
+            <ExpiryLine expiry={expiry} />
           </div>
         </div>
         <div className="text-right shrink-0">
@@ -106,6 +137,44 @@ function StudentCard({ detail }) {
             Joined {profile?.created_at ? new Date(profile.created_at).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) : '—'}
           </p>
         </div>
+      </div>
+
+      {/* Stream / subjects — items 3/6 finding: this was invisible here even
+          though tonight's scoping makes it the difference between a student
+          seeing a picker and seeing the setup prompt on six screens. */}
+      <div className="bg-slate-800/60 border border-white/5 rounded-2xl p-4 space-y-2">
+        <p className="text-xs font-bold text-slate-400 flex items-center gap-1.5">
+          <GraduationCap size={12} className="text-primary-400" /> Stream &amp; Subjects
+        </p>
+        <div className="text-xs text-slate-400">
+          {profile?.syllabus || '—'} {profile?.class_level ? `· Class ${profile.class_level}` : ''}
+          {profile?.academic_track?.stream ? ` · ${profile.academic_track.stream}` : ''}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {profile?.subjects?.length
+            ? profile.subjects.map((s) => (
+                <span key={s} className="text-[10px] px-2 py-0.5 rounded-lg bg-slate-700 text-slate-300">{s}</span>
+              ))
+            : <span className="text-[10px] text-amber-400">None set — student sees the subject setup prompt</span>}
+        </div>
+      </div>
+
+      {/* Quota grant — presence + edit link. Editing itself stays in
+          AdminStudents.jsx's QuotaGrantEditor (the one write path, avoiding a
+          second form for the same action) — this screen is read-only by
+          design, as its own header text already said. */}
+      <div className="bg-slate-800/60 border border-white/5 rounded-2xl p-4 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold text-slate-400 flex items-center gap-1.5 mb-1">
+            <Sparkles size={12} className="text-emerald-400" /> Quota Grant
+          </p>
+          {override
+            ? <p className="text-xs text-slate-400">{formatCountdown(override.expires_at)}{override.reason ? ` — "${override.reason}"` : ''}</p>
+            : <p className="text-xs text-slate-500">No active grant.</p>}
+        </div>
+        <a href="/admin/students" className="flex items-center gap-1 text-[11px] text-primary-400 hover:text-primary-300 shrink-0">
+          <Pencil size={11} /> Edit in Students
+        </a>
       </div>
 
       {/* Stats grid */}
@@ -173,31 +242,18 @@ function StudentCard({ detail }) {
 }
 
 export default function AdminStudentLookup() {
-  const [query,   setQuery]   = useState('');
-  const [results, setResults] = useState([]);
-  const [detail,  setDetail]  = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState('');
+  const [selected, setSelected] = useState(null);
+  const [detail,   setDetail]   = useState(null);
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState('');
 
-  const handleSearch = async (e) => {
-    e.preventDefault();
-    if (!query.trim()) return;
-    setLoading(true); setError(''); setResults([]); setDetail(null);
-    try {
-      const data = await fetchStudentProfile(query);
-      setResults(data);
-      if (data.length === 1) await loadDetail(data[0].firebase_uid);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadDetail = async (uid) => {
+  const loadDetail = async (user) => {
+    setSelected(user);
+    setDetail(null);
+    if (!user) return;
     setLoading(true); setError('');
     try {
-      const d = await fetchStudentDetail(uid);
+      const d = await fetchStudentDetail(user.firebase_uid);
       setDetail(d);
     } catch (e) {
       setError(e.message);
@@ -213,29 +269,15 @@ export default function AdminStudentLookup() {
           <Search size={22} className="text-primary-400" /> Student Lookup
         </h1>
         <p className="text-slate-400 text-sm mt-1">
-          View any student's profile, quota, gamification, and test history (read-only).
+          View any student's profile, plan, quota, subjects, and test history (read-only).
         </p>
       </div>
 
-      {/* Search */}
-      <form onSubmit={handleSearch} className="flex gap-2">
-        <div className="flex-1 flex items-center gap-2 bg-slate-800/60 border border-white/10 rounded-xl px-3 py-2">
-          <Search size={14} className="text-slate-500 shrink-0" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Email address, display name, or Firebase UID…"
-            className="flex-1 bg-transparent text-sm text-white placeholder-slate-500 focus:outline-none"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={loading || !query.trim()}
-          className="px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-700 disabled:opacity-40 text-white text-sm font-bold transition-colors"
-        >
-          {loading ? <Loader2 size={14} className="animate-spin" /> : 'Look Up'}
-        </button>
-      </form>
+      {/* StudentPicker already debounces (300ms) against admin_search_users and
+          shows live name/email suggestions as you type — the exact-match
+          submit-a-query form this replaced required knowing the right spelling
+          up front. */}
+      <StudentPicker value={selected} onSelect={loadDetail} placeholder="Search by name or email…" />
 
       {error && (
         <div className="flex items-center gap-2 bg-red-900/20 border border-red-700/30 rounded-xl p-3 text-xs text-red-400">
@@ -243,39 +285,15 @@ export default function AdminStudentLookup() {
         </div>
       )}
 
-      {/* Multiple results picker */}
-      {results.length > 1 && !detail && (
-        <div className="bg-slate-800/60 border border-white/5 rounded-2xl overflow-hidden">
-          <p className="px-5 py-3 text-xs text-slate-500 border-b border-white/5">
-            {results.length} students found — click to view details
-          </p>
-          {results.map((u) => (
-            <button
-              key={u.firebase_uid}
-              onClick={() => loadDetail(u.firebase_uid)}
-              className="w-full flex items-center gap-3 px-5 py-3 hover:bg-white/5 border-b border-white/5 last:border-0 text-left transition-colors"
-            >
-              <User size={14} className="text-slate-500 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm text-white font-medium truncate">{u.display_name || '—'}</p>
-                <p className="text-xs text-slate-500 truncate">{u.email} · {u.target_exam}</p>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Student detail card */}
-      <AnimatePresence>
-        {detail && <StudentCard detail={detail} />}
-      </AnimatePresence>
-
-      {!loading && results.length === 0 && query && (
+      {loading && (
         <div className="text-center py-12 text-slate-500">
-          <User size={32} className="mx-auto mb-3 text-slate-700" />
-          <p className="text-sm">No students found for "{query}"</p>
+          <Loader2 size={22} className="mx-auto mb-2 animate-spin" />
         </div>
       )}
+
+      <AnimatePresence>
+        {detail && !loading && <StudentCard detail={detail} />}
+      </AnimatePresence>
     </div>
   );
 }

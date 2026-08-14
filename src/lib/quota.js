@@ -285,14 +285,29 @@ export async function getExpiryInfo(firebaseUid, subscription) {
     .from('quota_overrides').select('expires_at')
     .eq('user_id', firebaseUid).maybeSingle();
 
-  if (override?.expires_at && new Date(override.expires_at) > new Date()) {
-    return { kind: 'grant', expiresAt: override.expires_at };
-  }
+  return pickExpiryInfo(override?.expires_at, subscription);
+}
 
+/**
+ * The priority rule itself, pulled out as a pure function so a SECOND caller
+ * with a DIFFERENT data source can share it rather than re-encode the same
+ * decision.
+ *
+ * Needed because getExpiryInfo's fetch only works for a student reading their
+ * OWN row — quota_overrides_self_read is `user_id = verified_uid()`, so an
+ * admin looking up ANOTHER student gets nothing back through that path, not
+ * an error, just silently empty. AdminStudentLookup.jsx fetches the override
+ * via admin_get_quota_override (a SECURITY DEFINER RPC, correctly bypasses
+ * that self-only policy for an admin caller) and passes the result here —
+ * same rule, different, correctly-scoped data source.
+ */
+export function pickExpiryInfo(overrideExpiresAt, subscription) {
+  if (overrideExpiresAt && new Date(overrideExpiresAt) > new Date()) {
+    return { kind: 'grant', expiresAt: overrideExpiresAt };
+  }
   if (subscription?.isActive && subscription?.expires_at) {
     return { kind: 'subscription', expiresAt: subscription.expires_at, planName: subscription.plan };
   }
-
   return { kind: 'none', expiresAt: null };
 }
 
