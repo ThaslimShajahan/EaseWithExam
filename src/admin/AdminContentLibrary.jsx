@@ -648,6 +648,13 @@ function KnowledgeBaseViewer() {
                   {chunk.exam_type && (
                     <span className="text-[9px] text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded">{chunk.exam_type}</span>
                   )}
+                  {/* Unit before chapter, reading as "Unit 1: Wit and Wisdom >
+                      A Concrete Example". The column was already selected here
+                      but never rendered, so a chapter's grouping was invisible
+                      in the one screen used to audit what actually loaded. */}
+                  {chunk.unit && (
+                    <span className="text-[9px] text-sky-300 bg-sky-900/30 px-1.5 py-0.5 rounded">{chunk.unit}</span>
+                  )}
                   {chunk.chapter && (
                     <span className="text-[9px] text-slate-400 bg-slate-900 px-1.5 py-0.5 rounded">{chunk.chapter}</span>
                   )}

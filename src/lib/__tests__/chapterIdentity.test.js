@@ -286,7 +286,10 @@ describe('assignChapters — the Phase 2 integration point', () => {
     expect(r.ok).toBe(true);
     expect(r.chunks.every((c) => c.chapterKey === 'c11_fixture_book_ch01')).toBe(true);
     expect(r.chunks.every((c) => c.chapterName === 'FIXTURE Chapter One')).toBe(true);
-    expect(r.syllabusEntries).toEqual([{ chapterKey: 'c11_fixture_book_ch01', chapterName: 'FIXTURE Chapter One', sortOrder: 1 }]);
+    // `unit` rides along from the manifest entry; this fixture book has no unit
+    // headings, and null (not '' and not absent) is what "no unit" must look
+    // like all the way down to syllabus_nodes.unit.
+    expect(r.syllabusEntries).toEqual([{ chapterKey: 'c11_fixture_book_ch01', chapterName: 'FIXTURE Chapter One', sortOrder: 1, unit: null }]);
     // S2 (printed header) is never read in this slice, so every accept is
     // flagged by design — decideAssignments' own "two of three, third unread" path.
     expect(r.flagged).toBe(true);

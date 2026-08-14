@@ -13,10 +13,12 @@ import { getFeatureFlag, FLAGS } from '../lib/featureFlags';
 import { fetchPdfBuffer } from '../lib/pdfAnalyzer';
 import { extractPagesWithVision, MAX_VISION_PAGES } from '../lib/pdfVision';
 import {
-  runPYQExtraction, runNotesExtraction, buildKbRows, buildFigureRows, figuresForLesson,
-  matchSyllabusChapter, matchSyllabusChapterKeyed, normaliseMarks,
+  runPYQExtraction, extractNotesByManifest, buildKbRows, buildFigureRows, figuresForLesson,
+  matchSyllabusChapterKeyed, normaliseMarks,
 } from '../lib/contentExtraction';
+import { fileOrdinalFrom, candidatesForFile } from '../lib/chapterManifest';
 import { assignChapters } from '../lib/chapterIdentity';
+import { requireApprovedManifest } from '../lib/manifestExtraction';
 import { getSubjectsForExam, BOARDS, CLASS_LEVELS, EXAM_TYPE_GROUPS } from '../lib/categories';
 import { getChapters } from '../lib/syllabus';
 import { listDriveFolderPdfs, fetchDriveFileBytes } from '../lib/driveFolder';
@@ -178,20 +180,34 @@ export async function savePYQRows({ questions, examType, subject, year, source, 
 // row PER lesson/chapter (the curated notes library Content Map + the student-
 // facing Study Notes screen both read from) — a single unit upload with 3
 
-async function saveNoteChunks({
+/* Exported solely so scripts/bulk-load-unit-notes.mjs can drive the IDENTICAL
+ * function this screen calls, rather than reimplementing the write path. A
+ * second copy of this logic is exactly how the manifest gate came to be absent
+ * from one path while present in another. Nothing else imports it. */
+export async function saveNoteChunks({
   unit, lessons, examType, subject, chapter, source, callerUid, syllabusChapters,
   figures = [], equationsByPage = {},
-  // Phase 2 of the content-engine rebuild (docs/REBUILD_HANDOFF.md). `manifest`
-  // is the APPROVED chapter_manifests row's entries for this (examType,
-  // subject, book) — or null. Null is the common case today (most books have
-  // no manifest yet) and is NOT an error: this book keeps using the exact
-  // pre-Phase-2 pipeline below, unchanged. The new ordinal-anchored engine is
-  // opt-in per book via manifest approval, never a blanket cutover — making it
-  // mandatory would block every upload until every book has one, which is a
-  // much bigger scope than this slice.
-  manifest = null, filename = null, book = null, classLevel = null,
+  // `manifestRow` is the chapter_manifests row for this (examType, subject,
+  // book) — the whole row, not just its entries, because requireApprovedManifest
+  // needs `status` to tell "no manifest at all" apart from "a draft nobody has
+  // approved yet". Those are different operator problems and deserve different
+  // messages.
+  //
+  // FAIL-CLOSED since 2026-08-14. This used to accept null and fall through to
+  // matchSyllabusChapter(), which is how a real upload silently produced a
+  // chapter named "Poorvi" (the BOOK's title, read off a running header) and
+  // merged two distinct texts into one lesson, while reporting success. The
+  // engine was fully built and simply never reachable, because nothing could
+  // create an approved manifest. An opt-in protection that defaults to off is
+  // not a protection; see docs/REBUILD_HANDOFF.md.
+  manifestRow = null, filename = null, book = null, classLevel = null,
   adminSelectedOrdinal = null,
 }) {
+  // Throws unless there is an approved, structurally valid manifest. Nothing
+  // below this line runs — and so nothing is written — without one.
+  requireApprovedManifest(manifestRow);
+  const manifest = manifestRow.entries;
+
   const reviewQueueOn = await getFeatureFlag(FLAGS.CONTENT_REVIEW_QUEUE);
 
   let kbCount = 0;
@@ -208,31 +224,36 @@ async function saveNoteChunks({
     const chunks = lesson.chunks ?? [];
     if (!chunks.length) continue;
 
-    let chapterName, chapterKey = null;
-    if (manifest) {
-      // One representative page per LESSON, not per chunk — this pipeline's
-      // page data is lesson-scoped (lesson.page_start/page_end), individual
-      // chunks don't carry their own page number. A lesson maps to exactly
-      // one chapter (or is rejected outright), same granularity
-      // matchSyllabusChapter already operated at below.
-      const assigned = assignChapters({
-        manifest, filename, classLevel, book, adminSelectedOrdinal,
-        chunks: [{ pageNo: lesson.page_start ?? null }],
-      });
-      if (!assigned.ok) {
-        // REBUILD_HANDOFF.md's rule: disagree -> do not write, flag for
-        // review. Blocking the WHOLE upload rather than silently falling back
-        // to a model-guessed name is the entire point of Phase 2 — a fallback
-        // here would just rebuild the old failure mode one call site later.
-        throw new Error(`Chapter assignment failed for "${lesson.title || '(untitled lesson)'}" in "${filename}": ${assigned.reason}`);
-      }
-      chapterName = assigned.chunks[0].chapterName;
-      chapterKey  = assigned.chunks[0].chapterKey;
-      anyFlagged  = anyFlagged || assigned.flagged;
-      for (const e of assigned.syllabusEntries) syllabusEntriesToUpsert.set(e.chapterKey, e);
-    } else {
-      chapterName = matchSyllabusChapter(lesson.title || chapter, syllabusChapters) || lesson.title || chapter || subject;
+    // One representative page per LESSON, not per chunk — this pipeline's page
+    // data is lesson-scoped (lesson.page_start/page_end), individual chunks
+    // don't carry their own page number. That is exactly why the SPLIT is now
+    // done from the manifest upstream (extractNotesByManifest) rather than
+    // trusted from the model: once two chapters have been merged into one
+    // lesson, no page information survives at this granularity to separate
+    // them again. By the time we get here each lesson is already known to be
+    // one manifest chapter; assignChapters CORROBORATES that, it no longer
+    // has to discover it.
+    const assigned = assignChapters({
+      manifest, filename, classLevel, book,
+      // A manifest-split lesson knows its own ordinal, which is a decisive
+      // human-approved pick; fall back to the operator's choice otherwise.
+      adminSelectedOrdinal: lesson.manifestOrdinal ?? adminSelectedOrdinal,
+      chunks: [{ pageNo: lesson.page_start ?? null }],
+    });
+    if (!assigned.ok) {
+      // REBUILD_HANDOFF.md's rule: disagree -> do not write, flag for review.
+      // Blocking the WHOLE upload rather than silently falling back to a
+      // model-guessed name is the entire point — a fallback here would just
+      // rebuild the old failure mode one call site later.
+      throw new Error(`Chapter assignment failed for "${lesson.title || '(untitled lesson)'}" in "${filename}": ${assigned.reason}`);
     }
+    const chapterName = assigned.chunks[0].chapterName;
+    const chapterKey  = assigned.chunks[0].chapterKey;
+    // Per-chapter unit from the approved manifest, falling back to the
+    // operator's single form field for books whose manifest has no units.
+    const lessonUnit  = assigned.chunks[0].unit ?? unit ?? null;
+    anyFlagged  = anyFlagged || assigned.flagged;
+    for (const e of assigned.syllabusEntries) syllabusEntriesToUpsert.set(e.chapterKey, e);
     chapterNames.push(chapterName);
 
     if (reviewQueueOn) {
@@ -253,7 +274,7 @@ async function saveNoteChunks({
       kbCount += rows.length;
     } else {
       const kbRows = buildKbRows({
-        lesson, chapterName, chapterKey, book, unit, subject, examType, source, figures, equationsByPage,
+        lesson, chapterName, chapterKey, book, unit: lessonUnit, subject, examType, source, figures, equationsByPage,
       });
 
       const ids = await adminSaveKnowledgeChunks(kbRows);
@@ -288,7 +309,7 @@ async function saveNoteChunks({
       p_centre_id:    null,
       p_is_published: !reviewQueueOn,
       p_tags:         chunks.flatMap((c) => c.keywords || []).slice(0, 10),
-      p_unit:         unit || null,
+      p_unit:         lessonUnit,
       p_page_start:   lesson.page_start ?? null,
       p_page_end:     lesson.page_end ?? null,
       p_sort_order:   i,
@@ -313,6 +334,10 @@ async function saveNoteChunks({
       p_chapter_key: entry.chapterKey,
       p_class_level: classLevel,
       p_sort_order:  entry.sortOrder,
+      // 20260814040000 added this column so Syllabus and Content Map — the two
+      // surfaces reading syllabus_nodes — can group the way the student notes
+      // browser already does.
+      p_unit:        entry.unit ?? unit ?? null,
     });
     if (sylErr) throw new Error(`syllabus_nodes upsert failed for "${entry.chapterName}" (${entry.chapterKey}): ${sylErr.message}`);
   }
@@ -504,25 +529,32 @@ export default function AdminContentIntake() {
   }, [dbExamType, subject, step]);
   const syllabusChapterNames = syllabusChapters.map((c) => c.name);
 
-  // The APPROVED chapter_manifests row's entries for (dbExamType, subject,
-  // book) — or null. Read-open RLS (chapter_manifests_read), so this is a
-  // plain select, no RPC needed. Null is the normal, non-error state for any
-  // book that hasn't had a manifest approved yet — see saveNoteChunks' own
-  // comment on why that's additive, not a blocker.
-  const [manifest, setManifest] = useState(null);
+  // The chapter_manifests row for (dbExamType, subject, book) — WHOLE row, and
+  // deliberately NOT filtered by status. requireApprovedManifest() needs to see
+  // a draft in order to say "approve it first" instead of "none exists": those
+  // are different operator problems with different fixes, and collapsing them
+  // into one null was actively misleading.
+  //
+  // Read-open RLS (chapter_manifests_read), so this is a plain select.
+  const [manifestRow, setManifestRow] = useState(null);
   useEffect(() => {
-    if (!subject || step === 'type' || contentType !== 'notes') { setManifest(null); return; }
+    if (!subject || step === 'type' || contentType !== 'notes') { setManifestRow(null); return; }
     let cancelled = false;
     // .is('book', null) rather than .eq('book', null) — PostgREST's `=`
     // operator never matches NULL (standard SQL), only `IS` does. Getting
     // this wrong would silently break every single-book subject's lookup,
-    // which is most of them.
-    let q = supabase.from('chapter_manifests').select('entries')
-      .eq('exam_type', dbExamType).eq('subject', subject).eq('status', 'approved');
+    // which is most of them. Under fail-closed this now surfaces as a REFUSED
+    // upload rather than a silently mis-filed one, which is the point.
+    let q = supabase.from('chapter_manifests').select('id, status, entries, book')
+      .eq('exam_type', dbExamType).eq('subject', subject);
     q = book ? q.eq('book', book) : q.is('book', null);
-    q.maybeSingle().then(({ data }) => { if (!cancelled) setManifest(data?.entries ?? null); });
+    q.maybeSingle().then(({ data }) => { if (!cancelled) setManifestRow(data ?? null); });
     return () => { cancelled = true; };
   }, [dbExamType, subject, book, step, contentType]);
+
+  // Approved-and-usable is what the upload gate actually cares about; the raw
+  // row is kept for the banner so it can distinguish draft from missing.
+  const approvedManifest = manifestRow?.status === 'approved' ? manifestRow.entries : null;
 
   // Step 3 — items to process, regardless of source
   const [inputTab,  setInputTab]  = useState('file'); // file | url | folder
@@ -726,17 +758,44 @@ export default function AdminContentIntake() {
           // instead of trusting the AI to reproduce the passage itself (it paraphrases
           // even when told not to). Needed for literature/language subjects, where
           // extract-based comprehension questions must quote the real textbook text.
-          const markedText = pages.map((p, i) => `[[PAGE ${i + 1}]]\n${p}`).join('\n\n');
-          const { unit, lessons } = await runNotesExtraction({
-            rawText: markedText, pages, examType: dbExamType, subject,
+          // Which approved manifest entries does THIS file cover? Resolved from
+          // the filename's ordinal against the manifest's File # values.
+          //
+          // There is deliberately NO operator-pick fallback here. An earlier
+          // version of this block referenced `adminSelectedOrdinal`, which is a
+          // parameter of saveNoteChunks and has never existed in this scope —
+          // there is no ordinal picker in this screen's state. The branch could
+          // therefore only ever throw a ReferenceError, which is exactly what it
+          // did on the first real upload. Removed rather than back-filled with
+          // invented state: a picker is a real feature (see the hand-named-file
+          // limitation in docs/REBUILD_HANDOFF.md §13.1a), and until it exists
+          // the honest behaviour is to refuse and say what to fix.
+          const fileOrdinal = fileOrdinalFrom(it.name);
+          const covered = candidatesForFile(approvedManifest, fileOrdinal, null);
+          if (!covered.length) {
+            // Fail closed. Guessing which chapters a file holds is precisely
+            // the guess that produced "Poorvi".
+            throw new Error(
+              `"${it.name}" matches no entry in the approved manifest`
+              + (fileOrdinal == null
+                ? ' and no chapter number could be read from its filename. Set this file\'s chapter explicitly, or give the manifest entries a File # that matches.'
+                : ` (file ordinal ${fileOrdinal}). Set File # on the manifest entries this file contains.`),
+            );
+          }
+
+          // Manifest-driven split: N covered entries produce exactly N chapters.
+          // The model never decides a chapter boundary — see
+          // extractNotesByManifest's header for the failure this replaces.
+          const { unit, lessons } = await extractNotesByManifest({
+            pages, entries: covered, examType: dbExamType, subject,
             onProgress: (msg) => setStepMsg({ message: msg }),
           });
-          setStepMsg({ message: `Saving ${lessons.length} lesson(s)…` });
+          setStepMsg({ message: `Saving ${lessons.length} chapter(s)…` });
           const { kbCount, chapterName, lessonCount, flagged } = await saveNoteChunks({
             unit, lessons, examType: dbExamType, subject, chapter: it.chapter || chapterHint,
             source: `${it.source}:${it.name}`, callerUid, syllabusChapters: syllabusChapterNames,
             figures, equationsByPage,
-            manifest, filename: it.name, book: book || null, classLevel,
+            manifestRow, filename: it.name, book: book || null, classLevel,
           });
           setStepMsg({
             status: failedPages?.length ? 'partial' : 'done',
@@ -873,22 +932,36 @@ export default function AdminContentIntake() {
               )}
             </div>
 
+            {/* Three states, not two. "Draft exists but nobody approved it" and
+                "no manifest at all" have different fixes, and both now BLOCK the
+                upload rather than silently downgrading it. */}
             {contentType === 'notes' && subject && (
-              manifest
+              approvedManifest
                 ? (
                   <div className="flex items-start gap-2 bg-emerald-900/20 border border-emerald-700/20 rounded-xl p-3">
                     <CheckCircle2 size={13} className="text-emerald-400 mt-0.5 shrink-0" />
                     <p className="text-xs text-emerald-300">
-                      Approved chapter manifest found ({manifest.length} chapter{manifest.length !== 1 ? 's' : ''}) —
-                      uploads will use real chapter identity, not an AI-guessed name.
+                      Approved chapter manifest found ({approvedManifest.length} chapter{approvedManifest.length !== 1 ? 's' : ''}) —
+                      the manifest decides the chapter split; the AI only structures content inside each chapter.
+                    </p>
+                  </div>
+                ) : manifestRow ? (
+                  <div className="flex items-start gap-2 bg-amber-900/20 border border-amber-700/20 rounded-xl p-3">
+                    <AlertTriangle size={13} className="text-amber-400 mt-0.5 shrink-0" />
+                    <p className="text-xs text-amber-300">
+                      A chapter manifest exists for this book but is <b>{manifestRow.status}</b>, not approved.
+                      Notes uploads are blocked until an admin reviews and approves it in
+                      Content&nbsp;→&nbsp;Chapter Manifests.
                     </p>
                   </div>
                 ) : (
-                  <div className="flex items-start gap-2 bg-slate-800/40 border border-white/5 rounded-xl p-3">
-                    <Info size={13} className="text-slate-500 mt-0.5 shrink-0" />
-                    <p className="text-xs text-slate-500">
-                      No approved chapter manifest for this book yet — uploads will use the existing
-                      AI-guessed chapter matching, same as before Phase 2.
+                  <div className="flex items-start gap-2 bg-red-900/20 border border-red-700/25 rounded-xl p-3">
+                    <AlertTriangle size={13} className="text-red-400 mt-0.5 shrink-0" />
+                    <p className="text-xs text-red-300">
+                      <b>No chapter manifest for this book — notes uploads are blocked.</b> Create and approve
+                      one in Content&nbsp;→&nbsp;Chapter Manifests first. Uploading without one is what
+                      previously produced a chapter named after the book's running header and merged two
+                      texts into one.
                     </p>
                   </div>
                 )

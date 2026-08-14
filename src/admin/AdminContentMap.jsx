@@ -54,7 +54,7 @@ function buildTree(syllabusRows, pyqRows, noteRows) {
     tree[exam] ??= { classes: {} };
     tree[exam].classes[cls] ??= { subjects: {} };
     tree[exam].classes[cls].subjects[subject] ??= { chapters: {} };
-    tree[exam].classes[cls].subjects[subject].chapters[chapter] ??= { pyq: 0, notes: 0, inSyllabus: false, pyqIds: [], noteIds: [] };
+    tree[exam].classes[cls].subjects[subject].chapters[chapter] ??= { pyq: 0, notes: 0, inSyllabus: false, pyqIds: [], noteIds: [], unit: null };
     return tree[exam].classes[cls].subjects[subject].chapters[chapter];
   };
 
@@ -63,7 +63,12 @@ function buildTree(syllabusRows, pyqRows, noteRows) {
   syllabusRows.forEach((r) => {
     const exam = baseExamType(r.exam_type);
     const cls  = classFromExamType(r.exam_type, r.class_level) ?? 'All';
-    ensureChapter(exam, cls, r.subject || 'Unmapped', r.chapter_name || 'Unmapped').inSyllabus = true;
+    const node = ensureChapter(exam, cls, r.subject || 'Unmapped', r.chapter_name || 'Unmapped');
+    node.inSyllabus = true;
+    // Only syllabus_nodes carries the unit for the chapter TREE — pyq_questions
+    // and knowledge_base rows are matched here by chapter NAME, and a name is
+    // not enough to attribute a unit safely.
+    node.unit = r.unit ?? node.unit;
   });
 
   // pyq_questions and study_notes don't carry their own class_level column, but
@@ -153,6 +158,24 @@ function ChapterRow({ name, data, approximate, onDelete, isDeleting }) {
   );
 }
 
+/* Ungrouped chapters render with no heading at all rather than under an
+ * "Other" bucket — a book with no units should look exactly as it did before
+ * units existed. */
+const UNGROUPED = '__ungrouped__';
+
+function groupByUnit(chapterEntries) {
+  const groups = new Map();
+  for (const entry of chapterEntries) {
+    const unit = entry[1].unit?.trim() || UNGROUPED;
+    if (!groups.has(unit)) groups.set(unit, []);
+    groups.get(unit).push(entry);
+  }
+  // Ungrouped last, so named units lead; insertion order otherwise, which is
+  // already sort_order from the query.
+  return [...groups.entries()].sort((a, b) =>
+    (a[0] === UNGROUPED ? 1 : 0) - (b[0] === UNGROUPED ? 1 : 0));
+}
+
 function SubjectBlock({ subject, data, search, approximate, onDeleteChapter, deletingKey }) {
   const [open, setOpen] = useState(!!search);
   const chapters = Object.entries(data.chapters)
@@ -180,11 +203,25 @@ function SubjectBlock({ subject, data, search, approximate, onDeleteChapter, del
       <AnimatePresence>
         {open && (
           <motion.div initial={{ height: 0 }} animate={{ height: 'auto' }} exit={{ height: 0 }} className="overflow-hidden">
+            {/* Grouped by the book's own unit heading when the syllabus rows
+                carry one, so a unit's chapters read as one thing instead of as
+                unrelated siblings. Chapters with no unit keep the flat list
+                they always had — most books have no units, and inventing a
+                bucket for them would be noise. */}
             <div className="py-1.5 space-y-0.5">
-              {chapters.map(([name, data]) => (
-                <ChapterRow key={name} name={name} data={data} approximate={approximate}
-                  isDeleting={deletingKey === `${subject}::${name}`}
-                  onDelete={(n, d) => onDeleteChapter(subject, n, d)} />
+              {groupByUnit(chapters).map(([unit, list]) => (
+                <div key={unit}>
+                  {unit !== UNGROUPED && (
+                    <p className="px-3 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      {unit}
+                    </p>
+                  )}
+                  {list.map(([name, data]) => (
+                    <ChapterRow key={name} name={name} data={data} approximate={approximate}
+                      isDeleting={deletingKey === `${subject}::${name}`}
+                      onDelete={(n, d) => onDeleteChapter(subject, n, d)} />
+                  ))}
+                </div>
               ))}
             </div>
           </motion.div>
@@ -207,7 +244,7 @@ export default function AdminContentMap() {
     setLoading(true); setError('');
     try {
       const [syllabusRes, pyqRes, notesRes] = await Promise.all([
-        supabase.from('syllabus_nodes').select('exam_type, class_level, subject, chapter_name').eq('is_active', true).limit(5000),
+        supabase.from('syllabus_nodes').select('exam_type, class_level, subject, chapter_name, unit').eq('is_active', true).limit(5000),
         supabase.from('pyq_questions').select('id, exam_type, subject, chapter').limit(5000),
         supabase.rpc('admin_list_study_notes', { p_caller: getCallerUid() }),
       ]);

@@ -24,7 +24,7 @@ const SYSTEM_PROMPT = `You read a textbook's own Contents / Table of Contents pa
 its chapter list EXACTLY as printed. You do not invent, merge, split, reorder or
 rename anything the page does not show.
 
-Return JSON: { "entries": [ { "ordinal", "title", "pageStart", "pageEnd", "numbered", "printedNumber", "band" } ] }
+Return JSON: { "entries": [ { "ordinal", "title", "unit", "pageStart", "pageEnd", "numbered", "printedNumber", "band" } ] }
 
 - ordinal: your own running count starting at 1, in the order printed. This is
   the chapter's IDENTITY going forward, so it must be stable and sequential —
@@ -41,9 +41,17 @@ Return JSON: { "entries": [ { "ordinal", "title", "pageStart", "pageEnd", "numbe
 - printedNumber: the number actually printed next to this entry (a section can
   restart at 1 partway through a book — Hornbill's Writing Skills does exactly
   this after 8 numbered Reading Skills chapters). null if numbered is false.
+- unit: the book's own grouping heading this entry sits under, transcribed as
+  printed, including its number if it has one ("Unit 1: Wit and Wisdom",
+  "Theme 2: The Living World"). Every entry inside that heading repeats the SAME
+  string exactly — this is what groups them together downstream, so an
+  inconsistent rendering splits one unit into several. null if the contents page
+  shows no such grouping. Do not invent a unit from the chapter's subject
+  matter: transcribe a heading the page actually prints, or return null.
 - band: a short lowercase word for which SECTION of the book this entry is in,
   if the contents page shows sections (e.g. "reading", "writing"). null if the
-  book has no sections.
+  book has no sections. This is a coarse structural bucket, NOT the printed unit
+  heading — when the page shows both, they are different fields.
 
 If the page lists supplementary/appendix/answer material with no chapter
 number, DO NOT include it as an entry — that is exactly the front matter this
@@ -108,6 +116,11 @@ function normaliseEntries(entries) {
   return entries.map((e) => ({
     ordinal:       Number.isFinite(Number(e?.ordinal)) ? Math.trunc(Number(e.ordinal)) : null,
     title:         String(e?.title ?? '').trim(),
+    // Trimmed to null rather than kept as '' — validateManifest rejects an
+    // empty unit precisely so a blank grouping heading can never reach the
+    // browsers, and "the model returned whitespace" means "no unit", not
+    // "a unit whose name is nothing".
+    unit:          String(e?.unit ?? '').trim() || null,
     pageStart:     Number.isFinite(Number(e?.pageStart)) ? Math.trunc(Number(e.pageStart)) : null,
     pageEnd:       Number.isFinite(Number(e?.pageEnd)) ? Math.trunc(Number(e.pageEnd)) : null,
     numbered:      e?.numbered !== false,

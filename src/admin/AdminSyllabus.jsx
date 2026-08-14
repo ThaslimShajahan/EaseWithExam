@@ -148,6 +148,7 @@ function ChapterPanel({ open, exam, subject, classLevel, existing, onSave, onClo
   const [name,       setName]       = useState('');
   const [key,        setKey]        = useState('');
   const [order,      setOrder]      = useState(1);
+  const [unit,       setUnit]       = useState('');
   const [subtopics,  setSubtopics]  = useState([]);
   const [saving,     setSaving]     = useState(false);
   const [error,      setError]      = useState('');
@@ -158,6 +159,7 @@ function ChapterPanel({ open, exam, subject, classLevel, existing, onSave, onClo
       setName(existing?.chapter_name ?? '');
       setKey(existing?.chapter_key  ?? '');
       setOrder(existing?.sort_order  ?? 1);
+      setUnit(existing?.unit ?? '');
       setSubtopics(existing?.subtopics ?? []);
       setError('');
       setAutoKey(!existing);
@@ -190,6 +192,12 @@ function ChapterPanel({ open, exam, subject, classLevel, existing, onSave, onClo
         p_sort_order:   Number(order) || 1,
         p_subtopics:    subtopics,
         p_id:           existing?.id ?? null,
+        // 20260814040000. Normally written by the content intake straight from
+        // the approved manifest entry; editable here for chapters created by
+        // hand, and for correcting an inconsistent label (grouping is by exact
+        // string, so "Unit 1: Wit and Wisdom" and "Wit and Wisdom" split into
+        // two groups).
+        p_unit:         unit.trim() || null,
       });
       if (err) throw err;
       logChange(
@@ -278,6 +286,20 @@ function ChapterPanel({ open, exam, subject, classLevel, existing, onSave, onClo
                   value={order}
                   onChange={(e) => setOrder(e.target.value)}
                 />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide block">Unit / grouping heading</label>
+                <input
+                  type="text" placeholder="e.g. Unit 1: Wit and Wisdom — blank if the book has no units"
+                  className="w-full bg-slate-800 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  value={unit}
+                  onChange={(e) => setUnit(e.target.value)}
+                />
+                <p className="text-[11px] text-slate-500">
+                  Chapters sharing this exact text are grouped together. Normally filled in automatically from the
+                  book's approved chapter manifest.
+                </p>
               </div>
 
               <SubtopicsInput value={subtopics} onChange={setSubtopics} />

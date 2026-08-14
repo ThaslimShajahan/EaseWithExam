@@ -682,8 +682,114 @@ ${batches[b]}`,
   return { unit, lessons: mergedLessons };
 }
 
-// chapters becomes 3 study_notes rows sharing the same `unit`, each with its
-// own title and real page range, instead of one flattened blob.
+/**
+ * Manifest-DRIVEN extraction: the approved manifest decides where one chapter
+ * ends and the next begins, and the model only structures content inside a
+ * chapter whose bounds it was given.
+ *
+ * WHY THIS EXISTS — the failure it was written for
+ * "UNIT 1 WIT AND WISDOM.pdf" (NCERT Class 8 English, Poorvi) contains THREE
+ * texts: "The Wit that Won Hearts" (pp1-16), "A Concrete Example" (pp17-26) and
+ * "Wisdom Paves the Way" (pp27-47). runNotesExtraction produced TWO lessons: the
+ * first text, and a single merged blob containing the other two, titled
+ * "Poorvi" — the book's name, read off a running header. It reported success.
+ *
+ * That is structural, not a bad model day. runNotesExtraction batches by
+ * CHARACTER COUNT (splitIntoBatches) and re-joins lessons by TITLE, so chapter
+ * boundaries are wherever the model says they are. And page numbers exist only
+ * per LESSON (page_start/page_end), never per chunk — so once two chapters have
+ * been merged into one lesson, no page information survives at that granularity
+ * to separate them again. Labelling after the fact cannot undo it; a manifest
+ * consulted downstream can only rename the blob, not split it.
+ *
+ * So the split moves upstream of the model: slice `pages` by each manifest
+ * entry's own page range, extract each slice independently, and collapse each
+ * slice's output into exactly ONE lesson carrying the manifest's title. N
+ * manifest entries in, N chapters out, always — the model is never asked where a
+ * chapter starts.
+ *
+ * @param {string[]} pages         per-page text, index 0 = first page of THIS file
+ * @param {object[]} entries       approved manifest entries this file covers
+ * @param {number}   pageOffset    printed page number of pages[0]; index = printed - pageOffset
+ * @returns {{ unit, lessons }}    same shape runNotesExtraction returns
+ */
+export async function extractNotesByManifest({
+  pages, entries, pageOffset = null, examType, subject, onProgress = () => {},
+}) {
+  if (!pages?.length) throw new Error('extractNotesByManifest requires the `pages` array — the split is sliced from it.');
+  if (!entries?.length) throw new Error('extractNotesByManifest requires at least one manifest entry to split by.');
+
+  const ordered = [...entries].sort((a, b) => a.pageStart - b.pageStart);
+
+  // Default: assume the file begins exactly at its first covered chapter, which
+  // is what a per-chapter or per-unit extract is. Stated rather than detected —
+  // a wrong offset silently shifts every boundary, so the caller is expected to
+  // pass a confirmed value when the file's first printed page is known.
+  const offset = pageOffset ?? ordered[0].pageStart;
+
+  const lessons = [];
+  for (let i = 0; i < ordered.length; i++) {
+    const entry = ordered[i];
+    const startIdx = entry.pageStart - offset;
+    const endIdx   = entry.pageEnd   - offset;
+
+    // Refuse rather than clamp. A range falling outside the file means the
+    // manifest and the file disagree about what this file contains — exactly
+    // the disagreement the rebuild exists to catch, and clamping would paper
+    // over it by silently extracting the wrong pages.
+    if (startIdx < 0 || endIdx >= pages.length || endIdx < startIdx) {
+      throw new Error(
+        `Manifest entry ${entry.ordinal} ("${entry.title}") claims printed pages ${entry.pageStart}-${entry.pageEnd}, `
+        + `which maps to file pages ${startIdx + 1}-${endIdx + 1} — outside this ${pages.length}-page file. `
+        + `Either the wrong file was selected for this book, or the first printed page is not ${offset}.`,
+      );
+    }
+
+    const slice = pages.slice(startIdx, endIdx + 1);
+    onProgress(`Extracting chapter ${i + 1}/${ordered.length}: "${entry.title}"…`);
+
+    const markedSlice = slice.map((p, n) => `[[PAGE ${n + 1}]]\n${p}`).join('\n\n');
+    const out = await runNotesExtraction({
+      rawText: markedSlice, pages: slice, examType, subject,
+      onProgress: (msg) => onProgress(`${msg} (chapter ${i + 1}/${ordered.length})`),
+    });
+
+    // Collapse to ONE lesson. Whatever internal sections the model found inside
+    // this slice, they are all parts of this one manifest chapter by
+    // construction — the slice contains nothing else. This is the step that
+    // makes "3 entries in, 3 chapters out" a guarantee rather than a hope.
+    const chunks = out.lessons.flatMap((l) => l.chunks ?? []);
+    if (!chunks.length) {
+      throw new Error(`No content extracted for manifest entry ${entry.ordinal} ("${entry.title}") from pages ${entry.pageStart}-${entry.pageEnd}.`);
+    }
+    const verbatimText = out.lessons.map((l) => l.verbatimText).filter(Boolean).join('\n\n') || null;
+
+    lessons.push({
+      title:      entry.title,          // the manifest's, never the model's
+      chunks,
+      verbatimText,
+      page_start: entry.pageStart,      // printed numbers, authoritative
+      page_end:   entry.pageEnd,
+      // Markers are re-based from slice-relative back to file-relative, because
+      // buildKbRows filters figures and equations against the FILE's page
+      // numbering. Leaving them slice-relative would attach chapter 3's figures
+      // to chapter 1's pages.
+      marker_start: startIdx + 1,
+      marker_end:   endIdx + 1,
+      // Consumed by saveNoteChunks as a decisive human-approved pick, so
+      // assignChapters corroborates this exact entry rather than re-deriving it.
+      manifestOrdinal: entry.ordinal,
+      unit: entry.unit ?? null,
+    });
+  }
+
+  // The unit label comes from the manifest entries, not the model. Mixed units
+  // in one file are legitimate (a file spanning a unit boundary), and the
+  // per-lesson `unit` above is what actually gets written — this top-level
+  // value is only the banner summary.
+  const units = [...new Set(lessons.map((l) => l.unit).filter(Boolean))];
+  return { unit: units.length === 1 ? units[0] : null, lessons };
+}
 
 /* ── Subject families ────────────────────────────────────────────────────
  *

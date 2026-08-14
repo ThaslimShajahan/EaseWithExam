@@ -64,6 +64,17 @@ export function validateManifest(entries) {
     if (!isInt(e?.pageStart) || !isInt(e?.pageEnd)) errors.push(`${at}: pageStart and pageEnd must be integers`);
     else if (e.pageEnd < e.pageStart) errors.push(`${at}: pageEnd ${e.pageEnd} is before pageStart ${e.pageStart}`);
 
+    // `unit` is the book's own grouping heading for this entry ("Unit 1: Wit
+    // and Wisdom") and is OPTIONAL — plenty of books have no units at all, and
+    // requiring one would reject them. But an entry that carries the key must
+    // carry a real label: an empty string would group chapters under a blank
+    // heading in every browser that groups by it, which reads as a bug rather
+    // than as "this book has no units" (that is what null means).
+    if (e?.unit != null) {
+      if (typeof e.unit !== 'string') errors.push(`${at}: unit must be a string or null`);
+      else if (!e.unit.trim()) errors.push(`${at}: unit is present but empty — use null when the book has no units`);
+    }
+
     if (isInt(e?.ordinal)) {
       if (seenOrdinal.has(e.ordinal)) errors.push(`${at}: duplicate ordinal ${e.ordinal}, already used by "${seenOrdinal.get(e.ordinal)}"`);
       else seenOrdinal.set(e.ordinal, e.title);

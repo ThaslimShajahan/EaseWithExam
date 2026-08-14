@@ -1,5 +1,5 @@
 import { lazy } from 'react';
-import { Inbox, Library, ClipboardCheck, BookOpenText, BookOpen, Network } from 'lucide-react';
+import { Inbox, Library, ClipboardCheck, BookOpenText, BookOpen, Network, ShieldCheck } from 'lucide-react';
 import AdminHub from './AdminHub';
 
 const AdminContentIntake  = lazy(() => import('./AdminContentIntake'));
@@ -8,6 +8,7 @@ const AdminContentReview  = lazy(() => import('./AdminContentReview'));
 const AdminSyllabus       = lazy(() => import('./AdminSyllabus'));
 const AdminStudyNotes     = lazy(() => import('./AdminStudyNotes'));
 const AdminContentMap     = lazy(() => import('./AdminContentMap'));
+const AdminChapterManifest = lazy(() => import('./AdminChapterManifest'));
 
 export default function AdminContentHub() {
   return (
@@ -17,6 +18,9 @@ export default function AdminContentHub() {
       defaultTab="intake"
       tabs={[
         { id: 'intake',    icon: Inbox,           label: 'Content Intake',  element: <AdminContentIntake /> },
+        // Sits immediately after Intake because it is now a PREREQUISITE for it:
+        // a Study Notes upload is refused until this book's manifest is approved.
+        { id: 'manifests', icon: ShieldCheck,     label: 'Chapter Manifests', element: <AdminChapterManifest /> },
         { id: 'library',   icon: Library,         label: 'Content Library', element: <AdminContentLibrary /> },
         { id: 'review',    icon: ClipboardCheck,  label: 'Review Queue',    element: <AdminContentReview /> },
         { id: 'syllabus',  icon: BookOpenText,    label: 'Syllabus',        element: <AdminSyllabus /> },

@@ -215,12 +215,23 @@ export function assignChapters({ manifest, filename, chunks, classLevel, book = 
 
   let candidates = candidatesForFile(manifest, fileOrdinal, filePageRange);
 
-  // A decisive human pick can supply its own candidate when the file itself
-  // produced none — this is specifically for hand-named files where
-  // fileOrdinalFrom() returns null, so candidatesForFile() has nothing to key
-  // off (see this function's own header comment on adminSelectedOrdinal). The
-  // manifest entry still has to be real; decideAssignments enforces that.
-  if (candidates.length === 0 && adminSelectedOrdinal != null) {
+  // A decisive human pick NARROWS the candidate set to exactly that entry — it
+  // does not merely supply one when the file produced none.
+  //
+  // It used to only fill an EMPTY candidate list, which quietly made
+  // multi-chapter files unassignable: one file covering three manifest entries
+  // yields three candidates, and decideAssignments rejects every proposal that
+  // is not the selected ordinal, while any REJECT here blocks the whole file.
+  // The pick could therefore never resolve the one case it exists for — an
+  // over-split file where an admin has looked and said which chapter this is.
+  // A unit PDF holding three texts is exactly that case, and it is now the
+  // normal path: extractNotesByManifest splits by the manifest and hands each
+  // resulting lesson its own manifestOrdinal to corroborate against.
+  //
+  // The entry still has to be real — decideAssignments throws on an ordinal the
+  // manifest does not contain, so this narrows within the closed set, never out
+  // of it.
+  if (adminSelectedOrdinal != null) {
     const picked = manifest.find((m) => m.ordinal === adminSelectedOrdinal);
     if (picked) candidates = [picked];
   }
@@ -268,9 +279,18 @@ export function assignChapters({ manifest, filename, chunks, classLevel, book = 
     if (!chapterKeysByOrdinal.has(entry.ordinal)) {
       const chapterKey = chapterKeyFor({ prefix, classLevel, book, ordinal: entry.ordinal });
       chapterKeysByOrdinal.set(entry.ordinal, chapterKey);
-      syllabusEntries.push({ chapterKey, chapterName: entry.title, sortOrder: entry.ordinal });
+      // `unit` rides along from the approved manifest entry rather than from
+      // the operator's single Unit field on the intake form. Both exist, and
+      // they disagree the moment one file spans two units — the manifest is
+      // per-entry and human-approved, so it wins.
+      syllabusEntries.push({ chapterKey, chapterName: entry.title, sortOrder: entry.ordinal, unit: entry.unit ?? null });
     }
-    chunksOut.push({ ...chunk, chapterKey: chapterKeysByOrdinal.get(entry.ordinal), chapterName: entry.title });
+    chunksOut.push({
+      ...chunk,
+      chapterKey:  chapterKeysByOrdinal.get(entry.ordinal),
+      chapterName: entry.title,
+      unit:        entry.unit ?? null,
+    });
   }
 
   return { ok: true, flagged, chunks: chunksOut, syllabusEntries };
