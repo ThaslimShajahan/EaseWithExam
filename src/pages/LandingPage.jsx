@@ -520,20 +520,41 @@ function CampaignSection() {
           </a>
         </div>
         {hasImage && (
-          // object-contain, not cover — 2026-08-15. Uploaded campaign images
-          // are promotional flyers with their own embedded text/branding
-          // (real one tested: 2752x1536, ~1.8:1), and this box's ratio never
-          // matches that closely at any width (~1.5:1 on mobile, ~1.4:1 at
-          // lg+) — cover was cropping the sides enough to cut real content
-          // ("EARLY BIRD OFFER" losing its "EA"). contain always shows the
-          // whole image; any letterbox gap shows the card's own gradient
-          // behind it rather than a hard edge, so it reads as intentional.
-          <div className="h-56 lg:h-full lg:min-h-[320px] flex items-center justify-center">
+          // Fourth iteration, 2026-08-15. v1 (cover + fixed min-h-[320px])
+          // cropped real content off the sides. v2 (contain) fixed the
+          // cropping but left visible green padding on every edge. v3
+          // (cover + lg:h-full, no fixed height) looked right for a
+          // landscape image, but a REAL bug surfaced testing a portrait
+          // upload (800x1400): lg:h-full inside a grid row with no explicit
+          // track height cannot actually resolve as "100% of a row sized by
+          // the text column" — percentage heights against an auto-sized
+          // grid track are indefinite, so the browser fell back to sizing
+          // the box from the image's OWN intrinsic aspect ratio at that
+          // column width (448px wide ÷ portrait's 0.57 ratio = 784px tall),
+          // ballooning the whole card to match the IMAGE instead of the
+          // (short) text — the opposite of what this was supposed to do.
+          //
+          // Fixed by taking the image out of the row's height calculation
+          // entirely: at lg+, the <img> is absolutely positioned (inset-0)
+          // inside a `relative` wrapper, so it contributes zero intrinsic
+          // size — the row height is then genuinely determined by the text
+          // column alone, exactly as intended — and lg:self-stretch makes
+          // the (now content-less, from the grid's perspective) wrapper
+          // fill that resolved height, which the absolute image then covers
+          // edge-to-edge regardless of its own aspect ratio. Verified
+          // against a portrait (0.57:1) and a wide-banner (5.3:1) upload,
+          // not just the landscape one this bug was found on.
+          //
+          // Mobile/tablet (stacked, no row to inherit from): unchanged,
+          // aspect-video (16:9) — that path was never affected, since a
+          // plain in-flow box with an explicit aspect-ratio has no such
+          // circularity.
+          <div className="relative aspect-video lg:aspect-auto lg:self-stretch">
             <img
               src={landing_campaign_image_url}
               alt={landing_campaign_label || 'Campaign'}
               onError={() => setImageBroken(true)}
-              className="w-full h-full object-contain"
+              className="w-full h-full object-cover lg:absolute lg:inset-0"
             />
           </div>
         )}

@@ -525,7 +525,12 @@ export default function AdminPlatformSettings() {
                 admin types, before saving. */}
             <div>
               <p className="text-xs text-slate-500 mb-2">Preview</p>
-              <div className={`rounded-2xl overflow-hidden bg-gradient-to-br from-primary-600 to-primary-700 ${lv('landing_campaign_image_url') ? 'sm:grid sm:grid-cols-2 sm:items-center' : ''}`}>
+              {/* lg: breakpoint, matching CampaignSection exactly — this
+                  used to switch at sm:, which meant the preview showed a
+                  two-column layout ~380px earlier than the real page ever
+                  would, and was never actually "exactly what students will
+                  see" the way this section's own comment claimed. */}
+              <div className={`rounded-2xl overflow-hidden bg-gradient-to-br from-primary-600 to-primary-700 ${lv('landing_campaign_image_url') ? 'lg:grid lg:grid-cols-2 lg:items-center' : ''}`}>
                 <div className="p-5 text-center">
                   <span className="inline-flex items-center gap-1.5 bg-white/15 text-white text-[10px] font-bold px-2.5 py-1 rounded-full mb-3">
                     <Sparkles size={10} /> Limited time
@@ -541,11 +546,11 @@ export default function AdminPlatformSettings() {
                   </span>
                 </div>
                 {lv('landing_campaign_image_url') && (
-                  // object-contain, matching CampaignSection's own fix — see
-                  // that component's comment. Kept in sync so this preview
-                  // shows the same crop behavior the public page actually has.
-                  <div className="h-32 sm:h-full flex items-center justify-center">
-                    <img src={lv('landing_campaign_image_url')} alt="" className="w-full h-full object-contain" />
+                  // Matches CampaignSection's own fix exactly — see that
+                  // component's comment for the full reasoning (a portrait
+                  // upload was ballooning the whole card before this).
+                  <div className="relative aspect-video lg:aspect-auto lg:self-stretch">
+                    <img src={lv('landing_campaign_image_url')} alt="" className="w-full h-full object-cover lg:absolute lg:inset-0" />
                   </div>
                 )}
               </div>
