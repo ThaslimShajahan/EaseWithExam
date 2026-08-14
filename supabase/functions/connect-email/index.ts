@@ -116,7 +116,9 @@ serve(async (req) => {
 
   const resendResp = await fetch('https://api.resend.com/emails', {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${RESEND_API_KEY}` },
+    // Explicit charset — same fix as send-email/index.ts, applied here too
+    // since this function makes the identical call shape to the identical API.
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Authorization': `Bearer ${RESEND_API_KEY}` },
     body: JSON.stringify({
       from:    FROM_ADDRESS,
       to:      normalized,

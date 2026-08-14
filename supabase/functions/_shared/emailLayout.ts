@@ -129,6 +129,70 @@ export function renderTemplateRow(
   return { subject, html };
 }
 
+// Receipt-specific renderer (subscription_receipt only) — approved redesign,
+// 2026-08-14 (see chat: side-by-side of the old checklist-style layout vs
+// this one, rendered from a real completed transaction). Same admin-editable
+// fields as renderTemplateRow above, just laid out like a receipt instead of
+// a feature-announcement email:
+//   subject      -> email subject, unchanged
+//   heading      -> the "Payment received" status pill text
+//   (vars.amount)-> the price itself, set large and centered — a receipt
+//                   states its total once, unmissably, not as prose, so this
+//                   comes straight from the amount variable, not a field
+//   bullet_points-> the SAME stored "Label: value" strings the admin already
+//                   edits as a bulleted checklist for every other template,
+//                   here parsed on the first ":" and rendered as rows in a
+//                   bordered table instead — no new admin field needed,
+//                   Payment ID gets a monospace value cell by matching its
+//                   own label text, everything else stays proportional text
+//   body_text    -> the line below the table ("Your {{planName}} plan is
+//                   active — the full toolkit is unlocked.")
+//   button/footer-> identical to renderTemplateRow
+export function renderReceiptEmail(
+  row: TemplateRow,
+  vars: Record<string, string>,
+): { subject: string; html: string } {
+  const subject  = substitute(row.subject, vars);
+  const pillText = substitute(row.heading, vars);
+  const body     = row.body_text ? substitute(row.body_text, vars) : '';
+  const footer   = row.footer_note ? substitute(row.footer_note, vars) : '';
+
+  const lines = (row.bullet_points ?? []).map((raw) => substitute(raw, vars));
+  const rowsHtml = lines.map((line, i) => {
+    const sep = line.indexOf(':');
+    const label = sep === -1 ? line : line.slice(0, sep).trim();
+    const value = sep === -1 ? '' : line.slice(sep + 1).trim();
+    const isLast = i === lines.length - 1;
+    const isMono = /payment id/i.test(label);
+    const border = isLast ? '' : 'border-bottom:1px solid #F1F5F9;';
+    return `<tr>
+      <td style="padding:14px 18px;font-size:13px;color:#64748B;${border}">${label}</td>
+      <td style="padding:14px 18px;font-size:${isMono ? '12px' : '13px'};color:#0F172A;font-weight:600;${isMono ? 'font-family:ui-monospace,SFMono-Regular,Consolas,monospace;' : ''}text-align:right;${border}">${value}</td>
+    </tr>`;
+  }).join('');
+
+  const path = row.button_path;
+  const buttonHtml = (row.button_label && path)
+    ? button(row.button_label, path.startsWith('http') ? path : `${SITE_URL}${path}`)
+    : '';
+
+  const html = `
+    <div style="text-align:center;margin:0 0 4px;">
+      <span style="display:inline-flex;align-items:center;gap:6px;background:#F0FDF9;color:#156A4C;font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;padding:6px 14px;border-radius:999px;">✓ ${pillText}</span>
+    </div>
+    <h1 style="margin:16px 0 4px;font-size:30px;font-weight:800;color:#0F172A;text-align:center;letter-spacing:-0.01em;">${vars.amount ?? ''}</h1>
+    <p style="margin:0 0 26px;font-size:14px;color:#64748B;text-align:center;">for ${vars.planName ?? ''}</p>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E2E8F0;border-radius:14px;overflow:hidden;margin-bottom:24px;">
+      ${rowsHtml}
+    </table>
+    <p style="margin:0 0 22px;font-size:14px;line-height:1.7;color:#475569;text-align:center;">${body}</p>
+    ${buttonHtml ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">${buttonHtml}</td></tr></table>` : ''}
+    ${footer ? `<p style="margin:0;font-size:13px;color:#94A3B8;text-align:center;">${footer}</p>` : ''}
+  `;
+
+  return { subject, html };
+}
+
 // Hardcoded fallbacks — used only if the DB row is missing (deleted, or the
 // table unreachable), so a template glitch never breaks the underlying
 // feature (onboarding, paper generation, payment, connect-email) that
@@ -177,8 +241,10 @@ export const FALLBACK_TEMPLATES: Record<string, TemplateRow> = {
   subscription_receipt: {
     template_key: 'subscription_receipt', label: 'Payment Receipt Email',
     subject: 'Your EaseWithExam receipt — {{planName}} ✅',
+    // heading is the status-pill text (renderReceiptEmail), not a page
+    // heading — kept short on purpose, it sits next to a ✓ in a small pill.
     heading: 'Payment received',
-    body_text: "Thanks for your payment. Here's your receipt for {{planName}}:",
+    body_text: 'Your {{planName}} plan is active — the full toolkit is unlocked.',
     bullet_points: [
       'Plan: {{planName}}',
       'Amount paid: {{amount}}',

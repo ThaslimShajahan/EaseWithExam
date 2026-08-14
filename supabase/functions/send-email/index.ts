@@ -41,7 +41,7 @@
 import { serve }        from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
-  FROM_ADDRESS, SITE_URL, layout, button, renderTemplateRow, FALLBACK_TEMPLATES,
+  FROM_ADDRESS, SITE_URL, layout, button, renderTemplateRow, renderReceiptEmail, FALLBACK_TEMPLATES,
 } from '../_shared/emailLayout.ts';
 
 const CORS = {
@@ -131,6 +131,8 @@ async function renderTemplate(
     } :
     { planName: (data.planName as string) || 'Premium' }; // subscription_active
 
+  if (template === 'subscription_receipt') return renderReceiptEmail(templateRow, vars);
+
   const buttonPathOverride = template === 'paper_ready' ? (data.link as string | undefined) : undefined;
   return renderTemplateRow(templateRow, vars, buttonPathOverride);
 }
@@ -210,7 +212,7 @@ serve(async (req) => {
       try {
         const resp = await fetch('https://api.resend.com/emails/batch', {
           method:  'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${RESEND_API_KEY}` },
+          headers: { 'Content-Type': 'application/json; charset=utf-8', 'Authorization': `Bearer ${RESEND_API_KEY}` },
           body: JSON.stringify(payloads),
         });
         if (resp.ok) {
@@ -266,7 +268,16 @@ serve(async (req) => {
   const resendResp = await fetch('https://api.resend.com/emails', {
     method:  'POST',
     headers: {
-      'Content-Type':  'application/json',
+      // Explicit charset — 2026-08-14, ₹ (U+20B9) rendered as a literal "?"
+      // in a real delivered receipt. JSON is UTF-8 by spec regardless, and
+      // the JS string itself carries the correct codepoint the whole way
+      // through (verified: source bytes, the JSON body, and the <meta
+      // charset="utf-8"> in the HTML shell were all already correct) — the
+      // one place charset was never stated explicitly was this header, and
+      // an implementation that charset-sniffs a bare "application/json"
+      // rather than assuming UTF-8 is exactly how a correct codepoint
+      // becomes "?" without anything in this codebase being wrong.
+      'Content-Type':  'application/json; charset=utf-8',
       'Authorization': `Bearer ${RESEND_API_KEY}`,
     },
     body: JSON.stringify(payload),

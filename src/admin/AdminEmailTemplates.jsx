@@ -43,22 +43,13 @@ function substitute(text, vars) {
 }
 
 // Client-side mirror of _shared/emailLayout.ts's layout()/renderTemplateRow()
-// — kept visually identical on purpose so this preview isn't lying about
-// what the edge function will actually send.
+// / renderReceiptEmail() — kept visually identical on purpose so this
+// preview isn't lying about what the edge function will actually send.
 function buildPreviewHtml(row) {
   const vars = PLACEHOLDER_EXAMPLES[row.template_key] ?? {};
   const heading = substitute(row.heading, vars);
   const body    = substitute(row.body_text, vars);
   const footer  = row.footer_note ? substitute(row.footer_note, vars) : '';
-
-  const bulletsHtml = row.bullet_points?.length
-    ? `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 20px;">${
-        row.bullet_points.map((f) => `
-          <tr><td style="padding:6px 0;font-size:14px;color:#334155;">
-            <span style="color:#21A375;font-weight:700;">✓</span>&nbsp;&nbsp;${substitute(f, vars)}
-          </td></tr>`).join('')
-      }</table>`
-    : '';
 
   const buttonHtml = (row.button_label && row.button_path)
     ? `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0;">
@@ -68,18 +59,62 @@ function buildPreviewHtml(row) {
       </table>`
     : '';
 
-  const codeBoxHtml = row.template_key === 'verify_email'
-    ? `<div style="text-align:center;margin:4px 0 20px;"><div style="display:inline-block;background:#F0FDF9;border:1px solid #D0F1E6;border-radius:14px;padding:16px 32px;font-size:32px;font-weight:800;letter-spacing:8px;color:#156A4C;">${vars.code}</div></div>`
-    : '';
+  let bodyInner;
 
-  const bodyInner = `
-    <h1 style="margin:0 0 12px;font-size:22px;color:#0F172A;text-align:${row.template_key === 'verify_email' ? 'center' : 'left'};">${heading}</h1>
-    <p style="margin:0 0 16px;font-size:14px;line-height:1.7;color:#475569;white-space:pre-wrap;text-align:${row.template_key === 'verify_email' ? 'center' : 'left'};">${body}</p>
-    ${codeBoxHtml}
-    ${bulletsHtml}
-    ${buttonHtml}
-    ${footer ? `<p style="margin:20px 0 0;font-size:13px;color:#94A3B8;text-align:${row.template_key === 'verify_email' ? 'center' : 'left'};">${footer}</p>` : ''}
-  `;
+  if (row.template_key === 'subscription_receipt') {
+    // Mirrors renderReceiptEmail(): heading is the status-pill text,
+    // bullet_points render as a bordered label/value table (parsed on the
+    // first ":"), body_text sits below the table.
+    const lines = (row.bullet_points ?? []).map((raw) => substitute(raw, vars));
+    const rowsHtml = lines.map((line, i) => {
+      const sep = line.indexOf(':');
+      const label = sep === -1 ? line : line.slice(0, sep).trim();
+      const value = sep === -1 ? '' : line.slice(sep + 1).trim();
+      const isLast = i === lines.length - 1;
+      const isMono = /payment id/i.test(label);
+      const border = isLast ? '' : 'border-bottom:1px solid #F1F5F9;';
+      return `<tr>
+        <td style="padding:14px 18px;font-size:13px;color:#64748B;${border}">${label}</td>
+        <td style="padding:14px 18px;font-size:${isMono ? '12px' : '13px'};color:#0F172A;font-weight:600;${isMono ? 'font-family:ui-monospace,SFMono-Regular,Consolas,monospace;' : ''}text-align:right;${border}">${value}</td>
+      </tr>`;
+    }).join('');
+
+    bodyInner = `
+      <div style="text-align:center;margin:0 0 4px;">
+        <span style="display:inline-flex;align-items:center;gap:6px;background:#F0FDF9;color:#156A4C;font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;padding:6px 14px;border-radius:999px;">✓ ${heading}</span>
+      </div>
+      <h1 style="margin:16px 0 4px;font-size:28px;font-weight:800;color:#0F172A;text-align:center;letter-spacing:-0.01em;">${vars.amount ?? ''}</h1>
+      <p style="margin:0 0 22px;font-size:14px;color:#64748B;text-align:center;">for ${vars.planName ?? ''}</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E2E8F0;border-radius:14px;overflow:hidden;margin-bottom:20px;">
+        ${rowsHtml}
+      </table>
+      <p style="margin:0 0 18px;font-size:14px;line-height:1.7;color:#475569;text-align:center;">${body}</p>
+      ${buttonHtml ? `<div style="text-align:center;">${buttonHtml}</div>` : ''}
+      ${footer ? `<p style="margin:0;font-size:12px;color:#94A3B8;text-align:center;">${footer}</p>` : ''}
+    `;
+  } else {
+    const bulletsHtml = row.bullet_points?.length
+      ? `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 20px;">${
+          row.bullet_points.map((f) => `
+            <tr><td style="padding:6px 0;font-size:14px;color:#334155;">
+              <span style="color:#21A375;font-weight:700;">✓</span>&nbsp;&nbsp;${substitute(f, vars)}
+            </td></tr>`).join('')
+        }</table>`
+      : '';
+
+    const codeBoxHtml = row.template_key === 'verify_email'
+      ? `<div style="text-align:center;margin:4px 0 20px;"><div style="display:inline-block;background:#F0FDF9;border:1px solid #D0F1E6;border-radius:14px;padding:16px 32px;font-size:32px;font-weight:800;letter-spacing:8px;color:#156A4C;">${vars.code}</div></div>`
+      : '';
+
+    bodyInner = `
+      <h1 style="margin:0 0 12px;font-size:22px;color:#0F172A;text-align:${row.template_key === 'verify_email' ? 'center' : 'left'};">${heading}</h1>
+      <p style="margin:0 0 16px;font-size:14px;line-height:1.7;color:#475569;white-space:pre-wrap;text-align:${row.template_key === 'verify_email' ? 'center' : 'left'};">${body}</p>
+      ${codeBoxHtml}
+      ${bulletsHtml}
+      ${buttonHtml}
+      ${footer ? `<p style="margin:20px 0 0;font-size:13px;color:#94A3B8;text-align:${row.template_key === 'verify_email' ? 'center' : 'left'};">${footer}</p>` : ''}
+    `;
+  }
 
   return `<!doctype html><html><head><meta charset="utf-8"></head>
 <body style="margin:0;padding:0;background:#F1F5F9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Roboto,sans-serif;">
