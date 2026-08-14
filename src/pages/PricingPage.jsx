@@ -400,10 +400,12 @@ export default function PricingPage() {
         {/* FAQ */}
         <div className="mt-12 text-center text-slate-500 text-sm">
           <p>Questions? Email us at <a href="mailto:info@acenzos.com" className="text-primary-600 hover:underline">info@acenzos.com</a></p>
-          {/* "Prices exclude GST" removed: Razorpay is charged exactly the
-              listed amount with nothing added, so the line described a charge
-              that never happened. See ACTION_ITEMS — the tax treatment is
-              unresolved, and no GST claim belongs here until it is settled. */}
+          {/* Stale as of 2026-08-14: the tax treatment this comment referred
+              to as unresolved was settled with the owner's CA that day —
+              GST now applies on top of every listed price and is charged
+              for real (create-razorpay-order, computeGst). Each plan card
+              and the order-summary modal already show the GST-inclusive
+              total; no separate disclaimer needed here. */}
           <p className="mt-1">Payments secured by Razorpay · Refund within 7 days if unhappy.</p>
         </div>
       </div>
