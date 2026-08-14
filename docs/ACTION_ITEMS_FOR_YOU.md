@@ -461,28 +461,122 @@ Edge Function and would need somewhere else to live.
 
 ---
 
-## ⏰ 14 AUGUST — re-enable payments (2026-08-11)
+## RESOLVED 2026-08-14 — payments are live (test mode)
 
-Payments are gated behind the `payments_enabled` feature flag, seeded **OFF**.
+`payments_enabled` is ON — bank account confirmed live by the owner,
+`create-razorpay-order` confirmed deployed (`ACTIVE`). A real end-to-end
+test-mode payment completed successfully the same day: order created,
+Razorpay checkout completed with a domestic test card, signature verified,
+`payment_orders` redeemed, `subscriptions` activated with the correct plan/
+amount/expiry (`pay_TPhJbjq9xI08YM`, Premium Yearly, ₹3,999,
+expires 2027-08-14). See the go-live checklist below for switching this from
+test to live credentials — **not done yet, deliberately**, waiting on explicit
+go-ahead.
 
-### To turn payments back on
+Also fixed the same day, found chasing that test payment:
+- `activate_subscription`/`redeem_payment_order` had never been callable at
+  all — they read a shared secret from `current_setting('app.subscription_secret')`,
+  a custom Postgres GUC that `ALTER DATABASE ... SET` cannot set on hosted
+  Supabase (requires superuser, which the project's own role does not have,
+  confirmed via both the CLI and the Dashboard SQL Editor). Moved to
+  `vault.decrypted_secrets` — supabase_vault ships pre-installed and its
+  functions ARE callable by the ordinary project role — matching the pattern
+  `send_expiry_reminders()` already used for `project_url`/`anon_key`.
+- The pricing page CTA button went pale/illegible mid-loading — root cause was
+  `Button.jsx`'s `disabled:opacity-50`, which alpha-blends the whole button
+  toward whatever's behind it (a colored/gradient card here), collapsing
+  contrast exactly while a click is in flight. Removed; disabled/loading now
+  keeps full-strength colors everywhere Button is used, not opacity-faded.
+- The success confirmation after a real payment was easy to miss — the banner
+  renders at the top of the page, but the Razorpay modal covers the whole
+  viewport while open, so wherever the page was scrolled to underneath is
+  where the student lands the instant it closes. Added scroll-to-top plus a
+  deliberate 1.2s pause before navigating to `/dashboard`.
+- The frontend's own `VITE_RAZORPAY_KEY_ID` (local `.env`) didn't match either
+  server-side credential pair at all — a third, stale value left over from
+  before this session. Razorpay's checkout.js validates the key_id it's
+  opened with against the key_id that created the order server-side and 400s
+  on mismatch. Now kept in sync manually — **this is the one most likely to
+  bite again**: the edge secrets (`RAZORPAY_KEY_ID`/`SECRET`) and the frontend
+  `.env` (`VITE_RAZORPAY_KEY_ID`) are two separate places holding the same
+  key_id, and nothing keeps them in sync automatically. See the checklist
+  below.
 
-> **Admin → Platform → Feature Flags → `payments_enabled` → ON**
+---
 
-That is the whole procedure. No deploy, no code change, takes effect on the
-student's next page load (flags are cached per session).
+## PREPARED, NOT ACTIONED — Razorpay test → live switch (2026-08-14)
 
-**Before you flip it, confirm both of these**, or checkout will fail exactly as
-it does today:
+**Documentation only — nothing below has been touched.** Prepared ahead of
+time so it's ready the moment you say go-live; waiting on your explicit
+confirmation before any live credential is set anywhere.
 
-1. **The bank account is live in Razorpay.**
-2. **`create-razorpay-order` is deployed.** It is currently in source but *not*
-   deployed and returns HTTP 404 — verified against production on 2026-08-11.
-   Check with `npx supabase functions list`, deploy with
-   `npx supabase functions deploy create-razorpay-order`.
+### What actually changes
 
-Item 2 is the one most likely to be missed. The flag being ON with that
-function still missing puts the site back to the broken state this work removed.
+Razorpay's API host is the same for test and live (`api.razorpay.com` /
+`checkout.razorpay.com`) — mode is decided entirely by which key pair
+authenticates, not by a different URL. So the whole switch is: **swap two
+credential pairs in three places, then rebuild and redeploy the frontend.**
+
+| what | test value today | lives where | how to change |
+|---|---|---|---|
+| `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | `rzp_test_...` (create-razorpay-order, razorpay-verify's HMAC check) | Edge function secrets | `supabase secrets set RAZORPAY_KEY_ID=rzp_live_... RAZORPAY_KEY_SECRET=...` |
+| `VITE_RAZORPAY_KEY_ID` | same test key_id, public half only | Frontend `.env`, baked in at **build** time | Edit `.env`, then **`npm run build` (or `build:seo`) and redeploy** — editing `.env` alone does nothing to an already-built bundle |
+| Webhook signing secret (`RAZORPAY_WEBHOOK_SECRET`) | not currently set — `razorpay-webhook` exists in source but is not the active trigger (`razorpay-verify`, client-called, is) | Edge function secret, only relevant if `razorpay-webhook` is ever actually wired in | Razorpay issues a **separate secret per webhook per mode** — a live-mode webhook's secret is not the test one. Only matters if/when that function is put into real use. |
+
+**The three-places trap, found the hard way tonight**: `RAZORPAY_KEY_ID` (edge
+secrets) and `VITE_RAZORPAY_KEY_ID` (frontend build) are two independent
+places holding what's supposed to be the same value, and nothing keeps them
+in sync automatically — a stale/mismatched frontend key is exactly what
+caused the checkout modal to 400 tonight, in test mode. **Going live is a
+higher-stakes repeat of that exact failure mode** if only one of the two gets
+updated. Change both together, verify with a curl to `create-razorpay-order`
+(should return a real `order_id`) AND a real click-through with `checkout.js`
+actually opening (confirms the frontend key matches) before calling it done.
+
+### Pre-go-live checklist
+
+1. **Razorpay account fully activated**, not just "test mode works" — KYC
+   approved, live API keys generated (Razorpay will not issue `rzp_live_`
+   keys otherwise). This is the account-level gate live keys sit behind.
+2. **Bank settlement account added and verified** in the Razorpay dashboard —
+   confirmed live per your answer tonight, re-confirm at the moment of
+   switching in case anything changed since.
+3. **Amounts match in all three places** — `src/lib/subscription.js`'s
+   `PLANS[].razorpayAmount` (client display/fallback), `create-razorpay-order`'s
+   `PLAN_AMOUNTS_PAISE` (server fallback), and the `plan_config` table (admin
+   override, takes priority over both). These are manually kept in sync
+   today; a drift between them means the price shown and the price charged
+   disagree. Check `plan_config` isn't carrying a stale test-only price.
+4. **Currency is `INR` everywhere it's hardcoded** — it is today
+   (`create-razorpay-order`, `subscription.js`'s checkout `options`) — worth a
+   final grep if the plan lineup changes before go-live.
+5. **Refund policy is real, not just marketing copy.** Pricing page says
+   "Refund within 7 days if unhappy"; the paywall modal says "Money-back
+   guarantee". Neither links to an actual policy page describing the
+   process, conditions, or exclusions — grepped for one, none exists. Real
+   money makes this a real gap, not a nice-to-have; decide whether a policy
+   page ships before or alongside go-live.
+6. **GST / tax invoice status** — separately tracked above
+   ("BLOCKED ON API DOCS — integrate with the EXISTING billing software" and
+   the superseded local-invoicing section). Not re-litigated here; still
+   unresolved, still your call, still independent of the payment flow itself
+   working.
+7. **`razorpay-webhook` stays what it is today: present, not the trigger.**
+   `razorpay-verify` (client-called, HMAC-verified, replay-protected via
+   `redeem_payment_order`) is the real, working, tested path. Going live
+   does not require wiring the webhook — flagged only so it isn't assumed to
+   be doing something it isn't.
+8. **One real, small, genuinely-live transaction before opening broadly.**
+   Same discipline as tonight's test-mode run — actual checkout, actual
+   verify, actual receipt — but with real money this time, watched end to
+   end, before pointing real traffic at it.
+
+### If anything looks different from this table when you're ready
+
+Re-verify rather than trust this checklist blindly — it's accurate as of
+2026-08-14, but Razorpay's own dashboard is the source of truth for exactly
+which mode a key pair belongs to and whether live keys have actually been
+issued yet.
 
 ### If the toggle is not in the admin panel
 
