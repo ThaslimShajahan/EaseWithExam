@@ -8,6 +8,7 @@ import { supabase } from '../lib/supabase';
 // has an identical shape to a student-set one.
 import { classTierFor, flattenSubjects, buildAcademicTrack } from '../lib/streamSelection';
 import { EXAM_OPTIONS, BOARD_OPTIONS, CLASS_OPTIONS } from '../lib/onboardingOptions';
+import { toLocalInputValue } from '../lib/dateInput';
 
 function getCallerUid() {
   try {
@@ -216,22 +217,6 @@ const GRANT_FIELDS = [
 ];
 
 const DURATION_PRESETS = [3, 5, 7, 14]; // days
-
-/**
- * A stored UTC instant -> the local-time string a <input type="datetime-local">
- * expects. The browser displays and PARSES that field as local wall-clock time
- * with no timezone marker, so `date.toISOString()` (UTC) is the wrong
- * conversion — it silently shifts the displayed time by the viewer's UTC
- * offset (5.5h for IST) and, if the field is re-saved untouched, shifts the
- * REAL stored expiry by the same amount, since handleGrant round-trips
- * whatever string is in the field back through `new Date(str).toISOString()`.
- * Subtracting the timezone offset before formatting is what makes that
- * round-trip actually be a round-trip.
- */
-function toLocalInputValue(date) {
-  const offsetMs = date.getTimezoneOffset() * 60000;
-  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
-}
 
 /**
  * Per-student "unlimited until [date]" grant. Reads/writes quota_overrides

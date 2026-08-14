@@ -7,6 +7,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { IST_WEEK_START } from '../lib/quota';
 import StudentPicker from '../components/admin/StudentPicker';
+import { toLocalInputValue } from '../lib/dateInput';
 
 function getCallerUid() {
   try {
@@ -319,22 +320,33 @@ function OverridesSection() {
 
   async function handleAdd() {
     if (!form.user_id.trim()) { setErr('User ID is required'); return; }
+    // The RPC itself rejects a missing/past expiry (20260814080000, and the
+    // stale overload that skipped this check was dropped in 20260814110000
+    // after it was found being used from THIS exact form) — validated here
+    // too so the admin sees a clear message instead of a raw RPC error.
+    if (!form.expires_at) { setErr('An end date is required — this screen can no longer create a permanent override.'); return; }
+    if (new Date(form.expires_at) <= new Date()) { setErr('End date must be in the future.'); return; }
     setSaving(true); setErr('');
     // Was hardcoded to only 3 of the 4 fields the form actually rendered
     // inputs for (paper_evaluations was editable but silently discarded) —
     // now driven off FIELDS so every field the form shows actually saves.
     const values = Object.fromEntries(FIELDS.map(f => [f.key, form[f.key] !== '' ? Number(form[f.key]) : null]));
+    // Parameter names match the CURRENT (and after 20260814110000, only)
+    // admin_set_quota_override signature — the form previously sent p_ai/
+    // p_veda/p_mock, which existed only on a stale pre-redesign overload with
+    // no future-date validation and no reminder_stage awareness.
     const { error } = await supabase.rpc('admin_set_quota_override', {
       p_caller:            callerUid,
       p_user_id:           form.user_id.trim(),
-      p_ai:                values.ai_questions,
-      p_veda:              values.veda_messages,
-      p_mock:              values.mock_tests,
-      p_reason:            form.reason || null,
-      p_expires_at:        form.expires_at || null,
+      p_ai_questions:       values.ai_questions,
+      p_veda_messages:      values.veda_messages,
+      p_mock_tests:         values.mock_tests,
       p_paper_evaluations: values.paper_evaluations,
       p_podcasts:          values.podcasts,
       p_paper_generations: values.paper_generations,
+      // datetime-local string -> real UTC instant, local-timezone-safe.
+      p_expires_at:        new Date(form.expires_at).toISOString(),
+      p_reason:            form.reason || null,
     });
     if (error) { setErr(error.message); setSaving(false); return; }
     const newRow = {
@@ -342,7 +354,7 @@ function OverridesSection() {
       user_id:    form.user_id.trim(),
       ...values,
       reason:     form.reason || null,
-      expires_at: form.expires_at || null,
+      expires_at: new Date(form.expires_at).toISOString(),
       created_at: new Date().toISOString(),
     };
     setOverrides(o => [newRow, ...o.filter(x => x.user_id !== newRow.user_id)]);
@@ -353,7 +365,10 @@ function OverridesSection() {
   }
 
   async function handleDelete(userId) {
-    await supabase.rpc('admin_delete_quota_override', { p_caller: callerUid, p_user_id: userId });
+    // admin_delete_quota_override was a redundant twin of this RPC (both from
+    // the pre-redesign migration, same delete, two names) -- dropped in
+    // 20260814110000 alongside the unsafe override overload.
+    await supabase.rpc('admin_clear_quota_override', { p_caller: callerUid, p_user_id: userId });
     setOverrides(o => o.filter(x => x.user_id !== userId));
   }
 
@@ -393,8 +408,21 @@ function OverridesSection() {
                   </div>
                 ))}
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1">Expires</label>
-                  <input type="date" value={form.expires_at} onChange={set('expires_at')}
+                  <label className="block text-xs text-slate-400 mb-1">Expires (required)</label>
+                  <div className="flex gap-1 mb-1">
+                    {[3, 5, 7, 14].map((days) => (
+                      <button key={days} type="button"
+                        onClick={() => setForm(f => ({ ...f, expires_at: toLocalInputValue(new Date(Date.now() + days * 86_400_000)) }))}
+                        className="flex-1 py-1 rounded-lg text-[10px] font-semibold bg-slate-700 hover:bg-primary-900/40 hover:text-primary-300 text-slate-400 border border-white/10 transition-colors">
+                        {days}d
+                      </button>
+                    ))}
+                  </div>
+                  {/* datetime-local, not date: a day-only picker parses as UTC
+                      midnight (a different JS quirk from the local-time issue
+                      toLocalInputValue exists for), which is one more silent
+                      timezone trap this screen does not need. */}
+                  <input type="datetime-local" value={form.expires_at} onChange={set('expires_at')}
                     className="w-full bg-slate-700 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-primary-500" />
                 </div>
                 <div className="col-span-2">
