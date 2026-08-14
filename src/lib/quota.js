@@ -8,6 +8,42 @@
 
 import { supabase } from './supabase';
 import { getFeatureFlag, FLAGS } from './featureFlags';
+import { isCampaignActive, CAMPAIGN_LIMIT } from './campaignQuota';
+
+/* Campaign settings, cached briefly.
+ *
+ * 60s rather than the long-lived _ctxCache used for plan/override: a campaign is
+ * switched on and off by hand and the owner will be watching for the effect, so
+ * a stale minute is tolerable but a stale session is not. Deliberately its own
+ * cache — folding it into _ctxCache would key it per user and refetch the same
+ * global row once per student.
+ *
+ * Read failures resolve to "no campaign" rather than throwing: quota checks run
+ * on the hot path of every generate action, and a settings hiccup must not block
+ * a student. Failing closed here means normal limits apply, which is the safe
+ * direction. */
+let _campaignCache = null;
+const CAMPAIGN_TTL_MS = 60_000;
+
+export function invalidateCampaignCache() { _campaignCache = null; }
+
+async function getCampaignSettings() {
+  if (_campaignCache && Date.now() - _campaignCache.ts < CAMPAIGN_TTL_MS) return _campaignCache.value;
+  let value = { enabled: 'false', endsAt: null };
+  try {
+    const { data } = await supabase
+      .from('platform_settings')
+      .select('key, value')
+      .in('key', ['campaign_unlimited_enabled', 'campaign_unlimited_ends_at']);
+    const byKey = Object.fromEntries((data ?? []).map((r) => [r.key, r.value]));
+    value = {
+      enabled: byKey.campaign_unlimited_enabled ?? 'false',
+      endsAt:  byKey.campaign_unlimited_ends_at ?? null,
+    };
+  } catch { /* leave the safe default */ }
+  _campaignCache = { value, ts: Date.now() };
+  return value;
+}
 
 const IST_DATE = () =>
   new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
@@ -172,6 +208,14 @@ async function resolveQuota(firebaseUid, field, isPremium, plan) {
     usagePromise,
   ]);
 
+  // Campaign mode sits ABOVE the per-user override, and that ordering is
+  // deliberate. An override is normally the most specific answer and wins, but a
+  // campaign is a blanket promise made to everyone at once — a student who had
+  // been throttled by an override must not be the one person still throttled
+  // during it. `realLimit` below is preserved so the admin UI can show what the
+  // limit WOULD be, side by side with what the campaign is currently granting.
+  const campaignOn = isCampaignActive(await getCampaignSettings());
+
   let limit;
   const overrideVal = override?.[configField];
   const overrideActive =
@@ -187,6 +231,12 @@ async function resolveQuota(firebaseUid, field, isPremium, plan) {
     limit = config?.[configField] ?? FREE_LIMITS[field];
   }
 
+  // What this student would be entitled to with no campaign running. Returned
+  // alongside the effective limit so the admin UI can show both columns, and so
+  // the moment a campaign ends nothing has to be recomputed or un-done.
+  const realLimit = limit;
+  if (campaignOn) limit = CAMPAIGN_LIMIT;
+
   // Weekly fields sum every daily_usage_quota row seen so far this week
   // (incrementQuota always writes to TODAY's row regardless of period —
   // only the read side needs to know a field spans more than one day).
@@ -194,7 +244,7 @@ async function resolveQuota(firebaseUid, field, isPremium, plan) {
     ? (usageData ?? []).reduce((sum, row) => sum + (row?.[field] ?? 0), 0)
     : (usageData?.[field] ?? 0);
 
-  return { used, limit };
+  return { used, limit, realLimit, campaignActive: campaignOn };
 }
 
 /**

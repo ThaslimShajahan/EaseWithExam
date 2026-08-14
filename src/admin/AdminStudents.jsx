@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Users, Search, RefreshCw, Pencil, X, Save, Check, Crown, Trash2, AlertTriangle } from 'lucide-react';
 import { adminGetAllUsers, adminGetAllTestSessions, adminGetAllSubscriptions, adminUpdateUser, adminGrantPremium, adminDeleteStudent } from '../lib/supabase';
-import { formatExamLabel } from '../lib/categories';
+import { formatExamLabel, resolveBoard } from '../lib/categories';
+import { supabase } from '../lib/supabase';
+// The onboarding wizard's own rules — same functions, so an admin-set profile
+// has an identical shape to a student-set one.
+import { classTierFor, flattenSubjects, buildAcademicTrack } from '../lib/streamSelection';
 import { EXAM_OPTIONS, BOARD_OPTIONS, CLASS_OPTIONS } from '../lib/onboardingOptions';
 
 function getCallerUid() {
@@ -36,6 +40,163 @@ const EXAM_BADGE = {
   'BOTH':         'bg-violet-900 text-violet-300',
 };
 
+/**
+ * Stream + subjects, for repairing a student's profile.
+ *
+ * Tonight's scoping made users.subjects authoritative for six student screens,
+ * and strict: any subject that does not match the board list shows the "complete
+ * your subject setup" prompt instead of a picker. Without this editor a student
+ * with bad profile data was stuck — they could not fix it and neither could an
+ * admin, because admin_update_user whitelisted four fields and neither of these
+ * was one of them.
+ *
+ * Reuses the ONBOARDING RULES rather than restating them: flattenSubjects() and
+ * buildAcademicTrack() from lib/streamSelection.js are the same functions the
+ * onboarding wizard calls, so an admin-set profile is byte-identical in shape to
+ * a student-set one. Only the presentation differs — the wizard's picker is
+ * inline JSX bound to its own multi-step state, not a component that can be
+ * lifted without refactoring the signup flow. Extracting it is logged as
+ * follow-up work rather than done an hour before a deploy.
+ */
+function StreamSubjectsEditor({ classLevel, syllabus, subjects, academicTrack, onChange }) {
+  const [configs, setConfigs] = useState([]);
+  const tier = classTierFor(classLevel);
+
+  useEffect(() => {
+    if (!tier) { setConfigs([]); return; }
+    supabase.from('stream_configs').select('*').eq('is_active', true)
+      .then(({ data }) => setConfigs(data ?? []));
+  }, [tier]);
+
+  const boardKey = resolveBoard(syllabus) ?? syllabus;
+  const forBoard = configs.filter((c) => c.board_key === boardKey && c.class_tier === tier);
+  const streamKey = academicTrack?.stream ?? '';
+  const streamConfig = forBoard.find((c) => c.stream_key === streamKey) ?? null;
+
+  // Classes 8-10 have no streams; saying so is more useful than an empty picker.
+  if (!tier) {
+    return (
+      <div className="rounded-xl border border-white/10 bg-slate-800/40 p-4">
+        <p className="text-xs font-semibold text-slate-300 mb-1">Stream &amp; subjects</p>
+        <p className="text-[11px] text-slate-500">
+          Class {classLevel || '—'} has no stream selection — students see their full board subject
+          list. Nothing to set here.
+        </p>
+      </div>
+    );
+  }
+
+  const applyStream = (key) => {
+    const cfg = forBoard.find((c) => c.stream_key === key) ?? null;
+    const track = buildAcademicTrack({
+      boardKey, streamKey: key,
+      languageChoice: academicTrack?.language_choice ?? null,
+      chosenSlotSubjects: [], optional6th: null,
+    });
+    onChange({
+      academic_track: track,
+      subjects: cfg ? flattenSubjects({ streamConfig: cfg, chosenSlotSubjects: [], optional6th: null }) : null,
+    });
+  };
+
+  const toggleSlotSubject = (subject) => {
+    const chosen = academicTrack?.chosen_slot_subjects ?? [];
+    const slot = streamConfig?.choice_slots?.[0];
+    const next = chosen.includes(subject)
+      ? chosen.filter((s) => s !== subject)
+      : (slot && chosen.length >= slot.count ? chosen : [...chosen, subject]);
+
+    const track = buildAcademicTrack({
+      boardKey, streamKey,
+      languageChoice: academicTrack?.language_choice ?? null,
+      chosenSlotSubjects: next, optional6th: academicTrack?.optional_6th ?? null,
+    });
+    onChange({
+      academic_track: track,
+      subjects: flattenSubjects({
+        streamConfig, chosenSlotSubjects: next, optional6th: academicTrack?.optional_6th ?? null,
+      }),
+    });
+  };
+
+  const slot = streamConfig?.choice_slots?.[0];
+  const chosen = academicTrack?.chosen_slot_subjects ?? [];
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-slate-800/40 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold text-slate-300">Stream &amp; subjects</p>
+        {subjects?.length
+          ? <span className="text-[10px] text-emerald-400">{subjects.length} subject{subjects.length === 1 ? '' : 's'} set</span>
+          : <span className="text-[10px] text-amber-400">none set — student sees the setup prompt</span>}
+      </div>
+
+      <div>
+        <label className="text-[11px] text-slate-500 block mb-1">Stream</label>
+        <select value={streamKey} onChange={(e) => applyStream(e.target.value)}
+          className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-primary-500">
+          <option value="">— not set —</option>
+          {forBoard.map((c) => <option key={c.stream_key} value={c.stream_key}>{c.label ?? c.stream_key}</option>)}
+        </select>
+        {!forBoard.length && (
+          <p className="text-[11px] text-slate-500 mt-1">No stream configs for {boardKey} {tier}.</p>
+        )}
+      </div>
+
+      {streamConfig && (
+        <>
+          {streamConfig.stream_mandatory?.length > 0 && (
+            <div>
+              <p className="text-[11px] text-slate-500 mb-1">Locked by this stream</p>
+              <div className="flex flex-wrap gap-1.5">
+                {streamConfig.stream_mandatory.map((s) => (
+                  <span key={s} className="text-[11px] px-2 py-1 rounded-lg bg-slate-700 text-slate-300">{s}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {slot && (
+            <div>
+              <p className="text-[11px] text-slate-500 mb-1">
+                {slot.label ?? 'Choose'} ({chosen.length}/{slot.count})
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {(slot.choose_from ?? []).map((s) => {
+                  const on = chosen.includes(s);
+                  const full = !on && chosen.length >= slot.count;
+                  return (
+                    <button key={s} onClick={() => toggleSlotSubject(s)} disabled={full}
+                      className={`text-[11px] px-2 py-1 rounded-lg transition-colors ${
+                        on ? 'bg-primary-600 text-white'
+                          : full ? 'bg-slate-800 text-slate-600 cursor-not-allowed'
+                                 : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}>
+                      {s}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      <div>
+        <p className="text-[11px] text-slate-500 mb-1">Resolved subjects (what the student will see)</p>
+        <div className="flex flex-wrap gap-1.5">
+          {subjects?.length
+            ? subjects.map((s) => <span key={s} className="text-[11px] px-2 py-1 rounded-lg bg-emerald-900/40 text-emerald-300">{s}</span>)
+            : <span className="text-[11px] text-slate-500">—</span>}
+        </div>
+        {subjects?.length > 0 && (
+          <button onClick={() => onChange({ subjects: null, academic_track: null })}
+            className="mt-2 text-[11px] text-slate-500 hover:text-red-400">Clear subjects</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── Edit drawer ─────────────────────────────────────────── */
 
 function EditDrawer({ user, onClose, onSaved }) {
@@ -46,6 +207,10 @@ function EditDrawer({ user, onClose, onSaved }) {
     target_exam:  user.target_exam  || 'NONE',
     syllabus:     user.syllabus     || 'CBSE',
     class_level:  user.class_level  || '12',
+    // Both already arrive from admin_list_users (it returns whole rows); they
+    // were simply never shown. Writable since 20260814070000.
+    subjects:       user.subjects       ?? null,
+    academic_track: user.academic_track ?? null,
   });
   const [saving,       setSaving]       = useState(false);
   const [saved,        setSaved]        = useState(false);
@@ -65,6 +230,12 @@ function EditDrawer({ user, onClose, onSaved }) {
         target_exam:  form.target_exam,
         syllabus:     form.syllabus,
         class_level:  form.class_level,
+        // Sent explicitly, including as null — the RPC distinguishes "key
+        // absent, leave alone" from "key present and null, clear it", and
+        // clearing is a state an admin must be able to restore (it is what
+        // every Class 8-10 student looks like).
+        subjects:       form.subjects,
+        academic_track: form.academic_track,
       });
       setSaved(true);
       onSaved({ ...user, ...form });
@@ -179,6 +350,14 @@ function EditDrawer({ user, onClose, onSaved }) {
               ))}
             </select>
           </Field>
+
+          <StreamSubjectsEditor
+            classLevel={form.class_level}
+            syllabus={form.syllabus}
+            subjects={form.subjects}
+            academicTrack={form.academic_track}
+            onChange={(next) => setForm((f) => ({ ...f, ...next }))}
+          />
 
           {/* Grant Premium section */}
           <div className="border border-amber-500/30 bg-amber-950/30 rounded-xl p-4 space-y-2.5">

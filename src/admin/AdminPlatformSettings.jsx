@@ -4,6 +4,8 @@ import { Settings, Upload, Image, Cookie, Palette, Globe, CheckCircle2, Loader2,
 import { supabase, adminClearAllData } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { invalidatePlatformSettings } from '../hooks/usePlatformSettings';
+import { isCampaignActive, campaignDaysLeft } from '../lib/campaignQuota';
+import { invalidateCampaignCache } from '../lib/quota';
 
 function getCallerUid() {
   try {
@@ -128,6 +130,10 @@ export default function AdminPlatformSettings() {
       // Drop the shared cache so the logo/avatar update everywhere immediately
       // instead of only after a full page reload.
       invalidatePlatformSettings();
+      // quota.js caches the campaign settings separately (60s TTL) so it isn't
+      // refetched per student. Toggling a campaign is exactly when you want the
+      // effect immediately, not up to a minute later.
+      if (key.startsWith('campaign_unlimited')) invalidateCampaignCache();
       setSaved(key);
       setTimeout(() => setSaved(''), 2500);
     } catch (e) {
@@ -316,6 +322,10 @@ export default function AdminPlatformSettings() {
         </SettingRow>
       </div>
 
+      <CampaignQuotaPanel
+        lv={lv} setLv={setLv} saveSetting={saveSetting} savingKey={savingKey} saved={saved}
+      />
+
       {/* Preview */}
       {settings.platform_logo_url && (
         <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-6">
@@ -331,6 +341,117 @@ export default function AdminPlatformSettings() {
       )}
 
       <DangerZone callerUid={callerUid} />
+    </div>
+  );
+}
+
+/**
+ * Campaign mode — lift every student's quota until a date you set.
+ *
+ * Shows the REAL per-plan limits and the campaign limits side by side, rather
+ * than a badge saying "campaign on". The point of the parallel view is that at a
+ * glance you can see exactly what is being given away and what it reverts to —
+ * a badge tells you a campaign is running but not what it costs.
+ */
+function CampaignQuotaPanel({ lv, setLv, saveSetting, savingKey, saved }) {
+  const [plans, setPlans] = useState([]);
+  useEffect(() => {
+    supabase.from('quota_config')
+      .select('plan_id, ai_questions, veda_messages, mock_tests, paper_evaluations, podcasts, paper_generations')
+      .then(({ data }) => setPlans(data ?? []));
+  }, []);
+
+  const enabled = lv('campaign_unlimited_enabled') === 'true';
+  const endsAt  = lv('campaign_unlimited_ends_at') || '';
+  const active  = isCampaignActive({ enabled, endsAt });
+  const daysLeft = campaignDaysLeft({ endsAt });
+
+  // Mirrors quota.js: -1 is unlimited, anything else is the number.
+  const fmt = (n) => (n === -1 ? '∞' : n ?? '—');
+  const COLS = [
+    ['ai_questions', 'AI questions'], ['veda_messages', 'EWE messages'],
+    ['mock_tests', 'Mock tests'], ['paper_evaluations', 'Evaluations'],
+    ['podcasts', 'Podcasts'], ['paper_generations', 'Full papers'],
+  ];
+
+  return (
+    <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-6 space-y-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="font-bold text-white text-base">Campaign — unlimited quota</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Lifts every limit for <b className="text-slate-400">all students on every plan</b>, including free,
+            until the end date. Ends by itself — nothing to remember to switch off.
+          </p>
+        </div>
+        <button
+          onClick={() => {
+            const next = enabled ? 'false' : 'true';
+            setLv('campaign_unlimited_enabled')({ target: { value: next } });
+            saveSetting('campaign_unlimited_enabled', next);
+          }}
+          className={`relative w-10 h-6 rounded-full shrink-0 transition-colors ${enabled ? 'bg-emerald-500' : 'bg-slate-600'}`}
+        >
+          <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all ${enabled ? 'left-5' : 'left-1'}`} />
+        </button>
+      </div>
+
+      <div className={`rounded-xl p-3 border text-xs ${
+        active ? 'bg-amber-900/20 border-amber-700/25 text-amber-300'
+               : 'bg-slate-900/40 border-white/8 text-slate-400'}`}>
+        {active
+          ? <>🎉 <b>Campaign LIVE</b> — every student has unlimited access. Ends in <b>{daysLeft} day{daysLeft === 1 ? '' : 's'}</b> ({new Date(endsAt).toLocaleString()}).</>
+          : enabled && endsAt
+            ? <>Toggle is on but the end date has passed — <b>normal limits apply</b>. Set a future date to run it again.</>
+            : enabled
+              ? <>Toggle is on but <b>no end date is set</b>, so the campaign is NOT running. An open-ended campaign is deliberately not possible.</>
+              : <>Campaign off — normal per-plan limits apply.</>}
+      </div>
+
+      <div>
+        <label className="text-xs text-slate-500 block mb-1">Ends at</label>
+        <div className="flex gap-2">
+          <input type="datetime-local"
+            value={endsAt ? new Date(endsAt).toISOString().slice(0, 16) : ''}
+            onChange={(e) => setLv('campaign_unlimited_ends_at')({
+              target: { value: e.target.value ? new Date(e.target.value).toISOString() : '' },
+            })}
+            className="flex-1 bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-primary-500" />
+          <SaveBtn onClick={() => saveSetting('campaign_unlimited_ends_at', endsAt)}
+            loading={savingKey === 'campaign_unlimited_ends_at'} saved={saved === 'campaign_unlimited_ends_at'} />
+        </div>
+      </div>
+
+      {/* The parallel view: what each plan really gets vs what the campaign grants. */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs min-w-[640px]">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wide text-slate-500 border-b border-white/8">
+              <th className="text-left px-2 py-2">Plan</th>
+              {COLS.map(([k, label]) => <th key={k} className="text-center px-2 py-2">{label}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {plans.map((p) => (
+              <tr key={p.plan_id} className="border-b border-white/5 last:border-0">
+                <td className="px-2 py-2 text-slate-300 font-medium">{p.plan_id}</td>
+                {COLS.map(([k]) => (
+                  <td key={k} className="px-2 py-2 text-center">
+                    <span className={active ? 'text-slate-600 line-through' : 'text-slate-300'}>{fmt(p[k])}</span>
+                    {active && <span className="text-emerald-400 font-bold ml-1.5">∞</span>}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!plans.length && <p className="text-xs text-slate-500 py-3">No quota_config rows — every plan is falling back to FREE_LIMITS in code.</p>}
+      </div>
+
+      <p className="text-[11px] text-amber-400/70">
+        Unlimited AI applies to free accounts too, which have no payment behind them — this is real,
+        uncapped API spend for as long as the campaign runs.
+      </p>
     </div>
   );
 }
