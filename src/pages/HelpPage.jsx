@@ -5,7 +5,7 @@ import {
   Search, Brain, FileText, Target, Layers, Zap, BarChart3,
   BookOpen, ChevronDown, ChevronUp, Trophy, Flame, Star,
   ArrowRight, CheckCircle2, Play, MessageCircle, Users,
-  Sparkles, HelpCircle, ExternalLink,
+  Sparkles, HelpCircle, ExternalLink, Headphones, BookMarked,
 } from 'lucide-react';
 import { FAQ_FLAT } from '../lib/landingContent';
 
@@ -26,7 +26,9 @@ const FEATURES = [
     icon: FileText, iconColor: 'text-primary-600', bg: 'bg-primary-50',
     category: 'AI Tools',
     title: 'AI Practice Questions',
-    desc: 'Generate unlimited subject-wise questions at your chosen difficulty. Each answer includes a full solution and spaced repetition tagging.',
+    // Was "unlimited" — same overclaim fixed in the pricing copy 2026-08-14
+    // (free is 20/day, premium 200/day, both real enforced caps).
+    desc: 'Generate subject-wise questions at your chosen difficulty, with a generous daily allowance. Each answer includes a full solution and spaced repetition tagging.',
     tip: 'Practice → Generate → pick subject, chapter, difficulty',
     route: '/practice/generate', cta: 'Generate Questions',
     keywords: 'questions practice subject chapter generate difficulty',
@@ -70,6 +72,39 @@ const FEATURES = [
     tip: 'Take 2+ mock tests first — Analytics improves with more data.',
     route: '/analytics', cta: 'View Analytics',
     keywords: 'analytics score accuracy weak topic heatmap trend insight',
+  },
+  // Three real, live features that had zero entries here — found auditing
+  // this page 2026-08-14. Routes and icons matched exactly to StudyHubPage.jsx,
+  // the actual host (all three live under /study?tab=..., not their own route).
+  {
+    id: 'notebook',
+    icon: BookMarked, iconColor: 'text-rose-600', bg: 'bg-rose-50',
+    category: 'Study Tools',
+    title: 'Error Notebook',
+    desc: 'Every question you get wrong is saved automatically, grouped by the misconception behind it — not just the topic. Review what you actually keep getting wrong.',
+    tip: 'Study → Error Notebook, or jump straight there after any practice session.',
+    route: '/study?tab=notebook', cta: 'Open Error Notebook',
+    keywords: 'error notebook wrong mistakes misconception review',
+  },
+  {
+    id: 'summarizer',
+    icon: Sparkles, iconColor: 'text-fuchsia-600', bg: 'bg-fuchsia-50',
+    category: 'Study Tools',
+    title: 'AI Summarizer',
+    desc: 'Paste notes, an article, or a lecture PDF and get the key points back in seconds — useful for a quick pass before a test.',
+    tip: 'Study → Summarizer → paste text or upload a PDF.',
+    route: '/study?tab=summarizer', cta: 'Open Summarizer',
+    keywords: 'summarizer summary notes pdf key points',
+  },
+  {
+    id: 'podcast',
+    icon: Headphones, iconColor: 'text-orange-600', bg: 'bg-orange-50',
+    category: 'Study Tools',
+    title: 'Podcast Generator',
+    desc: 'Turn your notes into a short audio lesson you can listen to on the go — revision without staring at a screen.',
+    tip: 'Study → Podcast → pick a chapter → Generate.',
+    route: '/study?tab=podcast', cta: 'Open Podcast Generator',
+    keywords: 'podcast audio listen notes revision',
   },
 ];
 

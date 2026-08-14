@@ -14,6 +14,7 @@ import {
 } from '../lib/landingContent';
 import { useSeo } from '../lib/seo';
 import StructuredData from '../components/seo/StructuredData';
+import { usePlatformSettings } from '../hooks/usePlatformSettings';
 
 /**
  * Public landing page, laid out from the supplied reference designs.
@@ -455,6 +456,41 @@ function FAQ() {
   );
 }
 
+/* ── 9b. Campaign section — hidden unless a campaign is actually running ──
+ *
+ * Deliberately NOT derived from quota_overrides (the per-student grant
+ * mechanism) even though that has its own "active" state. An admin granting
+ * one student bonus quota for an unrelated support reason would otherwise
+ * flip on a PUBLIC marketing section for every visitor — two different
+ * concepts (an individual grant vs. a public campaign) sharing one signal.
+ * A dedicated toggle keeps them independent, same platform_settings pattern
+ * as everything else in Admin > Platform > Settings.
+ */
+function CampaignSection() {
+  const { landing_campaign_enabled, landing_campaign_form_url, landing_campaign_label, loaded } = usePlatformSettings();
+  if (!loaded || landing_campaign_enabled !== 'true' || !landing_campaign_form_url) return null;
+
+  return (
+    <section className="px-4 sm:px-6 py-8">
+      <div className="max-w-4xl mx-auto bg-gradient-to-br from-primary-600 to-primary-700 rounded-[2rem] p-6 sm:p-10 text-center">
+        <span className="inline-flex items-center gap-1.5 bg-white/15 text-white text-[11px] font-bold px-3 py-1 rounded-full mb-4">
+          <Sparkles size={11} /> Limited time
+        </span>
+        <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+          {landing_campaign_label || 'Special campaign'}
+        </h2>
+        <p className="text-primary-100 mt-2 text-sm max-w-md mx-auto">
+          Fill in the form below to take part.
+        </p>
+        <a href={landing_campaign_form_url} target="_blank" rel="noopener noreferrer"
+          className="mt-6 inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-white text-primary-700 font-bold hover:bg-slate-100 transition-colors">
+          Join now <ArrowUpRight size={16} />
+        </a>
+      </div>
+    </section>
+  );
+}
+
 /* ── 10. Dark closing band ───────────────────────────────────── */
 function ClosingBand({ onGetStarted }) {
   return (
@@ -504,6 +540,7 @@ export default function LandingPage() {
       <FactsBand />
       <Different />
       <Pricing onSelect={open} />
+      <CampaignSection />
       <FAQ />
       <ClosingBand onGetStarted={open} />
       <PublicFooter />

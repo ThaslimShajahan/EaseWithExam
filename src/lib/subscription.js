@@ -47,12 +47,16 @@ export const PLANS = {
     badgeColor: 'bg-primary-500',
     // Real enforced numbers, not Infinity. quota_config carries the same values
     // and is what actually gates; these drive the marketing copy, and the two
-    // MUST agree — promising "unlimited" while enforcing 200 is the failure this
-    // change exists to remove. Mock tests stay genuinely unlimited (-1 in
-    // quota_config), so that claim is still true.
+    // MUST agree — promising "unlimited" while enforcing a different number is
+    // the failure this pattern exists to remove. Mock tests stay genuinely
+    // unlimited (-1 in quota_config), so that claim is still true.
+    // Raised 200->350 / 150->250 (2026-08-14, owner-approved) to make the paid
+    // tier feel genuinely generous relative to free (20/15) while keeping a
+    // real ceiling — not literally unlimited, same cost-safety principle as
+    // the per-student grant caps.
     limits: {
-      ai_questions_per_day: 200,
-      veda_messages_per_day: 150,
+      ai_questions_per_day: 350,
+      veda_messages_per_day: 250,
       mock_tests_per_week: Infinity,
     },
     features: [
@@ -61,9 +65,9 @@ export const PLANS = {
       // exam-prep app also makes — those are kept below, not dropped.
       'Misconception Engine — spot your repeated wrong-answer patterns',
       'Smart flashcards that adapt to what you remember (SM-2)',
-      '200 AI practice questions a day',
+      '350 AI practice questions a day',
       'Unlimited mock tests',
-      '150 EWE messages a day',
+      '250 EWE messages a day',
       'Score predictor (premium)',
       'Deep chapter notes + derivations',
       'Progress certificates',
@@ -81,11 +85,10 @@ export const PLANS = {
     // above (was 'Save ₹1,789', correct only against the old ₹2,999 price).
     badge: 'Save ₹789',
     badgeColor: 'bg-emerald-500',
-    // Same values as premium_monthly — same plan, longer term. It carried the
-    // identical Infinity-vs-enforced mismatch and needed the identical fix.
+    // Same values as premium_monthly — same plan, longer term.
     limits: {
-      ai_questions_per_day: 200,
-      veda_messages_per_day: 150,
+      ai_questions_per_day: 350,
+      veda_messages_per_day: 250,
       mock_tests_per_week: Infinity,
     },
     features: [

@@ -6,7 +6,14 @@
  * never quietly drift in appearance.
  */
 
-export const SITE_URL      = 'https://easewithexam.com';
+// The bare domain 301-redirects to the www. form (verified live), so every
+// button link in every email cost an extra redirect hop until this was fixed
+// — same www. correction the deploy pipeline already uses for the site itself.
+export const SITE_URL      = 'https://www.easewithexam.com';
+// Real EWE app icon, reused from public/icon-192.png — not a new asset.
+// Absolute HTTPS URL is required: email clients do not resolve relative
+// paths, and most strip <img> tags that don't already have one.
+export const LOGO_URL      = 'https://www.easewithexam.com/icon-192.png';
 export const SUPPORT_EMAIL = 'support@easewithexam.in';
 export const FROM_ADDRESS  = 'EaseWithExam <support@easewithexam.com>';
 
@@ -44,7 +51,9 @@ export function layout(bodyHtml: string, footerExtra: string): string {
         <tr>
           <td style="background:linear-gradient(135deg,#21A375,#1B8660);padding:28px 32px;">
             <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-              <td style="width:36px;height:36px;background:rgba(255,255,255,0.15);border-radius:10px;text-align:center;vertical-align:middle;font-weight:800;font-size:18px;color:#FFFFFF;">E</td>
+              <td style="width:36px;height:36px;border-radius:10px;overflow:hidden;">
+                <img src="${LOGO_URL}" width="36" height="36" alt="EaseWithExam" style="display:block;width:36px;height:36px;border-radius:10px;">
+              </td>
               <td style="padding-left:10px;font-weight:800;font-size:18px;color:#FFFFFF;">EaseWithExam</td>
             </tr></table>
           </td>
@@ -152,10 +161,10 @@ export const FALLBACK_TEMPLATES: Record<string, TemplateRow> = {
     subject: '{{planName}} is active — welcome aboard! 🎉',
     heading: '{{planName}} activated',
     // "unlimited practice questions, unlimited EWE tutoring" was the overclaim
-    // fixed everywhere else on 2026-08-14 (premium is 200 AI / 150 EWE per day,
+    // fixed everywhere else on 2026-08-14 (premium is 350 AI / 250 EWE per day,
     // not Infinity) — this hardcoded fallback was the one place that edit
     // missed, since it only fires when the DB row is unexpectedly absent.
-    body_text: 'Thanks for upgrading. Your full toolkit is open, with limits set high enough that you should not meet them: 200 AI practice questions a day, 150 EWE messages a day, unlimited mock tests, the Misconception Engine, and adaptive flashcards.',
+    body_text: 'Thanks for upgrading. Your full toolkit is open, with limits set high enough that you should not meet them: 350 AI practice questions a day, 250 EWE messages a day, unlimited mock tests, the Misconception Engine, and adaptive flashcards.',
     bullet_points: [], button_label: 'Go to Dashboard', button_path: '/dashboard', footer_note: '',
   },
   subscription_expiring: {

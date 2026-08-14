@@ -37,6 +37,28 @@ const USAGE_KEY = {
   paper_generations: 'paper_generations_used',
 };
 
+/**
+ * uid -> display name, for the two tables on this screen that only ever had
+ * a raw Firebase uid to show (daily_usage_quota and quota_overrides carry no
+ * name of their own). users has RLS with no policies -- deny-all for a direct
+ * client read -- so this goes through admin_list_users, the same RPC
+ * AdminStudents.jsx already uses, rather than adding a new one. The platform
+ * has a handful of real users, so one full list + a client-side map is
+ * simpler and cheaper than a per-row join, and never goes stale mid-session
+ * since it is refetched on mount of whichever section needs it.
+ */
+function useUserNames() {
+  const [names, setNames] = useState({});
+  useEffect(() => {
+    supabase.rpc('admin_list_users', { p_caller: getCallerUid() }).then(({ data }) => {
+      const map = {};
+      (data ?? []).forEach((u) => { map[u.firebase_uid] = u.display_name || u.email || u.firebase_uid; });
+      setNames(map);
+    });
+  }, []);
+  return names;
+}
+
 function pctColor(pct) {
   if (pct >= 100) return 'bg-red-500';
   if (pct >= 75)  return 'bg-amber-500';
@@ -158,6 +180,7 @@ function TodayUsageSection({ planLimits }) {
   const [sortField,  setSortField]  = useState('ai_questions_used');
   const [sortAsc,    setSortAsc]    = useState(false);
   const [resetting,  setResetting]  = useState(null);
+  const names = useUserNames();
 
   const today     = IST_DATE();
   const weekStart = IST_WEEK_START();
@@ -210,7 +233,9 @@ function TodayUsageSection({ planLimits }) {
   const freeLimit = planLimits?.free ?? { ai_questions: 15, veda_messages: 20, mock_tests: 3 };
 
   const filtered = rows
-    .filter(r => !search || r.user_id.toLowerCase().includes(search.toLowerCase()))
+    .filter(r => !search
+      || r.user_id.toLowerCase().includes(search.toLowerCase())
+      || (names[r.user_id] ?? '').toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => {
       const av = a[sortField] ?? 0, bv = b[sortField] ?? 0;
       return sortAsc ? av - bv : bv - av;
@@ -259,7 +284,10 @@ function TodayUsageSection({ planLimits }) {
               <tr><td colSpan={FIELDS.length + 2} className="px-5 py-8 text-center text-slate-500">No usage today yet.</td></tr>
             ) : filtered.map(row => (
               <tr key={row.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
-                <td className="px-5 py-3 font-mono text-xs text-slate-300 max-w-[180px] truncate">{row.user_id}</td>
+                <td className="px-5 py-3 max-w-[180px] truncate">
+                  <p className="text-sm text-white truncate">{names[row.user_id] ?? row.user_id}</p>
+                  {names[row.user_id] && <p className="font-mono text-[10px] text-slate-500 truncate">{row.user_id}</p>}
+                </td>
                 {FIELDS.map(f => {
                   const used  = row[USAGE_KEY[f.key]] ?? 0;
                   const limit = freeLimit[f.key] ?? 15;
@@ -310,6 +338,7 @@ function OverridesSection() {
   const [saving,    setSaving]    = useState(false);
   const [err,       setErr]       = useState('');
   const [selectedStudent, setSelectedStudent] = useState(null);
+  const names = useUserNames();
 
   useEffect(() => {
     supabase.rpc('admin_list_quota_overrides', { p_caller: callerUid })
@@ -451,7 +480,8 @@ function OverridesSection() {
         ) : overrides.map(o => (
           <div key={o.id} className="px-5 py-3 flex items-center gap-4">
             <div className="flex-1 min-w-0">
-              <p className="font-mono text-xs text-slate-300 truncate">{o.user_id}</p>
+              <p className="text-sm text-white truncate">{names[o.user_id] ?? o.user_id}</p>
+              {names[o.user_id] && <p className="font-mono text-[10px] text-slate-500 truncate">{o.user_id}</p>}
               {o.reason && <p className="text-[10px] text-slate-500 mt-0.5 truncate">{o.reason}</p>}
             </div>
             <div className="flex items-center gap-4 shrink-0">

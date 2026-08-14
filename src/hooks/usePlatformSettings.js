@@ -17,6 +17,13 @@ const DEFAULTS = {
   // into this string — that is what keeps "3 days" vs "1 day" vs "4 hours"
   // correctly singular/plural without asking an admin to manage that in text.
   quota_grant_badge_label: 'Bonus access',
+  // Landing page campaign section (LandingPage.jsx CampaignSection). Hidden
+  // unless enabled AND a form URL is set — deliberately independent of
+  // quota_overrides (per-student grants), see that component's own comment
+  // for why the two must not share one signal.
+  landing_campaign_enabled:  'false',
+  landing_campaign_form_url: '',
+  landing_campaign_label:    '',
 };
 
 // Module-level cache — these rarely change, no need to refetch on every mount.

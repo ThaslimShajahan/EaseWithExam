@@ -337,6 +337,48 @@ export default function AdminPlatformSettings() {
             </div>
           </div>
         </SettingRow>
+
+        <SettingRow icon={Sparkles} label="Landing Page Campaign" hint="A section on the public homepage, hidden unless a campaign is running">
+          <div className="space-y-3">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <button type="button"
+                onClick={() => {
+                  const next = lv('landing_campaign_enabled') !== 'true' ? 'true' : 'false';
+                  setLv('landing_campaign_enabled')({ target: { value: next } });
+                  saveSetting('landing_campaign_enabled', next);
+                }}
+                className={`relative w-10 h-6 rounded-full transition-colors ${lv('landing_campaign_enabled') === 'true' ? 'bg-emerald-500' : 'bg-slate-600'}`}>
+                <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all ${lv('landing_campaign_enabled') === 'true' ? 'left-5' : 'left-1'}`} />
+              </button>
+              <span className="text-sm text-slate-300">
+                {lv('landing_campaign_enabled') === 'true' ? 'Section visible on landing page' : 'Section hidden'}
+              </span>
+            </label>
+            {/* Independent of quota_overrides on purpose — a support grant to
+                one student must not turn on a public section for everyone.
+                Both enabled AND a form URL are required for the section to
+                actually render; see CampaignSection in LandingPage.jsx. */}
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Heading</label>
+              <input value={lv('landing_campaign_label')} onChange={setLv('landing_campaign_label')}
+                placeholder="e.g. Independence Day Special"
+                className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-primary-500" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Signup form URL</label>
+              <input value={lv('landing_campaign_form_url')} onChange={setLv('landing_campaign_form_url')}
+                placeholder="https://forms.gle/…"
+                className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-primary-500" />
+              <p className="text-[11px] text-slate-500 mt-1">Opens in a new tab when a visitor clicks "Join now". Any form URL works — Google Forms, Typeform, etc.</p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <SaveBtn onClick={() => saveSetting('landing_campaign_label', lv('landing_campaign_label'))}
+                loading={savingKey === 'landing_campaign_label'} saved={saved === 'landing_campaign_label'} />
+              <SaveBtn onClick={() => saveSetting('landing_campaign_form_url', lv('landing_campaign_form_url'))}
+                loading={savingKey === 'landing_campaign_form_url'} saved={saved === 'landing_campaign_form_url'} />
+            </div>
+          </div>
+        </SettingRow>
       </div>
 
       {/* Preview */}
