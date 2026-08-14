@@ -76,6 +76,23 @@ const PLAN_DAYS: Record<string, number> = {
   verification_1rs: 1,
 };
 
+// Display names for the receipt email — must match razorpay-verify's own
+// copy (and src/lib/subscription.js's PLANS[id].name). Added 2026-08-15
+// alongside the receipt block below — see its comment for why.
+const PLAN_NAMES: Record<string, string> = {
+  premium_monthly: 'Premium',
+  premium_yearly:  'Premium Yearly',
+  neet_complete:   '3-Year Plan',
+  verification_1rs: 'Live Verification',
+};
+
+// Same formatter as razorpay-verify — plain "INR", not the ₹ glyph. See that
+// file's comment for the encoding history.
+function formatInr(paise: number): string {
+  const rupees = paise / 100;
+  return `INR ${rupees.toLocaleString('en-IN', { minimumFractionDigits: rupees % 1 === 0 ? 0 : 2 })}`;
+}
+
 function verifySignature(body: string, signature: string): boolean {
   if (!WEBHOOK_SECRET) return false; // fail closed — unconfigured means allow no one
   const expected = createHmac('sha256', WEBHOOK_SECRET).update(body).digest('hex');
@@ -166,6 +183,48 @@ serve(async (req) => {
       try {
         await supabase.rpc('award_xp_atomic', { p_uid: claim.firebase_uid, p_event: 'subscription_upgrade' });
       } catch { /* best-effort, ignore */ }
+
+      // Receipt email — added 2026-08-15, real gap found investigating a real
+      // ₹1 payment: razorpay-verify's own receipt block only runs on ITS
+      // success path, so any order this webhook wins the race on (razorpay-
+      // verify gets 409 "Order not redeemable" and returns before ever
+      // reaching its receipt code) was activating with NO receipt sent at
+      // all. This mirrors razorpay-verify's block exactly — same template,
+      // same claim-sourced values, never the webhook payload's own
+      // notes.*, for the same replay reason activation above doesn't trust
+      // them either. Fire-and-forget: a Resend outage must never fail an
+      // activation that already succeeded.
+      try {
+        const baseAmount = claim.base_amount_paise;
+        const gstAmount  = claim.gst_amount_paise ?? 0;
+        const hasGstBreakdown = baseAmount != null;
+        const gstRatePercent = hasGstBreakdown && baseAmount > 0
+          ? Math.round((gstAmount / baseAmount) * 100) : 0;
+
+        const receiptResp = await fetch(`${SUPABASE_URL}/functions/v1/send-email`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SERVICE_KEY}` },
+          body: JSON.stringify({
+            caller_uid: claim.firebase_uid,
+            user_id:    claim.firebase_uid,
+            template:   'subscription_receipt',
+            data: {
+              planName:    PLAN_NAMES[claim.plan_id] ?? claim.plan_id,
+              baseAmount:  formatInr(hasGstBreakdown ? baseAmount : (claim.amount_paise ?? 0)),
+              gstAmount:   formatInr(gstAmount),
+              gstRatePercent,
+              totalAmount: formatInr(claim.amount_paise ?? 0),
+              paymentId: paymentId,
+              date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+            },
+          }),
+        });
+        if (!receiptResp.ok) {
+          console.error('[webhook backup path] receipt email send-email call failed:', receiptResp.status, await receiptResp.text().catch(() => ''));
+        }
+      } catch (e) {
+        console.error('[webhook backup path] receipt email dispatch threw:', (e as Error).message);
+      }
     }
 
     // subscription.activated / subscription.cancelled — see file header.
