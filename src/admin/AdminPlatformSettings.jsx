@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Settings, Upload, Image, Cookie, Palette, Globe, CheckCircle2, Loader2, AlertTriangle, Trash2 } from 'lucide-react';
+import { Settings, Upload, Image, Cookie, Palette, Globe, CheckCircle2, Loader2, AlertTriangle, Trash2, Sparkles } from 'lucide-react';
 import { supabase, adminClearAllData } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { invalidatePlatformSettings } from '../hooks/usePlatformSettings';
@@ -311,6 +311,29 @@ export default function AdminPlatformSettings() {
               <div className="mt-2 flex justify-end">
                 <SaveBtn onClick={() => saveSetting('cookie_banner_text', lv('cookie_banner_text'))} loading={savingKey === 'cookie_banner_text'} saved={saved === 'cookie_banner_text'} />
               </div>
+            </div>
+          </div>
+        </SettingRow>
+
+        <SettingRow icon={Sparkles} label="Quota Grant Badge">
+          <div>
+            <label className="text-xs text-slate-500 block mb-1">Badge label</label>
+            <input value={lv('quota_grant_badge_label')} onChange={setLv('quota_grant_badge_label')}
+              placeholder="Bonus access"
+              className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-primary-500" />
+            {/* The day/hour count is intentionally NOT part of this text — it is
+                always computed by ExpiryBadge.jsx (see the 2026-08-14 fix for
+                why: singular/plural and hours-vs-days need real logic, not a
+                hand-typed template). This field only controls what comes
+                before it. */}
+            <p className="text-[11px] text-slate-500 mt-1.5">
+              Shown to any student with an active quota grant, e.g. <span className="text-slate-300">"{lv('quota_grant_badge_label') || 'Bonus access'} — 3 days left"</span>.
+              Change this for a named campaign (e.g. "Independence Day Special") — the day count always
+              updates itself.
+            </p>
+            <div className="mt-2 flex justify-end">
+              <SaveBtn onClick={() => saveSetting('quota_grant_badge_label', lv('quota_grant_badge_label'))}
+                loading={savingKey === 'quota_grant_badge_label'} saved={saved === 'quota_grant_badge_label'} />
             </div>
           </div>
         </SettingRow>

@@ -6,6 +6,43 @@ shipped in a degraded state. The narrative of what changed and why lives in
 
 ---
 
+## ⚠️ OPEN — daily cron cadence can miss short-lived grants entirely (2026-08-14)
+
+**Verified live, not assumed: `cron.job_run_details` was completely empty for
+`send-expiry-reminders-daily` at investigation time — zero executions since
+the job was created.** Not a crash, not a silent failure — the job runs daily
+at 03:30 UTC (09:00 IST), and it was created around 12:21–12:35 UTC the same
+day, after that day's 03:30 UTC slot had already passed. Its first-ever tick
+was always going to be the following morning. pg_cron does not catch up on a
+schedule slot that has already gone by.
+
+**The real gap this exposes:** a grant created and set to expire within the
+same day — as happened live (granted and expiring within hours, same
+afternoon) — can fall entirely inside the dead window between "created" and
+"cron's next tick" and receive **zero** reminder touches before it expires.
+The 3-day/1-day/day-of schedule assumes the job gets at least one run during
+the grant's lifetime; a sub-24h grant created shortly after the daily tick has
+no such guarantee.
+
+**Not fixed tonight — flagged for a decision, not a code change made
+unilaterally:**
+- Option A: schedule more frequently (e.g. hourly, matching
+  `expire-subscriptions-hourly`'s own cadence) so the dead window shrinks to
+  under an hour instead of up to 24.
+- Option B: accept daily cadence for real campaigns (which run for many days,
+  where this gap is irrelevant) and treat same-day grants as a known
+  edge case, documented rather than engineered around.
+
+Check real execution history any time with:
+```sql
+select j.jobname, r.status, r.start_time, r.return_message
+  from cron.job_run_details r join cron.job j on j.jobid = r.jobid
+ where j.jobname = 'send-expiry-reminders-daily'
+ order by r.start_time desc limit 10;
+```
+
+---
+
 ## ⚠️ OPEN — prerendering introduced a self-referencing canonical loop on 4 routes (2026-08-14)
 
 **Found during the deploy that shipped prerendering, verifying live — not anticipated beforehand.**

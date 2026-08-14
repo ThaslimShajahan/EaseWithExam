@@ -11,7 +11,8 @@ import { mapAuthError } from '../lib/authErrors';
 import { updateUser } from '../lib/supabase';
 import { getUserGamification, getLevelProgress, LEVEL_TITLES } from '../lib/gamification';
 import { PLANS } from '../lib/subscription';
-import { getQuotaSnapshot, FIELD_LABELS } from '../lib/quota';
+import { getQuotaSnapshot, FIELD_LABELS, getExpiryInfo } from '../lib/quota';
+import { usePlatformSettings } from '../hooks/usePlatformSettings';
 import { formatExamLabel, getCompetitiveExamType, resolveBoard } from '../lib/categories';
 import { getOrCreateReferral, redeemReferral, referralShareText, REFERRAL_BONUS_DAYS } from '../lib/referral';
 import Button from '../components/ui/Button';
@@ -449,7 +450,28 @@ export default function ProfilePage() {
 
   const levelInfo = gam ? getLevelProgress(gam.xp ?? 0) : null;
   const levelTitle = levelInfo ? (LEVEL_TITLES[Math.min(levelInfo.level, LEVEL_TITLES.length - 1)] || 'Zenith') : '';
-  const planName = subscription?.isActive ? (PLANS[subscription.plan]?.name ?? 'Premium') : 'Free';
+  const basePlanName = subscription?.isActive ? (PLANS[subscription.plan]?.name ?? 'Premium') : 'Free';
+
+  // Found live (2026-08-14): a free student with an active quota grant saw
+  // "Plan: Free" here with nothing pointing at the ExpiryBadge just below it —
+  // the grant was real and working, this field just didn't know about it.
+  // getExpiryInfo() is the same call ExpiryBadge makes, reused rather than
+  // re-implementing the grant-precedence rule a second time in this file.
+  const [hasActiveGrant, setHasActiveGrant] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    if (!currentUser?.uid) { setHasActiveGrant(false); return; }
+    getExpiryInfo(currentUser.uid, subscription).then((info) => {
+      if (!cancelled) setHasActiveGrant(info.kind === 'grant');
+    });
+    return () => { cancelled = true; };
+  }, [currentUser?.uid, subscription]);
+
+  // Same admin-editable label ExpiryBadge shows, not a second hardcoded
+  // string — a campaign renamed to "Independence Day Special" must read the
+  // same way here as it does on the badge two sections down.
+  const { quota_grant_badge_label: grantLabel } = usePlatformSettings();
+  const planName = hasActiveGrant ? `${basePlanName} (${grantLabel} active)` : basePlanName;
 
   // formatExamLabel (lib/categories.js) is THE canonical exam-label
   // formatter, shared across every render site (Sidebar, Dashboard,

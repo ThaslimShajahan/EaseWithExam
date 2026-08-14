@@ -10,6 +10,13 @@ const DEFAULTS = {
   ewe_avatar_url:         '',
   cookie_banner_enabled:  'false',
   cookie_banner_text:     'We use cookies to improve your experience. By continuing, you agree to our use of cookies.',
+  // The prefix on a student's "Bonus access" badge (ExpiryBadge.jsx) when they
+  // have an active quota grant — e.g. swap it to "Independence Day Special" for
+  // the duration of a named campaign. Only the label is editable; the day/hour
+  // count after it is always computed by ExpiryBadge itself, never hand-typed
+  // into this string — that is what keeps "3 days" vs "1 day" vs "4 hours"
+  // correctly singular/plural without asking an admin to manage that in text.
+  quota_grant_badge_label: 'Bonus access',
 };
 
 // Module-level cache — these rarely change, no need to refetch on every mount.
