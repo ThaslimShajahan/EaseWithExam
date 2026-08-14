@@ -37,6 +37,7 @@
  * knowledge_base has no natural key to collide on. Check before re-running.
  */
 import { readdirSync, statSync, readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { join, extname, basename } from 'node:path';
 import { chromium } from 'playwright';
@@ -216,6 +217,49 @@ queue.length = 0; queue.push(...toRun);
 
 console.log(DRY_RUN ? '\n--dry-run: extraction WILL run, writes will NOT.\n' : '\nWriting for real.\n');
 
+/* ── Durable per-file record (content_jobs, 20260814050000) ──────────
+ *
+ * Written through the page because the RPC calls assert_verified_admin and the
+ * authenticated session lives in the browser, not in Node.
+ *
+ * Deliberately NOT written on --dry-run: a rehearsal that persists nothing to
+ * knowledge_base should not leave rows implying a load happened. The terminal
+ * output is the record for a dry run.
+ *
+ * Never allowed to break a load. A failure to write the audit row is logged and
+ * swallowed — losing the note of a successful load is bad, but aborting a
+ * half-finished content load because the note failed is worse. */
+const RUN_ID = randomUUID();
+if (!DRY_RUN) console.log(`run_id ${RUN_ID}\n`);
+
+async function recordJob(fields) {
+  if (DRY_RUN) return null;
+  try {
+    return await page.evaluate(async (f) => {
+      const { supabase } = await import('/src/lib/supabase.js');
+      const { data, error } = await supabase.rpc('admin_record_content_job', f);
+      if (error) throw new Error(error.message);
+      return data;
+    }, fields);
+  } catch (e) {
+    console.log(`      [content_jobs] could not record: ${e.message.slice(0, 120)}`);
+    return null;
+  }
+}
+
+const jobFields = (j, extra) => ({
+  p_caller: ADMIN_UID, p_run_id: RUN_ID, p_source_file: j.name,
+  p_exam_type: EXAM, p_subject: SUBJECT, p_book: BOOK, p_file_ordinal: j.ord ?? null,
+  p_chapters_expected: j.titles ?? [], ...extra,
+});
+
+// Skips are recorded too — "this file was deliberately not processed" is a
+// materially different fact from "this file never came up", and only one of
+// them is visible later without a row.
+for (const j of skipped) {
+  await recordJob(jobFields(j, { p_id: null, p_status: 'skipped', p_error: 'already loaded (chapter_keys present in knowledge_base)' }));
+}
+
 /* ── The per-file pipeline, run inside the page, using the app's own modules ── */
 async function processFile(job) {
   return page.evaluate(async ({ url, filename, exam, subject, classLevel, book, dryRun, callerUid }) => {
@@ -278,15 +322,22 @@ for (let i = 0; i < queue.length; i++) {
   const label = `[${i + 1}/${queue.length}] File #${job.ord} ${job.name}`;
   console.log(`${label} …`);
 
+  // Opened BEFORE the work starts, so a crash that kills the process still
+  // leaves a row saying which file was in flight. That is precisely the
+  // question the Unit 5 crash could not answer.
+  const jobId = await recordJob(jobFields(job, { p_id: null, p_status: 'running' }));
+
   let out;
   try {
     out = await processFile(job);
   } catch (e) {
+    await recordJob(jobFields(job, { p_id: jobId, p_status: 'failed', p_error: `THREW: ${e.message}`.slice(0, 2000) }));
     console.error(`\n${label}\n  ✗ THREW: ${e.message}\n\nStopping — ${done} file(s) completed before this.\n`);
     await browser.close(); fileServer.close(); process.exit(1);
   }
 
   if (out?.error) {
+    await recordJob(jobFields(job, { p_id: jobId, p_status: 'failed', p_error: out.error.slice(0, 2000) }));
     console.error(`\n${label}\n  ✗ ${out.error}\n\nStopping — ${done} file(s) completed before this.\n`);
     await browser.close(); fileServer.close(); process.exit(1);
   }
@@ -306,12 +357,20 @@ for (let i = 0; i < queue.length; i++) {
   if (out.failedPages)     console.log(`      ⚠️  ${out.failedPages} page(s) failed to read`);
 
   if (mismatch) {
+    await recordJob(jobFields(job, {
+      p_id: jobId, p_status: 'failed', p_chapters_written: produced, p_chunk_count: out.kbCount ?? 0,
+      p_error: `chapter mismatch — expected [${job.titles.join(' | ')}], produced [${produced.join(' | ')}]`.slice(0, 2000),
+    }));
     console.error(`\n  ✗ UNEXPECTED RESULT for ${job.name}`);
     console.error(`      expected (${job.titles.length}): ${job.titles.join(' | ')}`);
     console.error(`      produced (${produced.length}): ${produced.join(' | ')}`);
     console.error(`\nStopping. ${DRY_RUN ? 'Nothing was written (dry run).' : `${done} file(s) were written before this one; THIS file may be partially written — check knowledge_base.`}\n`);
     await browser.close(); fileServer.close(); process.exit(1);
   }
+
+  await recordJob(jobFields(job, {
+    p_id: jobId, p_status: 'done', p_chapters_written: produced, p_chunk_count: out.kbCount ?? 0,
+  }));
 
   if (!DRY_RUN) console.log(`      saved ${out.kbCount} chunks across ${out.lessonCount} chapter(s)${out.flagged ? ' (flagged: 2-of-3 signals)' : ''}`);
   done++;
