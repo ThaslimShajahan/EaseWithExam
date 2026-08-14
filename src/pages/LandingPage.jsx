@@ -509,7 +509,16 @@ function CampaignSection() {
           disproportionately narrow/squeezed next to its neighbors rather than
           being a deliberate design choice — nothing here called for a
           narrower container. */}
-      <div className={`max-w-6xl mx-auto bg-gradient-to-br from-primary-600 to-primary-700 rounded-[2rem] overflow-hidden ${hasImage ? 'grid lg:grid-cols-2 items-center' : ''}`}>
+      {/* lg:min-h-[420px] added back — 2026-08-15, after the height-derives-
+          purely-from-text version (no floor at all) read as a thin decorative
+          strip rather than a real promotional visual once width matched its
+          neighbors. This is a FIXED floor, not derived from the image, so it
+          does not reintroduce the portrait-image ballooning bug fixed
+          earlier — the self-stretch + absolute-positioned <img> below still
+          contributes zero intrinsic height either way; min-h only raises
+          what the text-driven row would otherwise settle to. Longer text
+          still grows the row past this floor exactly as before. */}
+      <div className={`max-w-6xl mx-auto bg-gradient-to-br from-primary-600 to-primary-700 rounded-[2rem] overflow-hidden ${hasImage ? 'grid lg:grid-cols-2 lg:min-h-[360px] items-center' : ''}`}>
         <div className={`p-6 sm:p-10 text-center ${hasImage ? 'lg:py-10' : ''}`}>
           <span className="inline-flex items-center gap-1.5 bg-white/15 text-white text-[11px] font-bold px-3 py-1 rounded-full mb-4">
             <Sparkles size={11} /> Limited time
