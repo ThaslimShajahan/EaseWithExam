@@ -151,8 +151,19 @@ export const FALLBACK_TEMPLATES: Record<string, TemplateRow> = {
     template_key: 'subscription_active', label: 'Subscription Activated Email',
     subject: '{{planName}} is active — welcome aboard! 🎉',
     heading: '{{planName}} activated',
-    body_text: 'Thanks for upgrading. Every AI limit is lifted — unlimited practice questions, unlimited EWE tutoring, the Misconception Engine, and full mock-test access are unlocked on your account right now.',
+    // "unlimited practice questions, unlimited EWE tutoring" was the overclaim
+    // fixed everywhere else on 2026-08-14 (premium is 200 AI / 150 EWE per day,
+    // not Infinity) — this hardcoded fallback was the one place that edit
+    // missed, since it only fires when the DB row is unexpectedly absent.
+    body_text: 'Thanks for upgrading. Your full toolkit is open, with limits set high enough that you should not meet them: 200 AI practice questions a day, 150 EWE messages a day, unlimited mock tests, the Misconception Engine, and adaptive flashcards.',
     bullet_points: [], button_label: 'Go to Dashboard', button_path: '/dashboard', footer_note: '',
+  },
+  subscription_expiring: {
+    template_key: 'subscription_expiring', label: 'Expiry Reminder Email',
+    subject: 'Your {{planName}} plan ends in {{daysLeft}} day(s)',
+    heading: 'Your access is ending soon',
+    body_text: '{{planName}} ends on {{expiryDate}} ({{daysLeft}} day(s) left). Renew now to keep your limits and features without a gap.',
+    bullet_points: [], button_label: 'Renew now', button_path: '/pricing', footer_note: '',
   },
   verify_email: {
     template_key: 'verify_email', label: 'Connect-Email Verification Code',
