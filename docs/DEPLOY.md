@@ -27,8 +27,17 @@ instead of the deploy key. Always use the alias.
 
 ```bash
 # 1. Pre-flight — never deploy an unverified tree
-npm test && npm run build
+#    build:seo, NOT build. Plain `vite build` emits the SPA shell whose body is
+#    `<div id="root"></div>` and whose canonical points at the homepage on every
+#    route — deploying that silently reverts the prerender fix and re-declares
+#    /about and /privacy as duplicates of /. build:seo runs vite build and then
+#    scripts/prerender.mjs, which refuses to write a file with a wrong canonical.
+npm test && npm run build:seo
 grep -o 'assets/index-[A-Za-z0-9_-]*\.js' dist/index.html   # note this hash
+
+# Prerender sanity — the body must NOT be an empty root div
+sed -n '/<body/,$p' dist/index.html | head -3
+grep -o '<link rel="canonical" href="[^"]*"' dist/about/index.html   # must end /about
 
 # 2. Back up the current web root (fast to restore; seconds)
 ssh easewithexam 'R=~/htdocs/www.easewithexam.com; B=~/deploy-backups; mkdir -p $B; \
