@@ -4,6 +4,18 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-15 — Fixed the trailing-slash redirect that broke 4 of 5 public pages' canonical URLs
+
+Found via Search Console reporting "Page with redirect" for a public page. Root cause, confirmed live before fixing: `scripts/prerender.mjs` writes each non-root route to a real directory (`dist/about/index.html`), and a static server 301s any bare request for a URI that resolves to an actual directory, adding a trailing slash — independent of which nginx location block matches, so this was never dependent on which nginx config variant was live. `sitemap.xml`, `PAGE_SEO`'s canonical URLs, and prerender's own self-check all declared the *no-slash* form as canonical, so Google's crawler requested exactly the URL that redirects, landing on a page whose own baked-in canonical pointed straight back at the URL that had just redirected it there. `/` was never affected — it prerenders straight to `dist/index.html`, no subdirectory involved.
+
+Fix: `absUrl()` in `src/lib/seo.js` now always trailing-slashes non-root paths — that's the URL that's actually 200-able without a hop. `prerender.mjs` imports `absUrl` directly instead of hand-rolling the expected-canonical string, so the two can't drift again. `sitemap.xml` updated to match. Every internal link to these four pages (`PublicChrome.jsx`'s nav + footer, `PlatformChrome.jsx`'s cookie banner, `PhoneOTP.jsx`'s consent line, `NotFoundPage.jsx`'s suggested links) updated to the trailing-slash form too, so real navigations stop eating a redirect hop. `PAGE_SEO`'s dictionary keys and `<Route path>` in `App.jsx` deliberately kept slash-less — those are route *identifiers* matched client-side by React Router (which is trailing-slash-insensitive by default), not the served URL, and changing them would have been scope creep with no effect. `seoRoutes.test.js`'s sitemap-vs-`PAGE_SEO` assertion updated to strip the slash back off before the lookup, since `PAGE_SEO` stays keyed by the no-slash identifier.
+
+The old no-slash URLs still resolve — one clean 301 to the new canonical, same as any legacy link — they're just no longer what the sitemap or canonical tags declare as the real URL. Verified live post-deploy: all four now 200 directly at the trailing-slash form, canonical tags match the serving URL exactly (no more circularity), sitemap.xml matches, and the old form still 301s cleanly rather than erroring.
+
+A second claim investigated the same session — an `X-Robots-Tag: noindex` header allegedly present on every page including the homepage — did **not** reproduce from this vantage point across repeated `curl -I` checks (homepage, `/about/`, and `/admin` directly) before or after this deploy, and the only nginx config file in the repo has no such directive. Left unresolved pending evidence of what was actually seen and from where — not touched, because there was nothing here to fix.
+
+---
+
 ## 2026-08-12 (session 29) — non-STEM Stage A: the `book` dimension and a 21-value taxonomy
 
 Stage A of loading the 372 unloaded non-STEM PDFs. **Design and code only — neither migration is applied and nothing is loaded.** Stage B (reading ~35 contents pages) is next and is the step that must not be skipped.

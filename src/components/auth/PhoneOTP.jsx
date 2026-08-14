@@ -176,7 +176,7 @@ export default function PhoneOTP({ onError, onStepChange, onSuccess }) {
 
       <p className="text-xs text-center text-slate-400">
         By continuing, you agree to our{' '}
-        <a href="/privacy" className="text-primary-600 hover:underline font-medium">Terms &amp; Privacy Policy</a>.
+        <a href="/privacy/" className="text-primary-600 hover:underline font-medium">Terms &amp; Privacy Policy</a>.
       </p>
 
       {/* Invisible reCAPTCHA anchor required by Firebase's signInWithPhoneNumber */}

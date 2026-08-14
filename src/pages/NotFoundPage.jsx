@@ -81,10 +81,10 @@ export default function NotFoundPage() {
               Try instead
             </p>
             <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm">
-              <Link to="/about" className="inline-flex items-center gap-1.5 text-slate-600 hover:text-primary-700 font-medium transition-colors">
+              <Link to="/about/" className="inline-flex items-center gap-1.5 text-slate-600 hover:text-primary-700 font-medium transition-colors">
                 <BookOpen size={14} /> About EaseWithExam
               </Link>
-              <Link to="/contact" className="inline-flex items-center gap-1.5 text-slate-600 hover:text-primary-700 font-medium transition-colors">
+              <Link to="/contact/" className="inline-flex items-center gap-1.5 text-slate-600 hover:text-primary-700 font-medium transition-colors">
                 <Mail size={14} /> Contact support
               </Link>
             </div>

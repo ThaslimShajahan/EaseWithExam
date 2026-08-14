@@ -16,8 +16,8 @@ const NAV_LINKS = [
   { label: 'Home',     href: '/' },
   { label: 'Features', href: '/#features' },
   { label: 'Pricing',  href: '/#pricing' },
-  { label: 'About',    href: '/about' },
-  { label: 'Contact',  href: '/contact' },
+  { label: 'About',    href: '/about/' },
+  { label: 'Contact',  href: '/contact/' },
 ];
 
 export function PublicNavBar({ onSignIn }) {
@@ -118,10 +118,10 @@ const FOOTER_COLUMNS = [
   {
     heading: 'Company',
     links: [
-      { label: 'About Us',            href: '/about' },
-      { label: 'Contact',             href: '/contact' },
-      { label: 'Privacy & Cookies',   href: '/privacy' },
-      { label: 'Terms of Service',    href: '/terms' },
+      { label: 'About Us',            href: '/about/' },
+      { label: 'Contact',             href: '/contact/' },
+      { label: 'Privacy & Cookies',   href: '/privacy/' },
+      { label: 'Terms of Service',    href: '/terms/' },
       { label: 'info@acenzos.com',    href: 'mailto:info@acenzos.com' },
     ],
   },
@@ -158,8 +158,8 @@ export function PublicFooter() {
       <div className="border-t border-slate-100">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-5 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-400">
           <div className="flex items-center gap-5">
-            <a href="/terms" className="hover:text-slate-700 transition-colors">Terms of service</a>
-            <a href="/privacy" className="hover:text-slate-700 transition-colors">Privacy policy</a>
+            <a href="/terms/" className="hover:text-slate-700 transition-colors">Terms of service</a>
+            <a href="/privacy/" className="hover:text-slate-700 transition-colors">Privacy policy</a>
           </div>
           <span>
             &copy; {year} EaseWithExam · A product by{' '}

@@ -33,6 +33,7 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync } from 'no
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { absUrl } from '../src/lib/seo.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = join(ROOT, 'dist');
@@ -91,8 +92,11 @@ for (const route of ROUTES) {
   const robots = await page.evaluate(() => document.head.querySelector('meta[name="robots"]')?.content ?? null);
 
   // The whole point of the exercise: refuse to emit a file whose canonical
-  // still points at the homepage, or that is accidentally noindexed.
-  const expected = `https://www.easewithexam.com${route}`;
+  // still points at the homepage, or that is accidentally noindexed. Uses the
+  // same absUrl() the running app calls, so this can never drift from what
+  // seo.js actually produces (see absUrl's own comment for why it's
+  // trailing-slashed).
+  const expected = absUrl(route);
   if (canonical !== expected) problems.push(`${route}: canonical is ${canonical}, expected ${expected}`);
   if (robots && robots.includes('noindex')) problems.push(`${route}: emitted with noindex`);
 

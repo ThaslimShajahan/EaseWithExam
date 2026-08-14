@@ -26,9 +26,33 @@ import { useEffect } from 'react';
 
 export const SITE_URL = 'https://www.easewithexam.com';
 
-/** Absolute URL for a path, with no trailing slash except at the root. */
-export const absUrl = (path = '/') =>
-  path === '/' ? `${SITE_URL}/` : `${SITE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+/**
+ * Absolute URL for a path, always trailing-slashed (including the root).
+ *
+ * WHY THE TRAILING SLASH
+ *   scripts/prerender.mjs writes each non-root route to a real directory
+ *   (dist/about/index.html, not dist/about.html), because that is what lets a
+ *   static server resolve /about to that file at all. But a request for a URI
+ *   that resolves to an actual directory gets a 301 to the same URI + '/' —
+ *   that is core static-file-serving behaviour, independent of which nginx
+ *   location block matches. So "/about" (no slash) is never a stable,
+ *   directly-200-able URL once it is prerendered — only "/about/" is.
+ *
+ *   Before 2026-08-15 this returned the no-slash form, which sitemap.xml and
+ *   every canonical tag then declared as the indexable URL. Google's crawler
+ *   requested exactly that URL, got redirected, and reported "Page with
+ *   redirect" for 4 of the site's 5 public pages — a redirect that also
+ *   pointed at a page whose own canonical pointed straight back at the URL
+ *   that had just redirected it there. Confirmed live via curl before fixing,
+ *   not assumed. Root ("/") was never affected — it prerenders to
+ *   dist/index.html directly, no subdirectory involved.
+ */
+export const absUrl = (path = '/') => {
+  const withLeadingSlash = path.startsWith('/') ? path : `/${path}`;
+  return withLeadingSlash.endsWith('/')
+    ? `${SITE_URL}${withLeadingSlash}`
+    : `${SITE_URL}${withLeadingSlash}/`;
+};
 
 /**
  * Titles stay under ~60 characters so Google does not truncate them, and each

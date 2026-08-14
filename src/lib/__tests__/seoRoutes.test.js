@@ -91,11 +91,16 @@ describe('static SEO files', () => {
     expect(locs.length).toBeGreaterThan(0);
     for (const loc of locs) {
       expect(loc.startsWith(`${SITE_URL}/`), `${loc} is not on the canonical host`).toBe(true);
-      const path = loc.replace(SITE_URL, '') || '/';
+      // Sitemap entries are trailing-slashed — that's the URL nginx actually
+      // serves without a redirect (see absUrl in seo.js). PAGE_SEO's keys are
+      // route identifiers matching App.jsx's <Route path> values, which are
+      // not slash-terminated, so strip it back off before looking one up.
+      const raw = loc.replace(SITE_URL, '') || '/';
+      const path = raw === '/' ? '/' : raw.replace(/\/$/, '');
       // A sitemap URL with no SEO entry inherits index.html's homepage
       // canonical, so it would be listed as indexable while pointing elsewhere.
-      expect(PAGE_SEO[path === '/' ? '/' : path], `${loc} has no PAGE_SEO entry`).toBeTruthy();
-      expect(PAGE_SEO[path === '/' ? '/' : path].noindex).toBeFalsy();
+      expect(PAGE_SEO[path], `${loc} has no PAGE_SEO entry`).toBeTruthy();
+      expect(PAGE_SEO[path].noindex).toBeFalsy();
     }
   });
 
