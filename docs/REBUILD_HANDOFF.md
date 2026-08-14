@@ -897,6 +897,44 @@ All built, **none deployed**.
 - Content strategy is logged as ongoing post-launch work in `ACTION_ITEMS_FOR_YOU.md` — head terms
   are not winnable, the brand term is, and everything else needs pages that do not exist.
 
+### 13.10 Student subject scoping — DONE, and why two screens were left alone
+
+**Shipped** (`08ea708`, `89b7dcd`). Every student-facing subject picker used to show the whole board
+catalogue, so a CBSE Class 12 Science student was offered Accountancy, Psychology and Political
+Science. This was Phase 4 of the stream-selection work, previously "not started" — not a regression.
+
+Source of truth is **`users.subjects`**, the list onboarding resolves (stream_mandatory + chosen slot
+subjects + language). Deliberately NOT re-derived from `stream_configs` at read time: onboarding
+already applies that rule, and a second implementation is free to drift from what was saved — the
+exact bug class that cost this project a night. Consequence, accepted: `stream_configs` edits are not
+retroactive for existing students.
+
+Rules, all in `src/lib/studentSubjects.js` and unit-tested without React (16 tests):
+
+| Case | Behaviour |
+|---|---|
+| Selection matches the board exactly | Scoped to it, board ordering kept |
+| Selection partially matches | **Setup prompt** — owner decision, never a best-effort subset |
+| Classes 11–12, no selection | **Setup prompt**, shown instead of any picker |
+| Classes 8–10 (and 6–7), no selection | Full board list, **no prompt** — no stream exists to choose |
+
+**Scoped (6):** Important Q&A, Exam Center (generate-paper modal only — past papers and results need
+no selection), Practice Generator, Study Plan, Flashcards, Syllabus Tracker.
+
+> **NOT AN OVERSIGHT — Error Notebook and Notes Browser are deliberately unscoped.**
+> Recorded here because it looks like a gap and is not. Both derive their subject list from the
+> student's **own content** — `ErrorNotebookPage` from `new Set(allItems.map(i => i.subject))`,
+> `NotesBrowser` from the notes actually returned for that student. They therefore cannot display a
+> subject the student has nothing in; scoping them would add a second filter over an already-filtered
+> list, changing no behaviour while adding a way to hide content a student does have. Leave them
+> alone unless their data source changes to a catalogue query.
+>
+> **Also excluded, for different reasons:** `VideoLearningPage` reads a hardcoded `PLAYLISTS`
+> constant (a separate system, needs its own decision) and `PaperModePage` uses a free-text subject
+> field, not a picker. **`SummarizerPage`, `PodcastPage`, `DoubtStudioPage`, `StudyHubPage`,
+> `ProgressHubPage` and `MockTestPage` contain no subject references at all** — verified by grep, not
+> assumed. The affected surface is 6 screens, not the 12 originally estimated.
+
 ### 13.9 Background job runner — Tier 1 done, Tier 2 DEFERRED
 
 **Tier 1 shipped** (`7a27c3a`, migration `20260814050000` applied): `content_jobs` plus
