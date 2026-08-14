@@ -466,6 +466,21 @@ function FAQ() {
   );
 }
 
+/**
+ * Renders `**word**` as an accent-colored span, everything else as plain
+ * text — the lightweight markup convention for CampaignSection's headline.
+ * No rich-text editor: the admin field stays a plain string, this is a
+ * display-layer parse only. Shared with the admin live preview so both
+ * render identically.
+ */
+function renderAccentHeadline(text) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+    part.startsWith('**') && part.endsWith('**')
+      ? <span key={i} className="text-primary-600">{part.slice(2, -2)}</span>
+      : <span key={i}>{part}</span>,
+  );
+}
+
 /* ── 9b. Campaign section — hidden unless a campaign is actually running ──
  *
  * Deliberately NOT derived from quota_overrides (the per-student grant
@@ -475,6 +490,25 @@ function FAQ() {
  * concepts (an individual grant vs. a public campaign) sharing one signal.
  * A dedicated toggle keeps them independent, same platform_settings pattern
  * as everything else in Admin > Platform > Settings.
+ *
+ * Direction B ("white card, on-brand"), 2026-08-15 — chosen from three
+ * proposed directions specifically to stop this reading as a separate
+ * colored banner and start reading as a section that's always belonged on
+ * the page: badge, heading accent, and CTA reuse the Hero section's own
+ * tokens exactly (bg-primary-50/text-primary-700 badge, text-primary-600
+ * accent span, bg-primary-600 button), and this file's own header comment
+ * ("FLAT COLOUR, NO GRADIENTS") is now actually true here too — the
+ * gradient card this used to be is gone, not just flattened to a solid
+ * color. Every structural mechanic below (height/width/anti-ballooning/
+ * alignment) is unchanged from earlier tonight's debugging — this is a
+ * surface reskin of already-proven structure, not a new build.
+ *
+ * Text stays fully admin-editable through the same four fields as before
+ * (heading, description, photo, signup link) — no new fields, no
+ * hardcoded copy. An end date/deadline is not a separate field on
+ * purpose: it's just part of whatever the admin types into the
+ * description, which is why that field keeps a comfortably wide line
+ * length rather than being constrained to one short line.
  */
 function CampaignSection() {
   const {
@@ -484,92 +518,63 @@ function CampaignSection() {
   const [imageBroken, setImageBroken] = useState(false);
   if (!loaded || landing_campaign_enabled !== 'true' || !landing_campaign_form_url) return null;
 
-  // 2026-08-15 redesign: was a centered single column; now splits into image
-  // + text when an image is set. hasImage also requires the <img> to have
-  // actually loaded — a broken URL (deleted asset, typo) falls back to the
-  // full-width text layout below rather than showing an empty/broken box.
   const hasImage = !!landing_campaign_image_url && !imageBroken;
+  const headline = landing_campaign_label || 'Special **campaign**';
 
-  // Text-first in DOM (badge/heading/description/CTA), image second — matches
-  // this page's own Hero section (grid lg:grid-cols-2, copy in the first
-  // column, visual in the second) so a returning visitor sees the same
-  // reading order twice, and on mobile the actionable content (what this is,
-  // how to join) appears before a decorative image rather than after it.
   return (
     <section className="px-4 sm:px-6 py-8">
-      {/* items-center on the grid already vertically centers the (shorter)
-          text column against the image column's height. The bug fixed here
-          (2026-08-15) was horizontal only: hasImage dropped text-center
-          entirely, and the description's max-w-sm had no mx-auto to center
-          itself within a centered parent — both made the text column read
-          as left-aligned once an image existed. */}
-      {/* max-w-6xl, not max-w-4xl — 2026-08-15. Every other section on this
-          page (Hero, Features, Pricing, FAQ, the closing band) uses max-w-6xl;
-          this was the only one at max-w-4xl (896px vs 1152px), which read as
-          disproportionately narrow/squeezed next to its neighbors rather than
-          being a deliberate design choice — nothing here called for a
-          narrower container. */}
-      {/* lg:min-h-[420px] added back — 2026-08-15, after the height-derives-
-          purely-from-text version (no floor at all) read as a thin decorative
-          strip rather than a real promotional visual once width matched its
-          neighbors. This is a FIXED floor, not derived from the image, so it
-          does not reintroduce the portrait-image ballooning bug fixed
-          earlier — the self-stretch + absolute-positioned <img> below still
-          contributes zero intrinsic height either way; min-h only raises
-          what the text-driven row would otherwise settle to. Longer text
-          still grows the row past this floor exactly as before. */}
-      <div className={`max-w-6xl mx-auto bg-gradient-to-br from-primary-600 to-primary-700 rounded-[2rem] overflow-hidden ${hasImage ? 'grid lg:grid-cols-2 lg:min-h-[360px] items-center' : ''}`}>
-        <div className={`p-6 sm:p-10 text-center ${hasImage ? 'lg:py-10' : ''}`}>
-          <span className="inline-flex items-center gap-1.5 bg-white/15 text-white text-[11px] font-bold px-3 py-1 rounded-full mb-4">
+      {/* max-w-6xl: matches every other section on this page (Hero,
+          Features, Pricing, FAQ, the closing band) — found and fixed
+          earlier tonight, this used to be max-w-4xl and read as
+          disproportionately narrow next to its neighbors.
+          lg:min-h-[360px]: a fixed floor (not derived from the image), so
+          it does not reintroduce the portrait-image ballooning bug fixed
+          earlier — the image column below still contributes zero
+          intrinsic height either way; this only raises what the
+          text-driven row would otherwise settle to. */}
+      <div className={`max-w-6xl mx-auto bg-white border border-slate-200 rounded-[2rem] overflow-hidden ${hasImage ? 'grid lg:grid-cols-[3fr_2fr] lg:min-h-[360px]' : ''}`}>
+        <div className={`relative z-10 flex flex-col p-6 py-10 sm:px-10 ${hasImage ? 'lg:items-start lg:text-left lg:px-14 lg:py-14 justify-center' : 'items-center text-center'}`}>
+          <span className="inline-flex items-center gap-1.5 bg-primary-50 text-primary-700 text-[11px] font-bold px-3 py-1 rounded-full mb-5">
             <Sparkles size={11} /> Limited time
           </span>
-          <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-            {landing_campaign_label || 'Special campaign'}
+          <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight leading-[1.1] max-w-lg">
+            {renderAccentHeadline(headline)}
           </h2>
-          <p className={`text-primary-100 mt-2 text-sm mx-auto ${hasImage ? 'max-w-sm' : 'max-w-md'} whitespace-pre-line`}>
+          <p className={`text-slate-500 mt-4 text-[15px] leading-relaxed whitespace-pre-line max-w-md ${hasImage ? '' : 'mx-auto'}`}>
             {landing_campaign_description || 'Fill in the form below to take part.'}
           </p>
           <a href={landing_campaign_form_url} target="_blank" rel="noopener noreferrer"
-            className="mt-6 inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-white text-primary-700 font-bold hover:bg-slate-100 transition-colors">
+            className="mt-7 inline-flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-primary-600 hover:bg-primary-700 text-white font-semibold transition-colors">
             Join now <ArrowUpRight size={16} />
           </a>
         </div>
+
         {hasImage && (
-          // Fourth iteration, 2026-08-15. v1 (cover + fixed min-h-[320px])
-          // cropped real content off the sides. v2 (contain) fixed the
-          // cropping but left visible green padding on every edge. v3
-          // (cover + lg:h-full, no fixed height) looked right for a
-          // landscape image, but a REAL bug surfaced testing a portrait
-          // upload (800x1400): lg:h-full inside a grid row with no explicit
-          // track height cannot actually resolve as "100% of a row sized by
-          // the text column" — percentage heights against an auto-sized
-          // grid track are indefinite, so the browser fell back to sizing
-          // the box from the image's OWN intrinsic aspect ratio at that
-          // column width (448px wide ÷ portrait's 0.57 ratio = 784px tall),
-          // ballooning the whole card to match the IMAGE instead of the
-          // (short) text — the opposite of what this was supposed to do.
-          //
-          // Fixed by taking the image out of the row's height calculation
-          // entirely: at lg+, the <img> is absolutely positioned (inset-0)
-          // inside a `relative` wrapper, so it contributes zero intrinsic
-          // size — the row height is then genuinely determined by the text
-          // column alone, exactly as intended — and lg:self-stretch makes
-          // the (now content-less, from the grid's perspective) wrapper
-          // fill that resolved height, which the absolute image then covers
-          // edge-to-edge regardless of its own aspect ratio. Verified
-          // against a portrait (0.57:1) and a wide-banner (5.3:1) upload,
-          // not just the landscape one this bug was found on.
-          //
-          // Mobile/tablet (stacked, no row to inherit from): unchanged,
-          // aspect-video (16:9) — that path was never affected, since a
-          // plain in-flow box with an explicit aspect-ratio has no such
-          // circularity.
-          <div className="relative aspect-video lg:aspect-auto lg:self-stretch">
+          // Structural mechanism proven earlier tonight — the wrapper
+          // contributes zero intrinsic height (lg:self-stretch, the <img>
+          // is absolutely positioned), so the row's height comes from the
+          // text column alone and cannot balloon on an odd photo aspect
+          // ratio, verified against a portrait (0.57:1) upload specifically.
+          <div className="relative hidden lg:block lg:self-stretch bg-slate-50 overflow-hidden">
             <img
               src={landing_campaign_image_url}
               alt={landing_campaign_label || 'Campaign'}
               onError={() => setImageBroken(true)}
-              className="w-full h-full object-cover lg:absolute lg:inset-0"
+              className="absolute inset-0 w-full h-full object-cover object-top"
+            />
+          </div>
+        )}
+        {hasImage && (
+          // Mobile/tablet (stacked, no row to inherit height from): a
+          // fixed aspect ratio instead — that path was never affected by
+          // the ballooning bug, since a plain in-flow box with an explicit
+          // aspect-ratio has no such circularity.
+          <div className="relative lg:hidden aspect-video bg-slate-50 overflow-hidden">
+            <img
+              src={landing_campaign_image_url}
+              alt={landing_campaign_label || 'Campaign'}
+              onError={() => setImageBroken(true)}
+              className="absolute inset-0 w-full h-full object-cover object-top"
             />
           </div>
         )}

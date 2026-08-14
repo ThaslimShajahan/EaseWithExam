@@ -12,6 +12,18 @@ function getCallerUid() {
   } catch { return ''; }
 }
 
+// Same `**word**` -> accent-colored span parse as CampaignSection
+// (LandingPage.jsx) — duplicated locally rather than imported so this
+// admin bundle doesn't pull in the whole landing page module for one
+// small pure function. Keep the two in sync by hand if the syntax changes.
+function renderAccentHeadline(text) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+    part.startsWith('**') && part.endsWith('**')
+      ? <span key={i} className="text-primary-600">{part.slice(2, -2)}</span>
+      : <span key={i}>{part}</span>,
+  );
+}
+
 /* ── Danger zone — moved here from Admin > Publish > Paper Gen so it lives
    alongside other platform-wide settings instead of buried in a content tool. ── */
 function DangerZone({ callerUid }) {
@@ -445,15 +457,24 @@ export default function AdminPlatformSettings() {
             <div>
               <label className="text-xs text-slate-500 block mb-1">Heading</label>
               <input value={lv('landing_campaign_label')} onChange={setLv('landing_campaign_label')}
-                placeholder="e.g. Independence Day Special"
+                placeholder="e.g. Get **3 months free** on the yearly plan"
                 className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-primary-500" />
+              <p className="text-[11px] text-slate-500 mt-1">
+                Wrap one word or phrase in <span className="text-slate-300 font-mono">**double asterisks**</span> to
+                highlight it in green — e.g. "Get <span className="text-slate-300 font-mono">**3 months free**</span>" shows
+                "3 months free" in color, the rest stays dark.
+              </p>
             </div>
             <div>
               <label className="text-xs text-slate-500 block mb-1">Description</label>
               <textarea value={lv('landing_campaign_description')} onChange={setLv('landing_campaign_description')}
                 placeholder="Fill in the form below to take part." rows={3}
                 className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-primary-500 resize-none" />
-              <p className="text-[11px] text-slate-500 mt-1">A few lines under the heading. Leave blank to use the default line above as a placeholder.</p>
+              <p className="text-[11px] text-slate-500 mt-1">
+                A few lines under the heading. There's no separate end-date field — if the offer has a deadline,
+                just write it in here (e.g. "Offer ends March 5"). Leave blank to use the default line above as a
+                placeholder.
+              </p>
             </div>
             <div>
               <label className="text-xs text-slate-500 block mb-1">Signup form URL</label>
@@ -465,10 +486,16 @@ export default function AdminPlatformSettings() {
 
             {/* Image — same upload flow as the platform logo/EWE avatar
                 above, reused rather than rebuilt. Optional: an unset image
-                falls back to the original full-width text layout, not a
-                broken/empty box (see CampaignSection). */}
+                falls back to the full-width text layout, not a
+                broken/empty box (see CampaignSection).
+                Content-model note: this slot expects a PHOTO, not a flyer.
+                The layout crops it and bleeds it to the card's edge, which
+                only looks right on a clean photo of a person — a full
+                promotional graphic with its own baked-in text will have
+                that text cropped out. The offer's own headline/description/
+                CTA above are the only text layer. */}
             <div>
-              <label className="text-xs text-slate-500 block mb-1">Image (optional)</label>
+              <label className="text-xs text-slate-500 block mb-1">Photo (optional)</label>
               {lv('landing_campaign_image_url') && (
                 <div className="flex items-center gap-3 p-3 bg-slate-900 rounded-xl border border-white/5 mb-2">
                   <img src={lv('landing_campaign_image_url')} alt="Campaign" className="h-10 w-16 object-cover rounded" />
@@ -491,10 +518,14 @@ export default function AdminPlatformSettings() {
               >
                 {uploadingCampaignImage
                   ? <><Loader2 size={14} className="animate-spin" /> Uploading…</>
-                  : <><Upload size={14} /> {lv('landing_campaign_image_url') ? 'Replace image' : 'Upload image'}</>}
+                  : <><Upload size={14} /> {lv('landing_campaign_image_url') ? 'Replace photo' : 'Upload photo'}</>}
               </button>
               <input ref={campaignImageRef} type="file" accept="image/*" className="hidden" onChange={handleCampaignImageUpload} />
-              <p className="text-[11px] text-slate-500 mt-1">PNG or JPG · max 2 MB · without one the section stays full-width text, same as before.</p>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Upload a clean, cropped photo of a person — not a promotional graphic with its own text, logo, or
+                CTA baked in (that belongs in the fields above instead). Portrait or square works best, waist-up,
+                ideally facing toward the text. PNG or JPG · max 2 MB · without one the section stays full-width text.
+              </p>
             </div>
 
             {/* Found 2026-08-15 chasing a report of "the section isn't
@@ -519,38 +550,42 @@ export default function AdminPlatformSettings() {
                 loading={savingKey === 'landing_campaign'} saved={saved === 'landing_campaign'} />
             </div>
 
-            {/* Live preview — mirrors CampaignSection's own two-column
-                markup exactly (same breakpoint, same fallback-to-full-width
-                when no image), fed from localVals so it updates as the
-                admin types, before saving. */}
+            {/* Live preview — mirrors CampaignSection's own markup (the
+                "white card, on-brand" direction), fed from localVals so it
+                updates as the admin types, before saving. lg: breakpoint
+                throughout, matching the real page exactly — this panel is
+                typically narrower than a full viewport, so the mobile
+                stack below is what most admins actually see while
+                editing, which is why it's shown too, not just the
+                two-column view. */}
             <div>
-              <p className="text-xs text-slate-500 mb-2">Preview</p>
-              {/* lg: breakpoint, matching CampaignSection exactly — this
-                  used to switch at sm:, which meant the preview showed a
-                  two-column layout ~380px earlier than the real page ever
-                  would, and was never actually "exactly what students will
-                  see" the way this section's own comment claimed. */}
-              <div className={`rounded-2xl overflow-hidden bg-gradient-to-br from-primary-600 to-primary-700 ${lv('landing_campaign_image_url') ? 'lg:grid lg:grid-cols-2 lg:items-center' : ''}`}>
-                <div className="p-5 text-center">
-                  <span className="inline-flex items-center gap-1.5 bg-white/15 text-white text-[10px] font-bold px-2.5 py-1 rounded-full mb-3">
+              <p className="text-xs text-slate-500 mb-2">Preview — desktop (lg+ viewport width)</p>
+              <div className={`rounded-2xl overflow-hidden bg-white border border-slate-200 ${lv('landing_campaign_image_url') ? 'lg:grid lg:grid-cols-[3fr_2fr] lg:min-h-[200px]' : ''}`}>
+                <div className={`flex flex-col p-5 ${lv('landing_campaign_image_url') ? 'lg:items-start lg:text-left justify-center' : 'items-center text-center'}`}>
+                  <span className="inline-flex items-center gap-1.5 bg-primary-50 text-primary-700 text-[10px] font-bold px-2.5 py-1 rounded-full mb-3">
                     <Sparkles size={10} /> Limited time
                   </span>
-                  <h3 className="text-lg font-extrabold text-white tracking-tight">
-                    {lv('landing_campaign_label') || 'Special campaign'}
+                  <h3 className="text-lg font-extrabold text-slate-900 tracking-tight leading-tight">
+                    {renderAccentHeadline(lv('landing_campaign_label') || 'Special **campaign**')}
                   </h3>
-                  <p className="text-primary-100 mt-1.5 text-xs whitespace-pre-line mx-auto max-w-sm">
+                  <p className={`text-slate-500 mt-1.5 text-xs whitespace-pre-line max-w-sm ${lv('landing_campaign_image_url') ? '' : 'mx-auto'}`}>
                     {lv('landing_campaign_description') || 'Fill in the form below to take part.'}
                   </p>
-                  <span className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white text-primary-700 text-xs font-bold">
+                  <span className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary-600 text-white text-xs font-bold">
                     Join now <ArrowUpRight size={13} />
                   </span>
                 </div>
                 {lv('landing_campaign_image_url') && (
-                  // Matches CampaignSection's own fix exactly — see that
-                  // component's comment for the full reasoning (a portrait
+                  // Matches CampaignSection's own structural mechanism
+                  // exactly — see that component's comment (a portrait
                   // upload was ballooning the whole card before this).
-                  <div className="relative aspect-video lg:aspect-auto lg:self-stretch">
-                    <img src={lv('landing_campaign_image_url')} alt="" className="w-full h-full object-cover lg:absolute lg:inset-0" />
+                  <div className="relative hidden lg:block lg:self-stretch bg-slate-50 overflow-hidden">
+                    <img src={lv('landing_campaign_image_url')} alt="" className="absolute inset-0 w-full h-full object-cover object-top" />
+                  </div>
+                )}
+                {lv('landing_campaign_image_url') && (
+                  <div className="relative lg:hidden aspect-video bg-slate-50 overflow-hidden">
+                    <img src={lv('landing_campaign_image_url')} alt="" className="absolute inset-0 w-full h-full object-cover object-top" />
                   </div>
                 )}
               </div>
