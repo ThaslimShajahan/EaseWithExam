@@ -13,7 +13,8 @@ import { awardXP } from '../lib/gamification';
 import { createNotification } from '../lib/notifications';
 import { addManualTask } from '../lib/dailyTasks';
 import { CATEGORIES, buildExamType } from '../lib/categories';
-import { useSyllabusSubjects } from '../hooks/useSyllabusSubjects';
+import { useStudentSubjects } from '../hooks/useStudentSubjects';
+import SubjectSetupPrompt from '../components/ui/SubjectSetupPrompt';
 import HubPageHeader from '../components/ui/HubPageHeader';
 
 const SUBJECT_PALETTE = {
@@ -70,7 +71,9 @@ function GoalForm({ onGenerate, defaultExamType = 'NEET' }) {
   const [weakSubjects,  setWeakSubjects]  = useState([]);
   const [focusChapters, setFocusChapters] = useState('');
 
-  const subjects = useSyllabusSubjects(examType);
+  // The student's own subjects — a study plan built around subjects they do not
+  // take is worse than no plan.
+  const { subjects, needsSetup } = useStudentSubjects(examType);
 
   const toggleSubject = (s) =>
     setWeakSubjects((prev) =>
@@ -79,6 +82,8 @@ function GoalForm({ onGenerate, defaultExamType = 'NEET' }) {
 
   const today    = new Date().toISOString().split('T')[0];
   const canSubmit = examDate && examDate > today;
+
+  if (needsSetup) return <SubjectSetupPrompt toolName="Your study plan" />;
 
   return (
     <motion.div

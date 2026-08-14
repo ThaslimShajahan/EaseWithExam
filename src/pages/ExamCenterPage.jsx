@@ -16,7 +16,8 @@ import EweSpinner from '../components/ui/EweSpinner';
 import { startBackgroundPaperGeneration, isGenerationInFlight } from '../lib/backgroundGeneration';
 import { createNotification } from '../lib/notifications';
 
-import { useSyllabusSubjects } from '../hooks/useSyllabusSubjects';
+import { useStudentSubjects } from '../hooks/useStudentSubjects';
+import SubjectSetupPrompt from '../components/ui/SubjectSetupPrompt';
 import { useSyllabusChapters } from '../hooks/useSyllabusChapters';
 import { buildExamType, isRelevantToStudent } from '../lib/categories';
 
@@ -93,7 +94,9 @@ function GenerateModal({ onClose, onStarted }) {
   // that syllabus_nodes actually uses, otherwise nothing ever matches.
   const examType = buildExamType(userProfile?.target_exam, userProfile?.syllabus, userProfile?.class_level);
 
-  const subjectList = useSyllabusSubjects(examType);
+  // Student's own subjects. A mock test offered in a subject they do not take
+  // is a wasted attempt against their quota.
+  const { subjects: subjectList, needsSetup } = useStudentSubjects(examType);
   const [subject,    setSubject]    = useState(subjectList[0] || 'Physics');
   const [difficulty, setDiff]       = useState('Mixed');
   const [chapters,   setChapters]   = useState([]);
@@ -154,6 +157,23 @@ function GenerateModal({ onClose, onStarted }) {
     } catch (_) {}
     onStarted();
   };
+
+  // Inside the modal rather than at the page root: the rest of Exam Center
+  // (past papers, results) works fine without a subject selection — only
+  // GENERATING a paper needs to know which subjects are the student's.
+  if (needsSetup) {
+    return (
+      <motion.div
+        className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4"
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        onClick={onClose}
+      >
+        <div className="bg-white rounded-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+          <SubjectSetupPrompt toolName="Generating a paper" />
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div

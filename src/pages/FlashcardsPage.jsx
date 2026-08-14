@@ -9,6 +9,8 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { getAllChapters } from '../lib/syllabus';
 import { buildExamType, getExamLabel } from '../lib/categories';
+import { resolveStudentSubjects } from '../lib/studentSubjects';
+import SubjectSetupPrompt from '../components/ui/SubjectSetupPrompt';
 import { generateFlashcards, getFlashcards, getFlashcardSummary, reviewFlashcard } from '../lib/flashcards';
 import { checkQuota, incrementQuota } from '../lib/quota';
 import { createNotification } from '../lib/notifications';
@@ -172,7 +174,7 @@ function StudySession({ cards, chapterName, onFinish }) {
 }
 
 /* ── Chapter list view ─────────────────────────────────────── */
-function ChapterList({ uid, examType, classLevel, onSelectChapter }) {
+function ChapterList({ uid, examType, classLevel, userProfile, onSelectChapter }) {
   const [syllabus,   setSyllabus]   = useState({});
   const [loadingSyl, setLoadingSyl] = useState(true);
   const [search,     setSearch]     = useState('');
@@ -188,7 +190,17 @@ function ChapterList({ uid, examType, classLevel, onSelectChapter }) {
       .finally(() => setLoadingSyl(false));
   }, [examType, classLevel]);
 
-  const subjects = Object.keys(syllabus);
+  // Scoped to the student's own subjects. The board list here comes from the
+  // loaded syllabus object rather than useSyllabusSubjects, so the shared
+  // resolver is used directly — same rule, different input source.
+  const { subjects, needsSetup } = useMemo(
+    () => resolveStudentSubjects({
+      profileSubjects: userProfile?.subjects,
+      boardSubjects:   Object.keys(syllabus),
+      classLevel,
+    }),
+    [userProfile?.subjects, syllabus, classLevel],
+  );
 
   const { data: summary = [] } = useQuery({
     queryKey: ['flashcard-summary', uid],
@@ -225,6 +237,12 @@ function ChapterList({ uid, examType, classLevel, onSelectChapter }) {
       </div>
     );
   }
+
+  // Checked BEFORE the generic empty state: "you haven't chosen subjects yet"
+  // and "there are no chapters" are different problems with different fixes, and
+  // the second message would send a student looking for content that isn't the
+  // issue.
+  if (needsSetup) return <SubjectSetupPrompt toolName="Flashcards" />;
 
   if (subjects.length === 0) {
     return (
@@ -438,7 +456,7 @@ export default function FlashcardsPage() {
 
       {/* Chapter list */}
       {mode === 'list' && (
-        <ChapterList uid={uid} examType={examType} classLevel={classLevel} onSelectChapter={handleSelectChapter} />
+        <ChapterList uid={uid} examType={examType} classLevel={classLevel} userProfile={userProfile} onSelectChapter={handleSelectChapter} />
       )}
 
       {/* Chapter detail — before starting study */}

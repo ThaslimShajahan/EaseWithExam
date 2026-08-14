@@ -18,7 +18,8 @@ import { createNotification } from '../lib/notifications';
 import MathText from '../components/ui/MathText';
 import PaywallModal from '../components/ui/PaywallModal';
 import { getSubjectsForExam, normalizeExamType, buildExamType, getExamLabel, EXAM_TYPE_GROUPS, BOARDS, CLASS_LEVELS } from '../lib/categories';
-import { useSyllabusSubjects } from '../hooks/useSyllabusSubjects';
+import { useStudentSubjects } from '../hooks/useStudentSubjects';
+import SubjectSetupPrompt from '../components/ui/SubjectSetupPrompt';
 import { getFeatureFlag, FLAGS } from '../lib/featureFlags';
 import { saveWrongAnswers, saveCorrectAnswers } from '../lib/errorNotebook';
 
@@ -180,13 +181,17 @@ function ConfigForm({ subject, setSubject, examType, setExamType, topic, setTopi
 
   const resolved = competitive
     || (selBoard && selClass ? `${selBoard} Class ${selClass}` : selClass ? `Class ${selClass}` : selBoard ?? '');
-  const liveSubjects = useSyllabusSubjects(examType, selClass ?? init.cls);
+  // Scoped to the student's own subjects. 'Mixed' is appended after scoping —
+  // it is a mode, not a subject, and must survive whatever the scoping returns.
+  const { subjects: liveSubjects, needsSetup } = useStudentSubjects(examType, selClass ?? init.cls);
   const subjects = [...liveSubjects, 'Mixed'];
 
   // Keep the selected subject valid whenever the exam changes or the live list loads.
   useEffect(() => {
     if (liveSubjects.length && !liveSubjects.includes(subject) && subject !== 'Mixed') setSubject(liveSubjects[0]);
   }, [liveSubjects]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (needsSetup) return <SubjectSetupPrompt toolName="Practice question generation" />;
 
   return (
     <div className="space-y-5">

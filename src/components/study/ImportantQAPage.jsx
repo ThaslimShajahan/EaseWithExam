@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { Star, Sparkles, Calendar, ChevronRight, ChevronLeft, ChevronDown, Loader2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { buildExamType, getSchoolExamType } from '../../lib/categories';
-import { useSyllabusSubjects } from '../../hooks/useSyllabusSubjects';
+import { useStudentSubjects } from '../../hooks/useStudentSubjects';
+import SubjectSetupPrompt from '../ui/SubjectSetupPrompt';
 import { getStudyChapters } from '../../lib/syllabus';
 import { getCachedImportantQA, generateImportantQA } from '../../lib/questionGen';
 import { checkQuota, incrementQuota } from '../../lib/quota';
@@ -142,7 +143,10 @@ export default function ImportantQAPage() {
   const examType   = getSchoolExamType(userProfile)
     ?? buildExamType(userProfile?.target_exam, userProfile?.syllabus, userProfile?.class_level);
   const classLevel = userProfile?.class_level;
-  const subjects   = useSyllabusSubjects(examType, classLevel);
+  // Scoped to the student's OWN subjects, not the board catalogue — this screen
+  // is where the leak was reported (a Class 12 Science student offered
+  // Accountancy, Psychology, Political Science).
+  const { subjects, needsSetup } = useStudentSubjects(examType, classLevel);
 
   const [subject,     setSubject]     = useState(null);
   const [chapter,     setChapter]     = useState(null);
@@ -184,6 +188,10 @@ export default function ImportantQAPage() {
       </div>
     );
   }
+
+  // 11-12 with no stream selection. Shown INSTEAD of the picker, never above an
+  // unscoped catalogue — see SubjectSetupPrompt for why.
+  if (needsSetup) return <SubjectSetupPrompt toolName="Important Q&A" />;
 
   return (
     <div className="space-y-5">

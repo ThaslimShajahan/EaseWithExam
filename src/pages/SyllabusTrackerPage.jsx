@@ -9,6 +9,8 @@ import { useAuth } from '../context/AuthContext';
 import { createNotification } from '../lib/notifications';
 import { getAllChapters } from '../lib/syllabus';
 import { buildExamType, getSchoolExamType, getExamLabel } from '../lib/categories';
+import { resolveStudentSubjects } from '../lib/studentSubjects';
+import SubjectSetupPrompt from '../components/ui/SubjectSetupPrompt';
 import {
   getChapterProgress, upsertChapter, initChapterProgress, computeProgress,
 } from '../lib/syllabusTracker';
@@ -125,6 +127,7 @@ export default function SyllabusTrackerPage() {
 
   const [syllabus, setSyllabus] = useState({});
   const [subjects, setSubjects] = useState([]);
+  const [needsSetup, setNeedsSetup] = useState(false);
   const [progressMap, setProgressMap] = useState({});
   const [activeSubject, setActiveSubject] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -138,7 +141,16 @@ export default function SyllabusTrackerPage() {
     setLoading(true);
     try {
       const live = await getAllChapters(examType, userProfile?.class_level);
-      const subs = Object.keys(live);
+      // Scoped to the student's own subjects before anything downstream uses the
+      // list — chapter progress is initialised from it below, so an unscoped
+      // list would write progress rows for subjects the student does not take.
+      const scoped = resolveStudentSubjects({
+        profileSubjects: userProfile?.subjects,
+        boardSubjects:   Object.keys(live),
+        classLevel:      userProfile?.class_level,
+      });
+      setNeedsSetup(scoped.needsSetup);
+      const subs = scoped.subjects;
       setSyllabus(live);
       setSubjects(subs);
       setActiveSubject((prev) => (prev && subs.includes(prev) ? prev : subs[0]));
@@ -265,6 +277,11 @@ export default function SyllabusTrackerPage() {
         <div className="space-y-2">
           {[1,2,3].map(i => <div key={i} className="h-16 bg-slate-50 rounded-2xl animate-pulse" />)}
         </div>
+      ) : needsSetup ? (
+        // Distinct from the empty-syllabus case below: this student HAS a
+        // syllabus available, they just haven't told us which of it is theirs.
+        // Pointing them at "your admin adds chapters" would be a wrong answer.
+        <SubjectSetupPrompt toolName="Your syllabus tracker" />
       ) : subjects.length === 0 ? (
         // Every other board+class combo starts with an empty syllabus_nodes
         // table, and this page previously just rendered `subjects.map()` over
