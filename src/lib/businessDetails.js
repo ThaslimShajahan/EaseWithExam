@@ -3,6 +3,14 @@
  * (OrderSummaryModal) and the payment confirmation page — student-facing
  * financial screens where the business's own identity belongs.
  *
+ * gstin confirmed real 2026-08-15 by the owner directly against the actual
+ * GST registration — briefly flagged as unverified the same night because
+ * this file's own comment claimed it came from the billing app's
+ * company.js, which was checked directly and found to still have the
+ * placeholder gstin: 'YOUR GSTIN'. That was the inconsistency, not this
+ * value: company.js was stale, not this file. company.js updated to match
+ * the same night (see acenzos-billing/src/config/company.js).
+ *
  * Source of truth is the actual billing app's config
  * (acenzos-billing/src/config/company.js) — copied here rather than shared
  * as a module because the two projects are separate codebases with no
