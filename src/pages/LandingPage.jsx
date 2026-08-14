@@ -503,7 +503,13 @@ function CampaignSection() {
           entirely, and the description's max-w-sm had no mx-auto to center
           itself within a centered parent — both made the text column read
           as left-aligned once an image existed. */}
-      <div className={`max-w-4xl mx-auto bg-gradient-to-br from-primary-600 to-primary-700 rounded-[2rem] overflow-hidden ${hasImage ? 'grid lg:grid-cols-2 items-center' : ''}`}>
+      {/* max-w-6xl, not max-w-4xl — 2026-08-15. Every other section on this
+          page (Hero, Features, Pricing, FAQ, the closing band) uses max-w-6xl;
+          this was the only one at max-w-4xl (896px vs 1152px), which read as
+          disproportionately narrow/squeezed next to its neighbors rather than
+          being a deliberate design choice — nothing here called for a
+          narrower container. */}
+      <div className={`max-w-6xl mx-auto bg-gradient-to-br from-primary-600 to-primary-700 rounded-[2rem] overflow-hidden ${hasImage ? 'grid lg:grid-cols-2 items-center' : ''}`}>
         <div className={`p-6 sm:p-10 text-center ${hasImage ? 'lg:py-10' : ''}`}>
           <span className="inline-flex items-center gap-1.5 bg-white/15 text-white text-[11px] font-bold px-3 py-1 rounded-full mb-4">
             <Sparkles size={11} /> Limited time
