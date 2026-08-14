@@ -124,10 +124,13 @@ async function renderTemplate(
       expiryDate: (data.expiryDate as string) || '',
     } :
     template === 'subscription_receipt' ? {
-      planName:  (data.planName as string) || 'Premium',
-      amount:    (data.amount as string) || '',
-      paymentId: (data.paymentId as string) || '',
-      date:      (data.date as string) || '',
+      planName:       (data.planName as string) || 'Premium',
+      baseAmount:     (data.baseAmount as string) || '',
+      gstAmount:      (data.gstAmount as string) || '',
+      gstRatePercent: String((data.gstRatePercent as number) ?? 0),
+      totalAmount:    (data.totalAmount as string) || '',
+      paymentId:      (data.paymentId as string) || '',
+      date:           (data.date as string) || '',
     } :
     { planName: (data.planName as string) || 'Premium' }; // subscription_active
 

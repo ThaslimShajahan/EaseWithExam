@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Settings, Upload, Image, Cookie, Palette, Globe, CheckCircle2, Loader2, AlertTriangle, Trash2, Sparkles } from 'lucide-react';
+import { Settings, Upload, Image, Cookie, Palette, Globe, CheckCircle2, Loader2, AlertTriangle, Trash2, Sparkles, Percent } from 'lucide-react';
 import { supabase, adminClearAllData } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { invalidatePlatformSettings } from '../hooks/usePlatformSettings';
@@ -376,6 +376,35 @@ export default function AdminPlatformSettings() {
                 loading={savingKey === 'landing_campaign_label'} saved={saved === 'landing_campaign_label'} />
               <SaveBtn onClick={() => saveSetting('landing_campaign_form_url', lv('landing_campaign_form_url'))}
                 loading={savingKey === 'landing_campaign_form_url'} saved={saved === 'landing_campaign_form_url'} />
+            </div>
+          </div>
+        </SettingRow>
+
+        <SettingRow icon={Percent} label="Tax / GST" hint="The order-summary review step and payment confirmation page — empty means no tax line is shown at all, not 0%">
+          <div className="space-y-3">
+            {/* Deliberately no toggle — "on" would require a real rate. The
+                fields being empty already means "no tax line", which is the
+                honest state until the GST registration question resolves
+                (see docs/ACTION_ITEMS_FOR_YOU.md). Filling in a rate here is
+                the whole activation step, no code change needed after. */}
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Tax rate (%)</label>
+              <input value={lv('tax_rate_percent')} onChange={setLv('tax_rate_percent')}
+                placeholder="e.g. 18 — leave blank to show no tax line"
+                inputMode="decimal"
+                className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-primary-500" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Tax line label</label>
+              <input value={lv('tax_label')} onChange={setLv('tax_label')}
+                placeholder="GST"
+                className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-primary-500" />
+            </div>
+            <div className="flex justify-end gap-2">
+              <SaveBtn onClick={() => saveSetting('tax_rate_percent', lv('tax_rate_percent'))}
+                loading={savingKey === 'tax_rate_percent'} saved={saved === 'tax_rate_percent'} />
+              <SaveBtn onClick={() => saveSetting('tax_label', lv('tax_label'))}
+                loading={savingKey === 'tax_label'} saved={saved === 'tax_label'} />
             </div>
           </div>
         </SettingRow>

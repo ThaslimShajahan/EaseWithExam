@@ -180,7 +180,7 @@ export function renderReceiptEmail(
     <div style="text-align:center;margin:0 0 4px;">
       <span style="display:inline-flex;align-items:center;gap:6px;background:#F0FDF9;color:#156A4C;font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;padding:6px 14px;border-radius:999px;">✓ ${pillText}</span>
     </div>
-    <h1 style="margin:16px 0 4px;font-size:30px;font-weight:800;color:#0F172A;text-align:center;letter-spacing:-0.01em;">${vars.amount ?? ''}</h1>
+    <h1 style="margin:16px 0 4px;font-size:30px;font-weight:800;color:#0F172A;text-align:center;letter-spacing:-0.01em;">${vars.totalAmount ?? ''}</h1>
     <p style="margin:0 0 26px;font-size:14px;color:#64748B;text-align:center;">for ${vars.planName ?? ''}</p>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E2E8F0;border-radius:14px;overflow:hidden;margin-bottom:24px;">
       ${rowsHtml}
@@ -245,9 +245,16 @@ export const FALLBACK_TEMPLATES: Record<string, TemplateRow> = {
     // heading — kept short on purpose, it sits next to a ✓ in a small pill.
     heading: 'Payment received',
     body_text: 'Your {{planName}} plan is active — the full toolkit is unlocked.',
+    // Amount/GST/Total breakdown — GST applies exclusive/on top of the
+    // listed price (owner-confirmed with their CA, 2026-08-14). {{amount}}
+    // was the single total this used to show; now split into three lines
+    // matching what create-razorpay-order actually charged (never
+    // recomputed here — see razorpay-verify's own comment on this).
     bullet_points: [
       'Plan: {{planName}}',
-      'Amount paid: {{amount}}',
+      'Amount: {{baseAmount}}',
+      'GST ({{gstRatePercent}}%): {{gstAmount}}',
+      'Total: {{totalAmount}}',
       'Payment ID: {{paymentId}}',
       'Date: {{date}}',
     ],

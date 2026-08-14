@@ -3,7 +3,8 @@ import { motion } from 'framer-motion';
 import { Save, Plus, Trash2, RefreshCw, Check, IndianRupee } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
-import { PLANS as DEFAULT_PLANS } from '../lib/subscription';
+import { PLANS as DEFAULT_PLANS, computeGst } from '../lib/subscription';
+import { usePlatformSettings } from '../hooks/usePlatformSettings';
 
 const PLAN_IDS = ['free', 'premium_monthly', 'premium_yearly', 'neet_complete'];
 
@@ -90,6 +91,12 @@ function FeatureListEditor({ items, onChange, placeholder, color = 'emerald' }) 
 
 function PlanEditor({ planId, config, onChange, onSave, saving, saved }) {
   const set = (field, val) => onChange({ ...config, [field]: val });
+  // Display-only, same rule as every student-facing price now (owner
+  // confirmed 2026-08-14: GST applies exclusive/on top, no exceptions for
+  // an admin-set price) — create-razorpay-order applies this same
+  // computation to whatever price_paise ends up here, unconditionally.
+  const { tax_rate_percent: taxRatePercent } = usePlatformSettings();
+  const gst = computeGst(Number(config.price_paise) || 0, taxRatePercent);
 
   return (
     <motion.div
@@ -152,7 +159,10 @@ function PlanEditor({ planId, config, onChange, onSave, saving, saved }) {
             />
           </div>
           {config.price_paise > 0 && (
-            <p className="text-[10px] text-slate-500 mt-0.5">= Rs.{(config.price_paise / 100).toFixed(0)}</p>
+            <p className="text-[10px] text-slate-500 mt-0.5">
+              = Rs.{(config.price_paise / 100).toFixed(0)}
+              {gst.hasTax && ` · students are charged Rs.${(gst.totalPaise / 100).toFixed(2)} with ${gst.ratePercent}% GST added`}
+            </p>
           )}
         </div>
         <div>

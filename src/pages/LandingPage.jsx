@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import AuthModal from '../components/auth/AuthModal';
 import { PublicNavBar, PublicFooter } from '../components/layout/PublicChrome';
-import { PLANS } from '../lib/subscription';
+import { PLANS, computeGst, formatRupees } from '../lib/subscription';
 import {
   SUPPORTED_SYLLABI, PRODUCT_FACTS, VALUE_CARDS, DIFFERENTIATORS, FAQ_GROUPS,
 } from '../lib/landingContent';
@@ -331,7 +331,7 @@ function Different() {
 }
 
 /* ── 8. Pricing — real plans, real rupees ────────────────────── */
-function PlanCard({ plan, highlight, onSelect }) {
+function PlanCard({ plan, highlight, onSelect, taxRatePercent }) {
   return (
     <div className={[
       'relative rounded-3xl p-7 border flex flex-col',
@@ -348,6 +348,15 @@ function PlanCard({ plan, highlight, onSelect }) {
       <div className="mt-5 mb-6">
         <span className="text-3xl font-extrabold text-slate-900">{plan.priceLabel}</span>
         {plan.priceSuffix && <span className="text-xs text-slate-400 ml-1">{plan.priceSuffix}</span>}
+        {/* Same GST-inclusive line as PricingPage/PaywallModal — 2026-08-14,
+            display-only, the real charge is create-razorpay-order's own
+            computation. */}
+        {plan.razorpayAmount > 0 && computeGst(plan.razorpayAmount, taxRatePercent).hasTax && (
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            + {computeGst(plan.razorpayAmount, taxRatePercent).ratePercent}% GST = {formatRupees(computeGst(plan.razorpayAmount, taxRatePercent).totalPaise)}
+            {plan.priceLabel.includes('/') ? `/${plan.priceLabel.split('/')[1]}` : ''}
+          </p>
+        )}
       </div>
 
       <button
@@ -375,6 +384,7 @@ function PlanCard({ plan, highlight, onSelect }) {
 }
 
 function Pricing({ onSelect }) {
+  const { tax_rate_percent: taxRatePercent } = usePlatformSettings();
   return (
     <section id="pricing" className="max-w-6xl mx-auto px-4 sm:px-6 py-16 sm:py-24">
       <SectionHead
@@ -386,7 +396,7 @@ function Pricing({ onSelect }) {
           const plan = PLANS[id];
           if (!plan) return null;
           return (
-            <PlanCard key={id} plan={plan} highlight={id === 'premium_yearly'} onSelect={onSelect} />
+            <PlanCard key={id} plan={plan} highlight={id === 'premium_yearly'} onSelect={onSelect} taxRatePercent={taxRatePercent} />
           );
         })}
       </div>

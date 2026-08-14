@@ -24,6 +24,16 @@ const DEFAULTS = {
   landing_campaign_enabled:  'false',
   landing_campaign_form_url: '',
   landing_campaign_label:    '',
+  // GST/tax rate for the order-summary review step (OrderSummaryModal) and
+  // the payment confirmation page. Deliberately empty by default — whether
+  // the flat prices charged today are tax-inclusive, tax-exempt, or need a
+  // separate line at all is still an open question (see
+  // docs/ACTION_ITEMS_FOR_YOU.md's GST section), not something to guess a
+  // number for. Empty means "no tax line shown", not "0% tax" — those are
+  // different claims. The moment that question resolves, filling these in
+  // here is the whole change; no code deploy needed.
+  tax_rate_percent: '',
+  tax_label:        'GST',
 };
 
 // Module-level cache — these rarely change, no need to refetch on every mount.

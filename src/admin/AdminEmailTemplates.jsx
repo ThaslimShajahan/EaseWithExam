@@ -34,7 +34,10 @@ const PLACEHOLDER_EXAMPLES = {
   welcome:              { name: 'Priya', exam: 'NEET UG' },
   paper_ready:          { examType: 'NEET', subject: 'Physics', count: '30' },
   subscription_active:  { planName: '3-Year Plan' },
-  subscription_receipt: { planName: '3-Year Plan', amount: 'INR 4,999', paymentId: 'pay_QeXampLe123456', date: '14 Aug 2026' },
+  subscription_receipt: {
+    planName: '3-Year Plan', baseAmount: 'INR 4,999', gstAmount: 'INR 899.82', gstRatePercent: '18',
+    totalAmount: 'INR 5,898.82', paymentId: 'pay_QeXampLe123456', date: '14 Aug 2026',
+  },
   verify_email:         { code: '482913' },
 };
 
@@ -83,7 +86,7 @@ function buildPreviewHtml(row) {
       <div style="text-align:center;margin:0 0 4px;">
         <span style="display:inline-flex;align-items:center;gap:6px;background:#F0FDF9;color:#156A4C;font-size:12px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;padding:6px 14px;border-radius:999px;">✓ ${heading}</span>
       </div>
-      <h1 style="margin:16px 0 4px;font-size:28px;font-weight:800;color:#0F172A;text-align:center;letter-spacing:-0.01em;">${vars.amount ?? ''}</h1>
+      <h1 style="margin:16px 0 4px;font-size:28px;font-weight:800;color:#0F172A;text-align:center;letter-spacing:-0.01em;">${vars.totalAmount ?? ''}</h1>
       <p style="margin:0 0 22px;font-size:14px;color:#64748B;text-align:center;">for ${vars.planName ?? ''}</p>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E2E8F0;border-radius:14px;overflow:hidden;margin-bottom:20px;">
         ${rowsHtml}

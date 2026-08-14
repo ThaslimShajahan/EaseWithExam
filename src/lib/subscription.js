@@ -164,6 +164,7 @@ export function isPremium(subscription) {
 // function — the client never writes to `subscriptions` directly.
 async function verifyAndActivateSubscription(firebaseUid, {
   plan, razorpay_payment_id, razorpay_order_id, razorpay_signature, amount_paid,
+  base_amount_paise, gst_amount_paise, tax_rate_percent,
 }) {
   const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/razorpay-verify`, {
     method: 'POST',
@@ -194,7 +195,22 @@ async function verifyAndActivateSubscription(firebaseUid, {
   ).catch(() => {});
   sendTransactionalEmail(firebaseUid, 'subscription_active', { planName });
 
-  return { plan };
+  // Everything the payment-confirmation page needs, so it doesn't need a
+  // second fetch — the same values the receipt email is built from.
+  // base/gst_amount_paise come from the ORDER (createRazorpayOrder's
+  // response), not recomputed here — the exact numbers that were actually
+  // charged, matching how razorpay-verify's own receipt send reads them
+  // back from payment_orders rather than recomputing.
+  return {
+    plan,
+    planName,
+    amountPaise:     amount_paid,
+    baseAmountPaise: base_amount_paise,
+    gstAmountPaise:  gst_amount_paise,
+    taxRatePercent:  tax_rate_percent,
+    paymentId:       razorpay_payment_id,
+    date:            new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+  };
 }
 
 /* ── Daily usage quota ──────────────────────────────────── */
@@ -251,6 +267,49 @@ export async function canUseFeature(firebaseUid, feature, subscription) {
   return { allowed: true, used: check.used, limit: check.limit };
 }
 
+/**
+ * ₹-prefixed display string from a paise amount — for the order-summary
+ * review step and payment confirmation page. Frontend-only: unlike the
+ * email receipt (which switched to plain "INR" after the ₹ glyph rendered
+ * as "?" in one delivered email, a Resend/HTML-email encoding issue), the
+ * browser renders this fine — React text content is UTF-8 throughout with
+ * no email-transport hop to lose it in. PLANS' own priceLabel strings
+ * already use ₹ the same way.
+ */
+export function formatRupees(paise) {
+  return `₹${((Number(paise) || 0) / 100).toLocaleString('en-IN')}`;
+}
+
+/**
+ * GST display math — DISPLAY ONLY. The authoritative computation is
+ * create-razorpay-order (server-side); this exists purely so the pricing
+ * cards and OrderSummaryModal can show the same breakdown before an order
+ * even exists yet (a card's price display has no order to read `amount`
+ * from). Once a real order exists, OrderSummaryModal reads its actual
+ * base_amount/gst_amount/amount straight from the server response instead
+ * of calling this — never a second, independently-computed number that
+ * could disagree with what was actually charged.
+ *
+ * Same rule as the server: round GST to the nearest paise, add to base for
+ * the total — never multiply the total directly, so base + gst always sums
+ * to EXACTLY what this reports as the total, with no float-drift gap.
+ *
+ * ratePercent falsy/non-finite/<=0 -> no tax, matching how an unset
+ * platform_settings.tax_rate_percent has always been read everywhere else.
+ */
+export function computeGst(basePaise, ratePercent) {
+  const rate = parseFloat(ratePercent);
+  const hasTax = Number.isFinite(rate) && rate > 0;
+  const gstPaise = hasTax ? Math.round(basePaise * (rate / 100)) : 0;
+  return {
+    hasTax,
+    ratePercent: hasTax ? rate : 0,
+    basePaise,
+    gstPaise,
+    totalPaise: basePaise + gstPaise,
+  };
+}
+
 /* ── Razorpay helpers ───────────────────────────────────── */
 
 export function loadRazorpayScript() {
@@ -264,30 +323,37 @@ export function loadRazorpayScript() {
   });
 }
 
-export async function initiateRazorpayPayment({ planId, firebaseUid, email, name, onSuccess, onFailure }) {
+/**
+ * Step 1 of 2 — creates the order server-side and returns it, WITHOUT
+ * opening the Razorpay modal. Split out 2026-08-14 so the order-summary
+ * review step (OrderSummaryModal) can show the real, server-confirmed
+ * amount and order_id before the user ever sees Razorpay's own UI — the
+ * summary reads the SAME order that checkout then opens, not a second,
+ * separately-resolved price that could theoretically disagree with it.
+ *
+ * Throws on any failure (kill switch, invalid plan, network/timeout) —
+ * callers show the message via their own error UI.
+ */
+export async function createRazorpayOrder({ planId, firebaseUid }) {
   // Kill switch, checked before anything else — before the Razorpay script is
   // even loaded, so a disabled site makes no third-party request and shows no
   // checkout chrome. This is the backstop, not the primary gate: PricingPage
   // and PaywallModal hide their CTAs, and this catches any path that reaches
   // checkout anyway (a stale tab, a direct call, a future caller).
   // Defaults to disabled if the flag is missing or unreadable — see paymentsGate.
-  if (!(await arePaymentsEnabled())) { onFailure?.(PAYMENTS_CLOSED_ERROR); return; }
-
-  const loaded = await loadRazorpayScript();
-  if (!loaded) { onFailure?.('Payment gateway unavailable. Please try again.'); return; }
+  if (!(await arePaymentsEnabled())) throw new Error(PAYMENTS_CLOSED_ERROR);
 
   const plan = PLANS[planId];
-  if (!plan || !plan.razorpayAmount) { onFailure?.('Invalid plan.'); return; }
+  if (!plan || !plan.razorpayAmount) throw new Error('Invalid plan.');
 
   // Amount is resolved server-side (create-razorpay-order looks up plan_config,
   // falling back to its own hardcoded catalogue) — the client never dictates the
   // charge amount, and the resulting order_id pins it for Razorpay's own checks.
   //
   // AbortController timeout: without one, a request that hangs (rather than
-  // erroring) never resolves or rejects, so onFailure never fires and the
-  // caller's loading state — PricingPage's activePlan, driving the button's
-  // spinner — is stuck until the user reloads. A slow/stuck order-creation
-  // call must fail loudly, not hang the button forever.
+  // erroring) never resolves or rejects, so the caller's loading state is
+  // stuck until the user reloads. A slow/stuck order-creation call must fail
+  // loudly, not hang the button forever.
   let order;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
@@ -307,11 +373,24 @@ export async function initiateRazorpayPayment({ planId, firebaseUid, email, name
     const message = err.name === 'AbortError'
       ? 'Checkout is taking too long to start. Please try again.'
       : (err.message || 'Could not start checkout. Please try again.');
-    onFailure?.(message);
-    return;
+    throw new Error(message);
   } finally {
     clearTimeout(timeout);
   }
+
+  return { order, plan };
+}
+
+/**
+ * Step 2 of 2 — opens the Razorpay modal for an order `createRazorpayOrder`
+ * already created (e.g. after the user confirms the order-summary review
+ * step), and drives verification through to onSuccess/onFailure exactly as
+ * before. Does NOT re-create the order — reuses order.order_id, so what the
+ * user reviewed in the summary is exactly what gets charged.
+ */
+export async function openRazorpayCheckout({ order, plan, planId, firebaseUid, email, name, onSuccess, onFailure }) {
+  const loaded = await loadRazorpayScript();
+  if (!loaded) { onFailure?.('Payment gateway unavailable. Please try again.'); return; }
 
   const options = {
     key: import.meta.env.VITE_RAZORPAY_KEY_ID,
@@ -331,6 +410,9 @@ export async function initiateRazorpayPayment({ planId, firebaseUid, email, name
           razorpay_order_id:   response.razorpay_order_id,
           razorpay_signature:  response.razorpay_signature,
           amount_paid: order.amount,
+          base_amount_paise: order.base_amount,
+          gst_amount_paise:  order.gst_amount,
+          tax_rate_percent:  order.tax_rate_percent,
         });
         onSuccess?.(sub);
       } catch (err) {
@@ -344,4 +426,23 @@ export async function initiateRazorpayPayment({ planId, firebaseUid, email, name
 
   const rz = new window.Razorpay(options);
   rz.open();
+}
+
+/**
+ * One-shot convenience wrapper — creates the order AND opens checkout
+ * immediately, skipping the review step. Kept for any caller that
+ * legitimately wants the old direct behaviour (and for the existing kill-
+ * switch test, which asserts on this exact function); PricingPage and
+ * PaywallModal no longer use it directly — see createRazorpayOrder/
+ * openRazorpayCheckout above, called with an OrderSummaryModal in between.
+ */
+export async function initiateRazorpayPayment({ planId, firebaseUid, email, name, onSuccess, onFailure }) {
+  let order, plan;
+  try {
+    ({ order, plan } = await createRazorpayOrder({ planId, firebaseUid }));
+  } catch (err) {
+    onFailure?.(err.message);
+    return;
+  }
+  await openRazorpayCheckout({ order, plan, planId, firebaseUid, email, name, onSuccess, onFailure });
 }

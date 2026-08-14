@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Zap, Check, Crown } from 'lucide-react';
-import { PLANS, initiateRazorpayPayment } from '../../lib/subscription';
+import { PLANS, createRazorpayOrder, openRazorpayCheckout, computeGst, formatRupees } from '../../lib/subscription';
 import { usePaymentsEnabled, PAYMENTS_CLOSED_TITLE, PAYMENTS_CLOSED_BODY } from '../../lib/paymentsGate';
+import { usePlatformSettings } from '../../hooks/usePlatformSettings';
 import { useAuth } from '../../context/AuthContext';
 import Button from './Button';
+import OrderSummaryModal from './OrderSummaryModal';
+import PaymentConfirmation from './PaymentConfirmation';
 
 const DISPLAY_PLANS = ['premium_monthly', 'premium_yearly', 'neet_complete'];
 
@@ -13,28 +16,50 @@ export default function PaywallModal({ onClose, feature, firebaseUid, email, nam
   const [selectedPlan, setSelected] = useState('premium_monthly');
   const [paying, setPaying]         = useState(false);
   const [error,  setError]          = useState('');
+  // 'picker' -> 'summary' -> 'confirmation', added 2026-08-14 for the same
+  // order-review step PricingPage got. Stays in ONE modal shell throughout —
+  // unlike PricingPage, the paywall can fire mid-task (mid mock-test, mid
+  // practice generation), so a successful payment shows its confirmation
+  // inline and closes back into whatever the student was doing, rather than
+  // navigating to a full page and losing their place.
+  const [step, setStep] = useState('picker');
+  const [pendingOrder, setPendingOrder] = useState(null);
+  const [transaction,  setTransaction]  = useState(null);
 
   // Loading counts as closed, so no live Pay button renders before the flag lands.
   const { enabled: paymentsEnabled, loading: paymentsLoading } = usePaymentsEnabled();
   const paymentsClosed = !paymentsEnabled || paymentsLoading;
+  const { tax_rate_percent: taxRatePercent } = usePlatformSettings();
 
   const handlePay = async () => {
     setPaying(true);
     setError('');
-    await initiateRazorpayPayment({
-      planId: selectedPlan,
-      firebaseUid,
-      email,
-      name,
-      onSuccess: async (sub) => {
+    try {
+      const { order, plan } = await createRazorpayOrder({ planId: selectedPlan, firebaseUid });
+      setPendingOrder({ order, plan, planId: selectedPlan });
+      setStep('summary');
+    } catch (err) {
+      setError(err.message === 'Payment cancelled' ? '' : err.message);
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  const handleConfirmOrder = async () => {
+    const { order, plan, planId } = pendingOrder;
+    await openRazorpayCheckout({
+      order, plan, planId, firebaseUid, email, name,
+      onSuccess: async (tx) => {
         await refreshSubscription(); // flip isPremium immediately without reload
-        setPaying(false);
-        onSuccess?.(sub);
-        onClose();
+        setTransaction(tx);
+        setStep('confirmation');
+        onSuccess?.(tx);
       },
-      onFailure: (msg) => { setPaying(false); setError(msg === 'Payment cancelled' ? '' : msg); },
+      onFailure: (msg) => {
+        setStep('picker');
+        if (msg !== 'Payment cancelled') setError(msg);
+      },
     });
-    setPaying(false);
   };
 
   return (
@@ -51,6 +76,12 @@ export default function PaywallModal({ onClose, feature, firebaseUid, email, nam
           exit={{ opacity: 0, scale: 0.95, y: 20 }}
           transition={{ duration: 0.2 }}
         >
+          {step === 'confirmation' ? (
+            <div className="px-6 py-6">
+              <PaymentConfirmation transaction={transaction} onContinue={onClose} continueLabel="Continue" />
+            </div>
+          ) : (
+          <>
           {/* Header */}
           <div className="relative bg-gradient-to-br from-primary-500 to-primary-800 px-6 py-6 text-white text-center">
             <button
@@ -101,6 +132,14 @@ export default function PaywallModal({ onClose, feature, firebaseUid, email, nam
                       {plan.priceSuffix && (
                         <p className="text-[10px] text-slate-400">{plan.priceSuffix}</p>
                       )}
+                      {/* Same GST-inclusive display as PricingPage's cards —
+                          computeGst is display-only, the real charge is
+                          create-razorpay-order's own computation. */}
+                      {plan.razorpayAmount > 0 && computeGst(plan.razorpayAmount, taxRatePercent).hasTax && (
+                        <p className="text-[10px] text-slate-400">
+                          + {computeGst(plan.razorpayAmount, taxRatePercent).ratePercent}% GST = {formatRupees(computeGst(plan.razorpayAmount, taxRatePercent).totalPaise)}
+                        </p>
+                      )}
                     </div>
                   </div>
 
@@ -150,8 +189,19 @@ export default function PaywallModal({ onClose, feature, firebaseUid, email, nam
               </>
             )}
           </div>
+          </>
+          )}
         </motion.div>
       </motion.div>
+
+      {step === 'summary' && pendingOrder && (
+        <OrderSummaryModal
+          plan={pendingOrder.plan}
+          order={pendingOrder.order}
+          onConfirm={handleConfirmOrder}
+          onCancel={() => { setStep('picker'); setPendingOrder(null); }}
+        />
+      )}
     </AnimatePresence>
   );
 }

@@ -183,6 +183,19 @@ serve(async (req) => {
   // HMAC-verified razorpay_payment_id — never from the request body, for the
   // same replay reason the activation call above doesn't use the body either.
   try {
+    // base_amount_paise/gst_amount_paise come from redeem_payment_order —
+    // recorded by create-razorpay-order at the moment they were actually
+    // computed and charged (see migration 20260814170000). Read back, never
+    // recomputed here: the tax rate could theoretically differ by the time
+    // this runs, and a receipt must describe what was actually charged.
+    // NULL on any pre-GST-breakdown order (nothing to show) falls back to
+    // the old single-total behaviour rather than showing "GST: NaN".
+    const baseAmount = claim.base_amount_paise;
+    const gstAmount  = claim.gst_amount_paise ?? 0;
+    const hasGstBreakdown = baseAmount != null;
+    const gstRatePercent = hasGstBreakdown && baseAmount > 0
+      ? Math.round((gstAmount / baseAmount) * 100) : 0;
+
     const receiptResp = await fetch(`${SUPABASE_URL}/functions/v1/send-email`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SERVICE_KEY}` },
@@ -191,8 +204,11 @@ serve(async (req) => {
         user_id:    claim.firebase_uid,
         template:   'subscription_receipt',
         data: {
-          planName:  PLAN_NAMES[claim.plan_id] ?? claim.plan_id,
-          amount:    formatInr(claim.amount_paise ?? 0),
+          planName:      PLAN_NAMES[claim.plan_id] ?? claim.plan_id,
+          baseAmount:    formatInr(hasGstBreakdown ? baseAmount : (claim.amount_paise ?? 0)),
+          gstAmount:     formatInr(gstAmount),
+          gstRatePercent,
+          totalAmount:   formatInr(claim.amount_paise ?? 0),
           paymentId: razorpay_payment_id,
           date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
         },

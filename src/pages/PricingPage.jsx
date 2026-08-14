@@ -2,11 +2,13 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Check, X, Crown, Zap, Star, ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { PLANS, initiateRazorpayPayment } from '../lib/subscription';
+import { PLANS, createRazorpayOrder, openRazorpayCheckout, computeGst, formatRupees } from '../lib/subscription';
 import { usePaymentsEnabled, PAYMENTS_CLOSED_TITLE, PAYMENTS_CLOSED_BODY } from '../lib/paymentsGate';
+import { usePlatformSettings } from '../hooks/usePlatformSettings';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import Button from '../components/ui/Button';
+import OrderSummaryModal from '../components/ui/OrderSummaryModal';
 
 /* Feature comparison rows — the first 5 free-tier values are overridden with live
  * quota_config numbers once loaded (see buildCompare below); these are just the
@@ -53,7 +55,7 @@ function FeatureCell({ value }) {
   return <span className="text-xs font-medium text-slate-700">{value}</span>;
 }
 
-function PlanCard({ planId, plan: planProp, highlight, onSelect, loading, isCurrent, paymentsClosed }) {
+function PlanCard({ planId, plan: planProp, highlight, onSelect, loading, isCurrent, paymentsClosed, taxRatePercent }) {
   const plan = planProp ?? PLANS[planId];
   const isFree = planId === 'free';
   // isCurrent is already a boolean computed correctly by the caller for both
@@ -120,6 +122,17 @@ function PlanCard({ planId, plan: planProp, highlight, onSelect, loading, isCurr
             {plan.priceSuffix}
           </p>
         )}
+        {/* GST-inclusive total, 2026-08-14 — owner confirmed with their CA
+            that GST applies on top of the listed price. Display-only math
+            (computeGst) — the actual charge is create-razorpay-order's own
+            computation; this just shows what that will come out to before
+            an order exists to read a real total from. */}
+        {plan.razorpayAmount > 0 && computeGst(plan.razorpayAmount, taxRatePercent).hasTax && (
+          <p className={`text-[11px] mt-0.5 ${highlight ? 'text-primary-200' : 'text-slate-400'}`}>
+            + {computeGst(plan.razorpayAmount, taxRatePercent).ratePercent}% GST = {formatRupees(computeGst(plan.razorpayAmount, taxRatePercent).totalPaise)}
+            {plan.priceLabel.includes('/') ? `/${plan.priceLabel.split('/')[1]}` : ''}
+          </p>
+        )}
         <p className={`text-sm mt-1 ${highlight ? 'text-primary-200' : 'text-slate-500'}`}>
           {plan.description}
         </p>
@@ -182,14 +195,18 @@ export default function PricingPage() {
   const navigate = useNavigate();
   const [activePlan, setActivePlan] = useState('');
   const [error, setError]           = useState('');
-  const [success, setSuccess]       = useState('');
   const [planData, setPlanData]     = useState(PLANS);
   const [compare,  setCompare]       = useState(BASE_COMPARE);
+  // { order, plan, planId } while the order-summary review step is open —
+  // added 2026-08-14. null means no review in progress; its presence is
+  // what makes OrderSummaryModal render below.
+  const [pendingOrder, setPendingOrder] = useState(null);
 
   // Treat "still loading" as closed — see paymentsGate. A false-then-true flip
   // would render a live purchase button for a frame before withdrawing it.
   const { enabled: paymentsEnabled, loading: paymentsLoading } = usePaymentsEnabled();
   const paymentsClosed = !paymentsEnabled || paymentsLoading;
+  const { tax_rate_percent: taxRatePercent } = usePlatformSettings();
 
   useEffect(() => {
     supabase.from('plan_config').select('*').then(({ data }) => {
@@ -214,39 +231,43 @@ export default function PricingPage() {
       .then(({ data }) => { if (data) setCompare(buildCompare(data)); });
   }, []);
 
-  const handleSelect = (planId) => {
+  // Step 1: create the order, then show the review step — added 2026-08-14,
+  // owner's explicit call that transparency before payment matters more
+  // than shaving one click. Razorpay's own modal does not open yet.
+  const handleSelect = async (planId) => {
     setError('');
-    setActivePlan(planId);
-    initiateRazorpayPayment({
-      planId,
+    setActivePlan(planId); // drives the clicked card's button spinner
+    try {
+      const { order, plan } = await createRazorpayOrder({ planId, firebaseUid: currentUser.uid });
+      setPendingOrder({ order, plan, planId });
+    } catch (err) {
+      if (err.message !== 'Payment cancelled') setError(err.message);
+    } finally {
+      setActivePlan('');
+    }
+  };
+
+  // Step 2: user confirmed the review step — NOW Razorpay's own modal
+  // opens, reusing the exact order just shown, never re-resolving the price.
+  const handleConfirmOrder = async () => {
+    const { order, plan, planId } = pendingOrder;
+    await openRazorpayCheckout({
+      order, plan, planId,
       firebaseUid: currentUser.uid,
       email: userProfile?.email || currentUser.email,
       name:  userProfile?.display_name || currentUser.displayName || 'Student',
-      onSuccess: async () => {
-        setActivePlan('');
-        setSuccess('Payment successful! Activating your plan…');
-        // The banner renders at the top of the page (above the plan cards),
-        // but the Razorpay modal that just closed covers the whole viewport
-        // while it's open — whatever the page was scrolled to underneath it
-        // is wherever the user lands the instant it closes, which for a
-        // clicked plan card is usually NOT the top. Found 2026-08-14: a real
-        // successful payment left the student with no visible confirmation
-        // at all, because the confirmation existed but was scrolled out of
-        // view for the ~1s it was on screen before navigating away.
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+      onSuccess: async (transaction) => {
         await refreshSubscription(); // re-fetch subscription so isPremium flips immediately
-        // A deliberate pause, not just however long refreshSubscription()
-        // happens to take — that could resolve fast enough to navigate away
-        // before the scroll animation above even finishes.
-        await new Promise((r) => setTimeout(r, 1200));
-        setSuccess('');
-        navigate('/dashboard');
+        navigate('/payment-success', { state: { transaction } });
       },
       onFailure: (msg) => {
-        setActivePlan('');
         if (msg !== 'Payment cancelled') setError(msg);
       },
     });
+    // Razorpay's own modal has now either opened (covering this one — hide
+    // it so they're not stacked) or failed to load (onFailure already
+    // surfaced the error) — either way, the review step's job is done.
+    setPendingOrder(null);
   };
 
   return (
@@ -285,12 +306,8 @@ export default function PricingPage() {
           </div>
         )}
 
-        {/* Success / Error */}
-        {success && (
-          <div className="mb-6 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl p-4 text-center text-sm font-medium">
-            {success}
-          </div>
-        )}
+        {/* Success is no longer a banner here — a real payment now navigates
+            straight to /payment-success (PaymentSuccessPage.jsx). */}
         {error && (
           <div className="mb-6 bg-red-50 border border-red-200 text-red-700 rounded-2xl p-4 text-center text-sm">
             {error}
@@ -309,6 +326,7 @@ export default function PricingPage() {
               onSelect={handleSelect}
               isCurrent={id === 'free' ? !isPremium : subscription?.plan === id && isPremium}
               paymentsClosed={paymentsClosed}
+              taxRatePercent={taxRatePercent}
             />
           ))}
         </div>
@@ -350,6 +368,15 @@ export default function PricingPage() {
           <p className="mt-1">Payments secured by Razorpay · Refund within 7 days if unhappy.</p>
         </div>
       </div>
+
+      {pendingOrder && (
+        <OrderSummaryModal
+          plan={pendingOrder.plan}
+          order={pendingOrder.order}
+          onConfirm={handleConfirmOrder}
+          onCancel={() => setPendingOrder(null)}
+        />
+      )}
     </div>
   );
 }

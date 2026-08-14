@@ -62,8 +62,28 @@ serve(async (req) => {
     .eq('plan_id', plan_id)
     .maybeSingle();
 
-  const amount = cfg?.price_paise > 0 ? cfg.price_paise : PLAN_AMOUNTS_PAISE[plan_id];
-  if (!amount) return json(400, { error: 'Invalid plan_id' });
+  const basePaise = cfg?.price_paise > 0 ? cfg.price_paise : PLAN_AMOUNTS_PAISE[plan_id];
+  if (!basePaise) return json(400, { error: 'Invalid plan_id' });
+
+  // GST, exclusive/on top of the listed price — owner-confirmed with their
+  // CA, 2026-08-14, applies uniformly to every plan including a
+  // plan_config admin override, no exceptions (owner's explicit call).
+  // platform_settings.tax_rate_percent is the single source of truth,
+  // shared with the frontend's display (OrderSummaryModal, pricing cards) —
+  // this is the ONLY place that computation is authoritative, everywhere
+  // else must show what this actually charges, never recompute
+  // independently. Empty/unset reads as 0% (no GST line), matching how the
+  // frontend already treats it.
+  const { data: taxRow } = await supabase
+    .from('platform_settings').select('value').eq('key', 'tax_rate_percent').maybeSingle();
+  const taxRatePercent = parseFloat(taxRow?.value);
+  const hasTax = Number.isFinite(taxRatePercent) && taxRatePercent > 0;
+  // Round to nearest paise, computed separately from the total rather than
+  // basePaise * (1 + rate/100) directly — base + gst must sum to EXACTLY
+  // what gets charged, with no float-drift gap between the two ways of
+  // arriving at the total.
+  const gstPaise   = hasTax ? Math.round(basePaise * (taxRatePercent / 100)) : 0;
+  const totalPaise = basePaise + gstPaise;
 
   const receipt = `${plan_id}_${firebase_uid.slice(0, 16)}_${Date.now()}`;
 
@@ -74,10 +94,10 @@ serve(async (req) => {
       'Authorization': `Basic ${btoa(`${RAZORPAY_KEY_ID}:${RAZORPAY_SECRET}`)}`,
     },
     body: JSON.stringify({
-      amount,
+      amount: totalPaise,
       currency: 'INR',
       receipt,
-      notes: { firebase_uid, plan_id },
+      notes: { firebase_uid, plan_id, base_amount_paise: String(basePaise), gst_amount_paise: String(gstPaise) },
     }),
   });
 
@@ -95,11 +115,17 @@ serve(async (req) => {
   // is what makes a payment redeemable exactly once. See migration
   // 20260811260000. Written with the service role, which bypasses the
   // deny-all RLS on payment_orders.
+  //
+  // base/gst_amount_paise are recorded here, at the moment they were
+  // actually computed and charged — razorpay-verify reads these back rather
+  // than recomputing from the (possibly since-changed) current tax rate.
   const { error: ledgerErr } = await supabase.from('payment_orders').insert({
-    order_id:     order.id,
+    order_id:          order.id,
     firebase_uid,
     plan_id,
-    amount_paise: amount,
+    amount_paise:      totalPaise,
+    base_amount_paise: basePaise,
+    gst_amount_paise:  gstPaise,
   });
 
   if (ledgerErr) {
@@ -110,5 +136,9 @@ serve(async (req) => {
     return json(500, { error: 'Could not start checkout. Please try again.' });
   }
 
-  return json(200, { order_id: order.id, amount, currency: 'INR' });
+  return json(200, {
+    order_id: order.id,
+    amount: totalPaise, currency: 'INR',
+    base_amount: basePaise, gst_amount: gstPaise, tax_rate_percent: hasTax ? taxRatePercent : 0,
+  });
 });

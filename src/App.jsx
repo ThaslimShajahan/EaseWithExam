@@ -32,6 +32,7 @@ const PaperModePage        = lazy(() => import('./pages/PaperModePage'));
 const ProfilePage          = lazy(() => import('./pages/ProfilePage'));
 const NotificationsPage    = lazy(() => import('./pages/NotificationsPage'));
 const PricingPage          = lazy(() => import('./pages/PricingPage'));
+const PaymentSuccessPage   = lazy(() => import('./pages/PaymentSuccessPage'));
 const ParentDashboardPage  = lazy(() => import('./pages/ParentDashboardPage'));
 const HelpPage             = lazy(() => import('./pages/HelpPage'));
 const PrivacyPolicyPage    = lazy(() => import('./pages/PrivacyPolicyPage'));
@@ -177,6 +178,7 @@ export default function App() {
         <Route path="/practice/generate"   element={<RequireAuth><PracticeGeneratorPage /></RequireAuth>} />
         <Route path="/paper-mode"          element={<RequireAuth><PaperModePage /></RequireAuth>} />
         <Route path="/pricing"             element={<RequireAuth><PricingPage /></RequireAuth>} />
+        <Route path="/payment-success"     element={<RequireAuth><PaymentSuccessPage /></RequireAuth>} />
         <Route path="/parent"              element={<RequireAuth><ParentDashboardPage /></RequireAuth>} />
         <Route path="/parent/:studentUid"  element={<RequireAuth><ParentDashboardPage /></RequireAuth>} />
         <Route path="/profile"             element={<RequireAuth><ProfilePage /></RequireAuth>} />
