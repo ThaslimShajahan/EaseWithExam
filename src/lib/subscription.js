@@ -40,14 +40,19 @@ export const PLANS = {
     id: 'premium_monthly',
     name: 'Premium',
     priceLabel: '₹399/month',
-    description: 'Full AI power, no limits',
+    description: 'Full AI power, generous daily limits',
     razorpayAmount: 39900,
     expiryDays: 30,
     badge: 'Most Popular',
     badgeColor: 'bg-primary-500',
+    // Real enforced numbers, not Infinity. quota_config carries the same values
+    // and is what actually gates; these drive the marketing copy, and the two
+    // MUST agree — promising "unlimited" while enforcing 200 is the failure this
+    // change exists to remove. Mock tests stay genuinely unlimited (-1 in
+    // quota_config), so that claim is still true.
     limits: {
-      ai_questions_per_day: Infinity,
-      veda_messages_per_day: Infinity,
+      ai_questions_per_day: 200,
+      veda_messages_per_day: 150,
       mock_tests_per_week: Infinity,
     },
     features: [
@@ -56,9 +61,9 @@ export const PLANS = {
       // exam-prep app also makes — those are kept below, not dropped.
       'Misconception Engine — spot your repeated wrong-answer patterns',
       'Smart flashcards that adapt to what you remember (SM-2)',
-      'Unlimited AI practice questions',
+      '200 AI practice questions a day',
       'Unlimited mock tests',
-      'Unlimited EWE chat',
+      '150 EWE messages a day',
       'Score predictor (premium)',
       'Deep chapter notes + derivations',
       'Progress certificates',
@@ -76,9 +81,11 @@ export const PLANS = {
     // above (was 'Save ₹1,789', correct only against the old ₹2,999 price).
     badge: 'Save ₹789',
     badgeColor: 'bg-emerald-500',
+    // Same values as premium_monthly — same plan, longer term. It carried the
+    // identical Infinity-vs-enforced mismatch and needed the identical fix.
     limits: {
-      ai_questions_per_day: Infinity,
-      veda_messages_per_day: Infinity,
+      ai_questions_per_day: 200,
+      veda_messages_per_day: 150,
       mock_tests_per_week: Infinity,
     },
     features: [
