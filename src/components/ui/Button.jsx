@@ -31,10 +31,25 @@ const Button = forwardRef(function Button(
   },
   ref,
 ) {
+  // NOT disabled:opacity-* — 2026-08-14, found chasing a real payment test
+  // where the pricing page CTA went pale/illegible mid-loading (loading
+  // forces disabled below, so this hit on every single click).
+  // CSS `opacity` doesn't fade an element's own colors toward something
+  // safe; it alpha-blends the WHOLE rendered button — background AND text
+  // together — toward whatever sits behind it. On a colored/gradient card
+  // (this app has both), text and background blend toward the SAME backdrop
+  // color at the same rate, collapsing the contrast between them exactly
+  // when a click is in flight. `!important` overrides elsewhere (e.g.
+  // PricingPage's highlighted-card className) don't help — they force which
+  // color opacity blends FROM, not whether the blend happens.
+  // Disabled/loading now keeps full-strength variant colors — cursor-not-
+  // allowed plus the spinner (which already replaces the icon) are the
+  // "this is busy" signal, and full-strength colors are guaranteed legible
+  // against ANY backdrop because there is no blending left to go wrong.
   const base =
     'inline-flex items-center justify-center rounded-xl font-semibold ' +
     'transition-all duration-150 select-none no-tap-highlight ' +
-    'disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-400 focus:ring-offset-1';
+    'disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-400 focus:ring-offset-1';
 
   return (
     <motion.button

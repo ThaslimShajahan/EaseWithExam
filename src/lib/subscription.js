@@ -282,7 +282,15 @@ export async function initiateRazorpayPayment({ planId, firebaseUid, email, name
   // Amount is resolved server-side (create-razorpay-order looks up plan_config,
   // falling back to its own hardcoded catalogue) — the client never dictates the
   // charge amount, and the resulting order_id pins it for Razorpay's own checks.
+  //
+  // AbortController timeout: without one, a request that hangs (rather than
+  // erroring) never resolves or rejects, so onFailure never fires and the
+  // caller's loading state — PricingPage's activePlan, driving the button's
+  // spinner — is stuck until the user reloads. A slow/stuck order-creation
+  // call must fail loudly, not hang the button forever.
   let order;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-razorpay-order`, {
       method: 'POST',
@@ -291,12 +299,18 @@ export async function initiateRazorpayPayment({ planId, firebaseUid, email, name
         'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
       },
       body: JSON.stringify({ plan_id: planId, firebase_uid: firebaseUid }),
+      signal: controller.signal,
     });
     order = await res.json();
     if (!res.ok) throw new Error(order?.error || 'Could not start checkout');
   } catch (err) {
-    onFailure?.(err.message || 'Could not start checkout. Please try again.');
+    const message = err.name === 'AbortError'
+      ? 'Checkout is taking too long to start. Please try again.'
+      : (err.message || 'Could not start checkout. Please try again.');
+    onFailure?.(message);
     return;
+  } finally {
+    clearTimeout(timeout);
   }
 
   const options = {

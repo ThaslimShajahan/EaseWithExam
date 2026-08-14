@@ -154,7 +154,18 @@ function PlanCard({ planId, plan: planProp, highlight, onSelect, loading, isCurr
         loading={loading}
         disabled={isOwned || (paymentsClosed && !isFree)}
         onClick={() => !isOwned && !(paymentsClosed && !isFree) && onSelect(planId)}
-        className={highlight && !isOwned ? 'bg-white !text-primary-700 hover:bg-primary-50 border-white' : ''}
+        // `!` on every one of these, not just text: className here is
+        // concatenated onto the base Button's own `primary` variant classes
+        // (bg-primary-600 hover:bg-primary-700 text-white), and plain
+        // Tailwind utilities of equal specificity don't reliably let a
+        // later class in the string win — Tailwind's generated stylesheet
+        // orders rules by its own internal scan order, not JSX source
+        // order. This fixes resting/hover contrast on the highlighted card.
+        // It does NOT fix the loading/disabled state on its own — that was
+        // a separate bug (Button.jsx's disabled:opacity-* alpha-blending
+        // against this card's gradient background) fixed at the component
+        // level so it holds here and everywhere else Button is used.
+        className={highlight && !isOwned ? '!bg-white !text-primary-700 hover:!bg-primary-50 !border-white' : ''}
       >
         {isOwned
           ? 'Current Plan ✓'
@@ -214,7 +225,20 @@ export default function PricingPage() {
       onSuccess: async () => {
         setActivePlan('');
         setSuccess('Payment successful! Activating your plan…');
+        // The banner renders at the top of the page (above the plan cards),
+        // but the Razorpay modal that just closed covers the whole viewport
+        // while it's open — whatever the page was scrolled to underneath it
+        // is wherever the user lands the instant it closes, which for a
+        // clicked plan card is usually NOT the top. Found 2026-08-14: a real
+        // successful payment left the student with no visible confirmation
+        // at all, because the confirmation existed but was scrolled out of
+        // view for the ~1s it was on screen before navigating away.
+        window.scrollTo({ top: 0, behavior: 'smooth' });
         await refreshSubscription(); // re-fetch subscription so isPremium flips immediately
+        // A deliberate pause, not just however long refreshSubscription()
+        // happens to take — that could resolve fast enough to navigate away
+        // before the scroll animation above even finishes.
+        await new Promise((r) => setTimeout(r, 1200));
         setSuccess('');
         navigate('/dashboard');
       },
