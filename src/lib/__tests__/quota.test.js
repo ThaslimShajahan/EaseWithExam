@@ -14,7 +14,7 @@ vi.mock('../featureFlags', () => ({
 
 import { supabase } from '../supabase';
 import { getFeatureFlag } from '../featureFlags';
-import { checkQuota, incrementQuota, FREE_LIMITS, FIELD_LABELS, invalidateQuotaCache } from '../quota';
+import { checkQuota, incrementQuota, getQuotaSnapshot, FREE_LIMITS, FIELD_LABELS, invalidateQuotaCache } from '../quota';
 
 const TODAY = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
@@ -160,6 +160,100 @@ describe('checkQuota', () => {
     const result = await checkQuota('uid_123', 'ai_questions_used', false);
     expect(result.limit).toBe(15);
     expect(result.allowed).toBe(true);
+  });
+});
+
+/* Both-halves cover for the per-student grant mechanism that replaced the
+ * global campaign toggle (2026-08-14, same night): quota_overrides.expires_at
+ * is the ENTIRE expiry mechanism — resolveQuota just stops selecting an
+ * override the instant `expires_at` passes, with no cleanup job, no error, and
+ * no stuck intermediate state. These pin that behaviour with the REAL preset
+ * values (GRANT_PRESET in AdminStudents.jsx: 500 AI/day), not arbitrary
+ * numbers, so a future change to the preset is what breaks these — not the
+ * expiry mechanism drifting unnoticed underneath it. */
+describe('checkQuota — per-student grant expiry (PERMIT active / DENY expired)', () => {
+  it('PERMIT: an active grant well above the plan limit is honoured', async () => {
+    mockFrom({
+      override: { ai_questions: 500, expires_at: new Date(Date.now() + 3 * 86400000).toISOString() },
+      config:   { ai_questions: 200 },   // premium's real plan limit
+      usage:    { ai_questions_used: 350 },
+    });
+    const result = await checkQuota('uid_123', 'ai_questions_used', true, 'premium_monthly');
+    expect(result.allowed).toBe(true);
+    expect(result.limit).toBe(500);
+  });
+
+  it('PERMIT: the grant still blocks once ITS OWN (higher) ceiling is hit — "high", not infinite', async () => {
+    mockFrom({
+      override: { ai_questions: 500, expires_at: new Date(Date.now() + 3 * 86400000).toISOString() },
+      config:   { ai_questions: 200 },
+      usage:    { ai_questions_used: 500 },
+    });
+    const result = await checkQuota('uid_123', 'ai_questions_used', true, 'premium_monthly');
+    expect(result.allowed).toBe(false);
+    expect(result.limit).toBe(500);
+  });
+
+  it('DENY: a grant expiring at this EXACT instant is already expired, not active', async () => {
+    // Same boundary rule as the removed campaign's isCampaignActive() — "now <
+    // end", strict, so the expiry instant itself belongs to "over".
+    const now = new Date();
+    mockFrom({
+      override: { ai_questions: 500, expires_at: now.toISOString() },
+      config:   { ai_questions: 200 },
+      usage:    { ai_questions_used: 250 },
+    });
+    const result = await checkQuota('uid_123', 'ai_questions_used', true, 'premium_monthly');
+    expect(result.limit).toBe(200);         // reverted to the plan, not the grant
+    expect(result.allowed).toBe(false);      // 250 used > 200 plan limit — correctly blocked now
+  });
+
+  it('DENY->PERMIT with NO stuck state: an expired grant reverts cleanly to a plan limit the student is still within', async () => {
+    const past = new Date(Date.now() - 3600000).toISOString();
+    mockFrom({
+      override: { ai_questions: 500, expires_at: past },
+      config:   { ai_questions: 200 },
+      usage:    { ai_questions_used: 50 },   // comfortably under the PLAN limit
+    });
+    const result = await checkQuota('uid_123', 'ai_questions_used', true, 'premium_monthly');
+    // Not an error, not "stuck" at the old grant, not silently unlimited —
+    // just the plan's own number, exactly as if no grant had ever existed.
+    expect(result).toEqual({ allowed: true, used: 50, limit: 200 });
+  });
+
+  it('getQuotaSnapshot (the badge/usage-panel read path) honours the same expiry rule', async () => {
+    const future = new Date(Date.now() + 86400000).toISOString();
+    mockFrom({
+      override: { ai_questions: 500, expires_at: future },
+      config:   { ai_questions: 200 },
+      usage:    { ai_questions_used: 10 },
+    });
+    const active = await getQuotaSnapshot('uid_123', 'ai_questions_used', true, 'premium_monthly');
+    expect(active).toEqual({ used: 10, limit: 500, unlimited: false });
+
+    invalidateQuotaCache();
+    const past = new Date(Date.now() - 86400000).toISOString();
+    mockFrom({
+      override: { ai_questions: 500, expires_at: past },
+      config:   { ai_questions: 200 },
+      usage:    { ai_questions_used: 10 },
+    });
+    const expired = await getQuotaSnapshot('uid_123', 'ai_questions_used', true, 'premium_monthly');
+    expect(expired).toEqual({ used: 10, limit: 200, unlimited: false });
+  });
+
+  it('a null-valued field on the override (mock_tests, deliberately left unset by the grant preset) falls through to the plan, not to 0', async () => {
+    // GRANT_PRESET.mock_tests is null on purpose — premium already grants -1
+    // there, and writing a number would DOWNGRADE a rewarded student. Confirms
+    // resolveQuota's null-check treats "field present but null" as absent, the
+    // same way the removed override-value check always has.
+    mockFrom({
+      override: { ai_questions: 500, mock_tests: null, expires_at: new Date(Date.now() + 86400000).toISOString() },
+      config:   { ai_questions: 200, mock_tests: -1 },
+      usageRows: [{ mock_tests_used: 4 }],   // weekly field — reads the array path, not the daily singleton
+    });
+    const result = await checkQuota('uid_123', 'mock_tests_used', true, 'premium_monthly');
+    expect(result).toEqual({ allowed: true, unlimited: true, used: 4 });
   });
 });
 

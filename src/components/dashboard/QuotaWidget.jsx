@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { Gauge, Zap, MessageSquare, ClipboardList } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { checkQuota } from '../../lib/quota';
+import ExpiryBadge from './ExpiryBadge';
 
 const QUOTA_META = [
   { key: 'ai_questions_used',  label: 'AI Questions', icon: Zap,          color: 'bg-violet-500' },
@@ -19,8 +20,14 @@ export default function QuotaWidget() {
 
   const uid = currentUser?.uid;
 
+  // Runs for EVERY student now, premium included. Premium used to short-circuit
+  // straight to a hardcoded "Unlimited AI questions, tests & chat" card — true
+  // when premium's quota_config was Infinity, false since it became 200/day
+  // (2026-08-14, same night, to match what checkQuota actually enforces). A
+  // premium student's own dashboard was contradicting the limit they could
+  // actually hit. Real numbers now, for every plan.
   useEffect(() => {
-    if (!uid || isPremium) { setLoading(false); return; }
+    if (!uid) { setLoading(false); return; }
     Promise.all(QUOTA_META.map(({ key }) => checkQuota(uid, key, isPremium, subscription?.plan)))
       .then((results) => {
         const nextUsage = {}, nextLimits = {};
@@ -34,22 +41,6 @@ export default function QuotaWidget() {
       })
       .catch(() => setLoading(false));
   }, [uid, isPremium]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (isPremium) {
-    return (
-      <div className="card bg-gradient-to-r from-amber-50 to-orange-50 border-amber-100">
-        <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-xl bg-amber-100 flex items-center justify-center">
-            <Zap size={15} className="text-amber-600" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-amber-800">Premium Active</p>
-            <p className="text-xs text-amber-600">Unlimited AI questions, tests & chat</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   if (loading) {
     return (
@@ -69,11 +60,17 @@ export default function QuotaWidget() {
           <Gauge size={16} className="text-slate-600" />
           <h3 className="font-semibold text-slate-900 text-sm">Daily Usage</h3>
         </div>
+        {/* Shown for every plan — free, premium, or a temporary grant — not
+            only students an admin has specifically touched. */}
+        <ExpiryBadge />
+      </div>
+
+      {!isPremium && (
         <Link to="/pricing"
-          className="text-[10px] font-semibold text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-full hover:bg-amber-100 transition-colors">
+          className="inline-block text-[10px] font-semibold text-amber-600 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-full hover:bg-amber-100 transition-colors mb-3">
           Upgrade
         </Link>
-      </div>
+      )}
 
       <div className="space-y-3">
         {QUOTA_META.map(({ key, label, icon: Icon, color }) => {

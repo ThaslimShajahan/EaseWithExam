@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Users, Search, RefreshCw, Pencil, X, Save, Check, Crown, Trash2, AlertTriangle } from 'lucide-react';
-import { adminGetAllUsers, adminGetAllTestSessions, adminGetAllSubscriptions, adminUpdateUser, adminGrantPremium, adminDeleteStudent } from '../lib/supabase';
+import { adminGetAllUsers, adminGetAllTestSessions, adminGetAllSubscriptions, adminUpdateUser, adminGrantPremium, adminDeleteStudent, adminSetQuotaOverride, adminClearQuotaOverride, adminGetQuotaOverride } from '../lib/supabase';
 import { formatExamLabel, resolveBoard } from '../lib/categories';
 import { supabase } from '../lib/supabase';
 // The onboarding wizard's own rules — same functions, so an admin-set profile
@@ -197,6 +197,166 @@ function StreamSubjectsEditor({ classLevel, syllabus, subjects, academicTrack, o
   );
 }
 
+/**
+ * Grant preset — replaces the removed global campaign. High enough that no
+ * real student ever notices it as a limit; capped, not Infinity, so a leaked
+ * credential or a runaway loop still has a ceiling. ~2.5x premium on every
+ * field except mock_tests, left NULL: premium already grants -1 (unlimited)
+ * there, and writing a number would DOWNGRADE a student meant to be rewarded.
+ */
+const GRANT_PRESET = {
+  ai_questions: 500, veda_messages: 300, mock_tests: null,
+  paper_evaluations: 50, podcasts: 50, paper_generations: 25,
+};
+
+const GRANT_FIELDS = [
+  ['ai_questions', 'AI questions/day'], ['veda_messages', 'EWE messages/day'],
+  ['mock_tests', 'Mock tests/week'], ['paper_evaluations', 'Evaluations/day'],
+  ['podcasts', 'Podcasts/day'], ['paper_generations', 'Full papers/day'],
+];
+
+/**
+ * Per-student "unlimited until [date]" grant. Reads/writes quota_overrides
+ * through the three RPCs added in 20260814080000 — this component owns no
+ * quota logic of its own, only the form around it.
+ */
+function QuotaGrantEditor({ firebaseUid }) {
+  const [existing, setExisting] = useState(null); // current grant, or null
+  const [loading,  setLoading]  = useState(true);
+  const [form,     setForm]     = useState({ ...GRANT_PRESET, expiresAt: '', reason: '' });
+  const [saving,   setSaving]   = useState(false);
+  const [saved,    setSaved]    = useState(false);
+  const [error,    setError]    = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    adminGetQuotaOverride(getCallerUid(), firebaseUid).then((row) => {
+      if (cancelled) return;
+      if (row?.id) {
+        setExisting(row);
+        setForm({
+          ai_questions: row.ai_questions, veda_messages: row.veda_messages,
+          mock_tests: row.mock_tests, paper_evaluations: row.paper_evaluations,
+          podcasts: row.podcasts, paper_generations: row.paper_generations,
+          expiresAt: row.expires_at ? new Date(row.expires_at).toISOString().slice(0, 16) : '',
+          reason: row.reason || '',
+        });
+      } else {
+        setExisting(null);
+        setForm({ ...GRANT_PRESET, expiresAt: '', reason: '' });
+      }
+      setLoading(false);
+    }).catch(() => setLoading(false));
+    return () => { cancelled = true; };
+  }, [firebaseUid]);
+
+  const daysLeft = existing?.expires_at
+    ? Math.max(0, Math.ceil((new Date(existing.expires_at) - new Date()) / 86_400_000))
+    : null;
+  const isExpired = existing?.expires_at && new Date(existing.expires_at) <= new Date();
+
+  const set = (field, val) => setForm((f) => ({ ...f, [field]: val }));
+
+  const handleGrant = async () => {
+    setSaving(true); setError('');
+    try {
+      if (!form.expiresAt) throw new Error('An end date is required.');
+      const isoExpiry = new Date(form.expiresAt).toISOString();
+      const row = await adminSetQuotaOverride(getCallerUid(), firebaseUid, {
+        ai_questions: form.ai_questions, veda_messages: form.veda_messages,
+        mock_tests: form.mock_tests, paper_evaluations: form.paper_evaluations,
+        podcasts: form.podcasts, paper_generations: form.paper_generations,
+      }, isoExpiry, form.reason || null);
+      setExisting(row);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleClear = async () => {
+    setSaving(true); setError('');
+    try {
+      await adminClearQuotaOverride(getCallerUid(), firebaseUid);
+      setExisting(null);
+      setForm({ ...GRANT_PRESET, expiresAt: '', reason: '' });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return null;
+
+  return (
+    <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold text-emerald-300">Quota grant</p>
+        {existing && !isExpired
+          ? <span className="text-[10px] text-emerald-400">active — {daysLeft} day{daysLeft === 1 ? '' : 's'} left</span>
+          : existing && isExpired
+            ? <span className="text-[10px] text-slate-500">expired — reverted to plan limits</span>
+            : <span className="text-[10px] text-slate-500">none</span>}
+      </div>
+
+      {existing && !isExpired && (
+        <p className="text-[11px] text-slate-400">
+          Ends {new Date(existing.expires_at).toLocaleString()}
+          {existing.reason ? ` — "${existing.reason}"` : ''}
+        </p>
+      )}
+
+      <div className="grid grid-cols-3 gap-2">
+        {GRANT_FIELDS.map(([key, label]) => (
+          <div key={key}>
+            <label className="text-[10px] text-slate-500 block mb-0.5">{label}</label>
+            <input type="number" min="0"
+              value={form[key] ?? ''}
+              placeholder={key === 'mock_tests' ? 'plan default' : '0'}
+              onChange={(e) => set(key, e.target.value === '' ? null : Number(e.target.value))}
+              className="w-full bg-slate-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-emerald-500" />
+          </div>
+        ))}
+      </div>
+
+      <div>
+        <label className="text-[10px] text-slate-500 block mb-0.5">Ends at (required)</label>
+        <input type="datetime-local" value={form.expiresAt}
+          onChange={(e) => set('expiresAt', e.target.value)}
+          className="w-full bg-slate-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-emerald-500" />
+      </div>
+
+      <div>
+        <label className="text-[10px] text-slate-500 block mb-0.5">Reason (optional, shown in changelog)</label>
+        <input value={form.reason} onChange={(e) => set('reason', e.target.value)}
+          placeholder="e.g. beta tester, support case #123"
+          className="w-full bg-slate-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white placeholder:text-slate-600 outline-none focus:border-emerald-500" />
+      </div>
+
+      {error && <p className="text-[11px] text-red-400">{error}</p>}
+
+      <div className="flex gap-2">
+        <button onClick={handleGrant} disabled={saving}
+          className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors ${
+            saved ? 'bg-emerald-600 text-white' : 'bg-emerald-500 hover:bg-emerald-400 text-slate-900'} disabled:opacity-50`}>
+          {saved ? 'Granted!' : saving ? 'Saving…' : existing ? 'Update grant' : 'Grant quota'}
+        </button>
+        {existing && (
+          <button onClick={handleClear} disabled={saving}
+            className="px-3 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-50">
+            Clear
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── Edit drawer ─────────────────────────────────────────── */
 
 function EditDrawer({ user, onClose, onSaved }) {
@@ -350,6 +510,8 @@ function EditDrawer({ user, onClose, onSaved }) {
               ))}
             </select>
           </Field>
+
+          <QuotaGrantEditor firebaseUid={user.firebase_uid} />
 
           <StreamSubjectsEditor
             classLevel={form.class_level}

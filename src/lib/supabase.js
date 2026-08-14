@@ -85,6 +85,40 @@ export async function adminUpdateUser(callerUid, targetUid, fields) {
   return data;
 }
 
+// Per-student quota grant — replaced the global campaign toggle (2026-08-14,
+// same night). p_expires_at is required and validated server-side to be in
+// the future; the RPC rejects null/past dates rather than accepting a
+// permanent override under this name.
+export async function adminSetQuotaOverride(callerUid, targetUid, limits, expiresAt, reason) {
+  const { data, error } = await supabase.rpc('admin_set_quota_override', {
+    p_caller: callerUid, p_user_id: targetUid,
+    p_ai_questions: limits.ai_questions, p_veda_messages: limits.veda_messages,
+    p_mock_tests: limits.mock_tests, p_paper_evaluations: limits.paper_evaluations,
+    p_podcasts: limits.podcasts, p_paper_generations: limits.paper_generations,
+    p_expires_at: expiresAt, p_reason: reason,
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function adminClearQuotaOverride(callerUid, targetUid) {
+  const { error } = await supabase.rpc('admin_clear_quota_override', {
+    p_caller: callerUid, p_user_id: targetUid,
+  });
+  if (error) throw error;
+}
+
+// Returns a row with all-null fields (not an error) when the student has no
+// active grant — admin_get_quota_override's own contract, mirrored here so
+// callers check `.id` rather than a thrown error to mean "none set".
+export async function adminGetQuotaOverride(callerUid, targetUid) {
+  const { data, error } = await supabase.rpc('admin_get_quota_override', {
+    p_caller: callerUid, p_user_id: targetUid,
+  });
+  if (error) throw error;
+  return data;
+}
+
 // Used to detect an existing account by phone number before creating a new one —
 // Firebase treats phone and Google sign-in as separate identities (different uids)
 // unless explicitly linked, so this is the app-level de-duplication check.

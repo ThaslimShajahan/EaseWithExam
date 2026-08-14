@@ -18,6 +18,7 @@ import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
 import NotificationSettings from '../components/ui/NotificationSettings';
 import PhoneOTP from '../components/auth/PhoneOTP';
+import ExpiryBadge from '../components/dashboard/ExpiryBadge';
 import { AtomDoodle, StarDoodle, FormulaText, WaveDoodle } from '../components/ui/Illustrations';
 
 /**
@@ -578,9 +579,12 @@ export default function ProfilePage() {
       {quotaUsage && (
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.11 }}>
           <Section title="Usage & Limits">
-            <div className="flex items-center gap-2 -mt-1 mb-1">
-              <Gauge size={13} className="text-slate-400" />
-              <span className="text-xs text-slate-500">Resets daily at midnight IST · {planName} plan</span>
+            <div className="flex items-center justify-between gap-2 -mt-1 mb-1">
+              <div className="flex items-center gap-2">
+                <Gauge size={13} className="text-slate-400" />
+                <span className="text-xs text-slate-500">Resets daily at midnight IST · {planName} plan</span>
+              </div>
+              <ExpiryBadge />
             </div>
             <div className="space-y-3">
               {Object.entries(FIELD_LABELS).map(([field, label]) => {
