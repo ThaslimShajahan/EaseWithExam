@@ -142,10 +142,17 @@ function BulletsEditor({ value, onChange }) {
   );
 }
 
-function EditModal({ row, onClose, onSave, onReset, saving, error }) {
+// A new template's key is a permanent database identifier and, once code is
+// wired to fire it, a string another developer will type verbatim — so it is
+// constrained to the same shape every EXISTING key already has (lowercase
+// snake_case), rather than accepting anything.
+const KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
+
+function EditModal({ row, isNew, onClose, onSave, onReset, saving, error }) {
   const [form, setForm] = useState({ ...row });
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const vars = Object.keys(PLACEHOLDER_EXAMPLES[row.template_key] ?? {});
+  const keyValid = isNew ? KEY_PATTERN.test(form.template_key.trim()) : true;
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -153,8 +160,8 @@ function EditModal({ row, onClose, onSave, onReset, saving, error }) {
         className="bg-slate-900 border border-white/10 rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
           <div>
-            <h3 className="font-bold text-white">{row.label}</h3>
-            <p className="text-xs text-slate-500 mt-0.5">{row.description}</p>
+            <h3 className="font-bold text-white">{isNew ? 'New Email Template' : row.label}</h3>
+            <p className="text-xs text-slate-500 mt-0.5">{isNew ? 'Not yet wired to any send — see the note below.' : row.description}</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white"><X size={16} /></button>
         </div>
@@ -162,6 +169,31 @@ function EditModal({ row, onClose, onSave, onReset, saving, error }) {
         <div className="flex-1 overflow-hidden grid md:grid-cols-2">
           {/* Form */}
           <div className="overflow-y-auto p-5 space-y-4 border-r border-white/10">
+            {isNew && (
+              <>
+                <div className="bg-amber-900/20 border border-amber-700/30 rounded-xl px-3 py-2.5">
+                  <p className="text-[11px] text-amber-300 leading-relaxed">
+                    Creating this template does not make anything send it. A developer still has to add
+                    a trigger in code that calls it by key — same as the 4 built-in templates each have
+                    their own trigger. This screen is for authoring and previewing the content now, so
+                    it is ready when that trigger is added.
+                  </p>
+                </div>
+                <div>
+                  <label className={FIELD_LABEL}>Template Key (permanent — cannot be changed after saving)</label>
+                  <input className={FIELD_INPUT} value={form.template_key}
+                    onChange={(e) => setForm((f) => ({ ...f, template_key: e.target.value.trim().toLowerCase() }))}
+                    placeholder="e.g. diwali_promo" />
+                  {!keyValid && form.template_key && (
+                    <p className="text-[11px] text-red-400 mt-1">Lowercase letters, numbers and underscores only, starting with a letter.</p>
+                  )}
+                </div>
+                <div>
+                  <label className={FIELD_LABEL}>Internal Label (shown in this list, not to students)</label>
+                  <input className={FIELD_INPUT} value={form.label} onChange={set('label')} placeholder="e.g. Diwali Promo Email" />
+                </div>
+              </>
+            )}
             {vars.length > 0 && (
               <div className="bg-primary-900/20 border border-primary-700/30 rounded-xl px-3 py-2">
                 <p className="text-[10px] text-primary-300">
@@ -181,13 +213,17 @@ function EditModal({ row, onClose, onSave, onReset, saving, error }) {
               <label className={FIELD_LABEL}>Body Text</label>
               <textarea rows={4} className={FIELD_INPUT} value={form.body_text} onChange={set('body_text')} />
             </div>
-            {row.template_key === 'welcome' && (
+            {/* Existing templates keep their original per-key gating unchanged
+                (welcome-only bullets, no button on verify_email) — a NEW
+                template has no such history, so both fields are simply
+                offered; the author leaves what they don't need blank. */}
+            {(isNew || row.template_key === 'welcome') && (
               <div>
                 <label className={FIELD_LABEL}>Feature Bullet Points</label>
                 <BulletsEditor value={form.bullet_points} onChange={(v) => setForm((f) => ({ ...f, bullet_points: v }))} />
               </div>
             )}
-            {row.template_key !== 'verify_email' && (
+            {(isNew || row.template_key !== 'verify_email') && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className={FIELD_LABEL}>Button Label</label>
@@ -227,18 +263,20 @@ function EditModal({ row, onClose, onSave, onReset, saving, error }) {
         </div>
 
         <div className="p-5 border-t border-white/10 flex gap-3 shrink-0">
-          <button onClick={onReset} disabled={saving}
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-white/10 text-slate-400 hover:text-amber-400 hover:border-amber-500/30 text-sm font-medium transition-colors disabled:opacity-50">
-            <RotateCcw size={13} /> Reset to default
-          </button>
+          {!isNew && (
+            <button onClick={onReset} disabled={saving}
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl border border-white/10 text-slate-400 hover:text-amber-400 hover:border-amber-500/30 text-sm font-medium transition-colors disabled:opacity-50">
+              <RotateCcw size={13} /> Reset to default
+            </button>
+          )}
           <div className="flex-1" />
           <button onClick={onClose} className="px-5 py-2.5 rounded-xl border border-white/10 text-slate-400 hover:text-white hover:bg-white/5 text-sm font-medium transition-colors">Cancel</button>
           <button
             onClick={() => onSave(form)}
-            disabled={saving || !form.subject.trim() || !form.heading.trim()}
+            disabled={saving || !form.subject.trim() || !form.heading.trim() || (isNew && (!keyValid || !form.template_key.trim() || !form.label.trim()))}
             className="px-5 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-50 transition-colors"
           >
-            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} {saving ? 'Saving…' : 'Save'}
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} {saving ? 'Saving…' : isNew ? 'Create Template' : 'Save'}
           </button>
         </div>
       </motion.div>
@@ -251,6 +289,7 @@ export default function AdminEmailTemplates() {
   const [rows,    setRows]    = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null);
+  const [isNew,   setIsNew]   = useState(false);
   const [saving,  setSaving]  = useState(false);
   const [error,   setError]   = useState('');
   const [toast,   setToast]   = useState('');
@@ -271,6 +310,17 @@ export default function AdminEmailTemplates() {
 
   async function handleSave(form) {
     setSaving(true); setError('');
+    // admin_upsert_email_template is a real upsert (ON CONFLICT DO UPDATE) —
+    // correct for editing an existing row, but it means "Create Template"
+    // with a key that already exists would silently overwrite that template
+    // instead of erroring. Checked client-side against the already-loaded
+    // list rather than adding a server-side existence check for a table this
+    // small.
+    if (isNew && rows.some((r) => r.template_key === form.template_key.trim())) {
+      setError(`"${form.template_key}" already exists — edit it from the list instead of creating a duplicate.`);
+      setSaving(false);
+      return;
+    }
     try {
       const { error: err } = await supabase.rpc('admin_upsert_email_template', {
         p_caller: callerUid, p_template_key: form.template_key, p_label: form.label,
@@ -280,8 +330,11 @@ export default function AdminEmailTemplates() {
         p_footer_note: form.footer_note ?? '',
       });
       if (err) throw new Error(err.message);
-      logChange(ENTITY.SYSTEM, form.template_key, ACTION.UPDATE, { after: form }, `Admin updated the "${form.label}" email template`);
-      setEditing(null); setToast('Saved — live on the next send.'); load();
+      logChange(ENTITY.SYSTEM, form.template_key, isNew ? ACTION.CREATE : ACTION.UPDATE, { after: form },
+        isNew ? `Admin created the "${form.label}" email template` : `Admin updated the "${form.label}" email template`);
+      setEditing(null); setIsNew(false);
+      setToast(isNew ? 'Created — not yet wired to a send trigger.' : 'Saved — live on the next send.');
+      load();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -316,13 +369,23 @@ export default function AdminEmailTemplates() {
 
   return (
     <div className="max-w-3xl space-y-5">
-      <div>
-        <h1 className="text-xl font-bold text-white flex items-center gap-2"><Mail size={20} /> Email Templates</h1>
-        <p className="text-xs text-slate-400 mt-0.5">
-          Copy for the app's own transactional emails — live on the next send, no deploy needed. The admin
-          Push Notifications composer's Email channel is separate: its subject/message come fresh from
-          that form on every send, not from a template here.
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-white flex items-center gap-2"><Mail size={20} /> Email Templates</h1>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Copy for the app's own transactional emails — live on the next send, no deploy needed. The admin
+            Push Notifications composer's Email channel is separate: its subject/message come fresh from
+            that form on every send, not from a template here.
+          </p>
+        </div>
+        <button onClick={() => {
+          setIsNew(true);
+          setEditing({ template_key: '', label: '', description: '', subject: '', heading: '',
+            body_text: '', bullet_points: [], button_label: '', button_path: '', footer_note: '' });
+        }}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-white bg-primary-600 hover:bg-primary-700 transition-colors shrink-0">
+          <Plus size={13} /> New Template
+        </button>
       </div>
 
       <div className="space-y-2">
@@ -335,7 +398,7 @@ export default function AdminEmailTemplates() {
               <p className="text-sm font-medium text-slate-200">{row.label}</p>
               <p className="text-[11px] text-slate-500 truncate">{row.description}</p>
             </div>
-            <button onClick={() => setEditing(row)}
+            <button onClick={() => { setIsNew(false); setEditing(row); }}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-primary-300 bg-primary-900/30 border border-primary-700/30 hover:bg-primary-900/50 transition-colors shrink-0">
               <Pencil size={12} /> Edit
             </button>
@@ -346,7 +409,8 @@ export default function AdminEmailTemplates() {
       {editing && (
         <EditModal
           row={editing}
-          onClose={() => { setEditing(null); setError(''); }}
+          isNew={isNew}
+          onClose={() => { setEditing(null); setIsNew(false); setError(''); }}
           onSave={handleSave}
           onReset={() => handleReset(editing.template_key)}
           saving={saving}
