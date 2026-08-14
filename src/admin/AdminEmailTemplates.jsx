@@ -34,7 +34,7 @@ const PLACEHOLDER_EXAMPLES = {
   welcome:              { name: 'Priya', exam: 'NEET UG' },
   paper_ready:          { examType: 'NEET', subject: 'Physics', count: '30' },
   subscription_active:  { planName: '3-Year Plan' },
-  subscription_receipt: { planName: '3-Year Plan', amount: '₹4,999', paymentId: 'pay_QeXampLe123456', date: '14 Aug 2026' },
+  subscription_receipt: { planName: '3-Year Plan', amount: 'INR 4,999', paymentId: 'pay_QeXampLe123456', date: '14 Aug 2026' },
   verify_email:         { code: '482913' },
 };
 

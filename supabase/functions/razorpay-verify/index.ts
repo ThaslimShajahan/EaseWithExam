@@ -53,9 +53,16 @@ const PLAN_NAMES: Record<string, string> = {
   neet_complete:   '3-Year Plan',
 };
 
+// Plain "INR", not the ₹ glyph (U+20B9) — 2026-08-14, a real delivered
+// receipt showed "?3,999" instead of "₹3,999". Traced and fixed the missing
+// explicit charset on the Resend API call (see emailLayout.ts /
+// send-email's history), which should be the real fix — but a non-ASCII
+// currency symbol in a financial document is one more encoding hop than
+// this needs, and ASCII "INR" renders correctly in literally every email
+// client with zero encoding risk anywhere in the pipeline, permanently.
 function formatInr(paise: number): string {
   const rupees = paise / 100;
-  return `₹${rupees.toLocaleString('en-IN', { minimumFractionDigits: rupees % 1 === 0 ? 0 : 2 })}`;
+  return `INR ${rupees.toLocaleString('en-IN', { minimumFractionDigits: rupees % 1 === 0 ? 0 : 2 })}`;
 }
 
 function verifyPaymentSignature(orderId: string, paymentId: string, signature: string): boolean {

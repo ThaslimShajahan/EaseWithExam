@@ -461,6 +461,43 @@ Edge Function and would need somewhere else to live.
 
 ---
 
+## ⚠ OPEN — Razorpay test key pair went invalid mid-session, cause unknown (2026-08-14)
+
+**Three key pairs used in one night, the second one stopped authenticating
+with no config change on this side in between.** Recorded precisely because
+guessing at "why" without evidence would be exactly the kind of thing this
+project's own discipline exists to prevent.
+
+Timeline, from actual `supabase secrets list` timestamps and direct
+`create-razorpay-order` reproductions (not assumptions):
+1. `rzp_test_TPfLx6l01NLzYS` (first pair given) — reproduced directly,
+   Razorpay's own API returned `"Authentication failed"`. Never worked.
+2. `rzp_test_TPgoqAmAs5awOQ` (from the Razorpay dashboard's own onboarding
+   screen, screenshot-verified) — reproduced directly, worked (`HTTP 200`,
+   real `order_id`). **A real test-mode payment completed successfully on
+   this pair** (`pay_TPhJbjq9xI08YM`, Premium Yearly, INR 3,999).
+3. Checking `supabase secrets list` afterward: `RAZORPAY_KEY_ID`/`SECRET`
+   showed `updated_at: 2026-08-14T15:11:5x` — **before** that successful
+   payment, and no `secrets set` call for these was made after step 2. So
+   the credential that completed the real payment was still the currently-
+   configured one, unchanged, when a later reproduction started failing
+   again with the identical `"Authentication failed"` error. Something
+   became invalid between the successful payment and the next attempt, with
+   no local config change in between.
+4. Third pair (`rzp_test_TPhxuvSM91PBX2`) supplied after checking Razorpay's
+   dashboard directly — reproduced directly, confirmed working before being
+   set anywhere else (edge secrets + `VITE_RAZORPAY_KEY_ID`, both — see the
+   sync note below).
+
+**Not diagnosed: why pair 2 stopped authenticating.** No local action
+explains it. Possibilities, none confirmed: Razorpay-side test-key rotation
+or expiry, an account/mode state change, or a dashboard action taken and not
+mentioned here. Worth asking Razorpay support directly if it recurs on pair
+3 — a pattern of test keys silently invalidating mid-session is worth their
+explanation, not just working around it a fourth time.
+
+---
+
 ## RESOLVED 2026-08-14 — payments are live (test mode)
 
 `payments_enabled` is ON — bank account confirmed live by the owner,
@@ -468,10 +505,11 @@ Edge Function and would need somewhere else to live.
 test-mode payment completed successfully the same day: order created,
 Razorpay checkout completed with a domestic test card, signature verified,
 `payment_orders` redeemed, `subscriptions` activated with the correct plan/
-amount/expiry (`pay_TPhJbjq9xI08YM`, Premium Yearly, ₹3,999,
-expires 2027-08-14). See the go-live checklist below for switching this from
-test to live credentials — **not done yet, deliberately**, waiting on explicit
-go-ahead.
+amount/expiry (`pay_TPhJbjq9xI08YM`, Premium Yearly, INR 3,999,
+expires 2027-08-14). See the section above for the key pair going invalid
+partway through the night, and the go-live checklist below for switching
+this from test to live credentials — **not done yet, deliberately**, waiting
+on explicit go-ahead.
 
 Also fixed the same day, found chasing that test payment:
 - `activate_subscription`/`redeem_payment_order` had never been callable at
