@@ -34,6 +34,7 @@ const PLACEHOLDER_EXAMPLES = {
   welcome:              { name: 'Priya', exam: 'NEET UG' },
   paper_ready:          { examType: 'NEET', subject: 'Physics', count: '30' },
   subscription_active:  { planName: '3-Year Plan' },
+  subscription_receipt: { planName: '3-Year Plan', amount: '₹4,999', paymentId: 'pay_QeXampLe123456', date: '14 Aug 2026' },
   verify_email:         { code: '482913' },
 };
 
@@ -217,9 +218,9 @@ function EditModal({ row, isNew, onClose, onSave, onReset, saving, error }) {
                 (welcome-only bullets, no button on verify_email) — a NEW
                 template has no such history, so both fields are simply
                 offered; the author leaves what they don't need blank. */}
-            {(isNew || row.template_key === 'welcome') && (
+            {(isNew || row.template_key === 'welcome' || row.template_key === 'subscription_receipt') && (
               <div>
-                <label className={FIELD_LABEL}>Feature Bullet Points</label>
+                <label className={FIELD_LABEL}>{row.template_key === 'subscription_receipt' ? 'Receipt Line Items' : 'Feature Bullet Points'}</label>
                 <BulletsEditor value={form.bullet_points} onChange={(v) => setForm((f) => ({ ...f, bullet_points: v }))} />
               </div>
             )}

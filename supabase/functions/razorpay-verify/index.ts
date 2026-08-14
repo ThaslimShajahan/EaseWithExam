@@ -44,6 +44,20 @@ const PLAN_DAYS: Record<string, number> = {
   neet_complete:   1095,
 };
 
+// Display names for the receipt email — must match src/lib/subscription.js
+// PLANS[id].name, which is what the pricing/checkout UI actually shows the
+// student, so the receipt names the same plan they saw when paying.
+const PLAN_NAMES: Record<string, string> = {
+  premium_monthly: 'Premium',
+  premium_yearly:  'Premium Yearly',
+  neet_complete:   '3-Year Plan',
+};
+
+function formatInr(paise: number): string {
+  const rupees = paise / 100;
+  return `₹${rupees.toLocaleString('en-IN', { minimumFractionDigits: rupees % 1 === 0 ? 0 : 2 })}`;
+}
+
 function verifyPaymentSignature(orderId: string, paymentId: string, signature: string): boolean {
   if (!RAZORPAY_SECRET) return false;
   const payload  = `${orderId}|${paymentId}`;
@@ -153,6 +167,36 @@ serve(async (req) => {
   // body's copy. Logging the request's version here would have made a
   // redirected redemption look correct in the logs.
   console.log(`✅ Payment verified and subscription activated: ${claim.plan_id} for ${claim.firebase_uid}`);
+
+  // Receipt email — fire-and-forget, same discipline as every other
+  // transactional send in this app (sendTransactionalEmail in src/lib/email.js):
+  // a Resend outage or missing RESEND_API_KEY must never fail a payment that
+  // already succeeded and was already activated above. Every value here comes
+  // from `claim` (the server-verified redeem_payment_order result) or the
+  // HMAC-verified razorpay_payment_id — never from the request body, for the
+  // same replay reason the activation call above doesn't use the body either.
+  try {
+    const receiptResp = await fetch(`${SUPABASE_URL}/functions/v1/send-email`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SERVICE_KEY}` },
+      body: JSON.stringify({
+        caller_uid: claim.firebase_uid,
+        user_id:    claim.firebase_uid,
+        template:   'subscription_receipt',
+        data: {
+          planName:  PLAN_NAMES[claim.plan_id] ?? claim.plan_id,
+          amount:    formatInr(claim.amount_paise ?? 0),
+          paymentId: razorpay_payment_id,
+          date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+        },
+      }),
+    });
+    if (!receiptResp.ok) {
+      console.error('receipt email send-email call failed:', receiptResp.status, await receiptResp.text().catch(() => ''));
+    }
+  } catch (e) {
+    console.error('receipt email dispatch threw:', (e as Error).message);
+  }
   return new Response(
     JSON.stringify({ success: true, plan_id: claim.plan_id, firebase_uid: claim.firebase_uid }),
     { status: 200, headers: { ...CORS, 'Content-Type': 'application/json' } },

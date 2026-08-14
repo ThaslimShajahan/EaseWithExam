@@ -54,7 +54,9 @@ const SUPABASE_URL   = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_KEY    = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY') ?? '';
 
-const DB_BACKED_TEMPLATES = new Set(['welcome', 'paper_ready', 'subscription_active', 'subscription_expiring']);
+const DB_BACKED_TEMPLATES = new Set([
+  'welcome', 'paper_ready', 'subscription_active', 'subscription_expiring', 'subscription_receipt',
+]);
 
 // ── Unsubscribe token: HMAC-SHA256(uid) keyed on the service-role secret,
 // so the link can't be forged to unsubscribe someone else, without needing
@@ -120,6 +122,12 @@ async function renderTemplate(
       planName:   (data.planName as string) || 'your plan',
       daysLeft:   String((data.daysLeft as number) ?? 0),
       expiryDate: (data.expiryDate as string) || '',
+    } :
+    template === 'subscription_receipt' ? {
+      planName:  (data.planName as string) || 'Premium',
+      amount:    (data.amount as string) || '',
+      paymentId: (data.paymentId as string) || '',
+      date:      (data.date as string) || '',
     } :
     { planName: (data.planName as string) || 'Premium' }; // subscription_active
 

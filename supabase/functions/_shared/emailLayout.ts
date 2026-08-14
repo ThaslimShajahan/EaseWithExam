@@ -174,6 +174,20 @@ export const FALLBACK_TEMPLATES: Record<string, TemplateRow> = {
     body_text: '{{planName}} ends on {{expiryDate}} ({{daysLeft}} day(s) left). Renew now to keep your limits and features without a gap.',
     bullet_points: [], button_label: 'Renew now', button_path: '/pricing', footer_note: '',
   },
+  subscription_receipt: {
+    template_key: 'subscription_receipt', label: 'Payment Receipt Email',
+    subject: 'Your EaseWithExam receipt — {{planName}} ✅',
+    heading: 'Payment received',
+    body_text: "Thanks for your payment. Here's your receipt for {{planName}}:",
+    bullet_points: [
+      'Plan: {{planName}}',
+      'Amount paid: {{amount}}',
+      'Payment ID: {{paymentId}}',
+      'Date: {{date}}',
+    ],
+    button_label: 'Go to Dashboard', button_path: '/dashboard',
+    footer_note: 'Keep this email as your payment record. Questions about this charge? Reply to this email.',
+  },
   verify_email: {
     template_key: 'verify_email', label: 'Connect-Email Verification Code',
     subject: 'Your EaseWithExam verification code',
