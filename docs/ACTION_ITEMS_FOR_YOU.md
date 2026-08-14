@@ -6,6 +6,56 @@ shipped in a degraded state. The narrative of what changed and why lives in
 
 ---
 
+## 🐞 OPEN, NOT BLOCKING — browser crash loading Unit 5 via the bulk loader (2026-08-14)
+
+**Owner-reported. Not reproduced, not diagnosed, no fix attempted.** Recorded so
+it is not lost, and deliberately written as a symptom rather than a cause,
+because no diagnostic detail was captured at the time.
+
+**Symptom as reported:** loading File #5 (`UNIT 5 SCIENCE AND CURIOCITY.pdf`)
+through `scripts/bulk-load-unit-notes.mjs` crashed the browser. Units 2–4
+reportedly extracted correctly in the same run. Owner is loading Unit 5 manually
+through Content Intake instead, which is the already-proven path, so this blocks
+nothing.
+
+**What is NOT known:** the error text, whether the crash was the headless
+Chromium process dying or a page-level exception, which chapter it died on, and
+whether it reproduces. Any fix attempt before those exist would be guesswork.
+
+**To capture next time** (in this order — the first one alone may be enough):
+
+```bash
+# The loader already forwards browser console errors to stdout; capture them.
+ADMIN_UID=... BASE_URL=http://localhost:5173 \
+  node scripts/bulk-load-unit-notes.mjs --dir="..." --dry-run 2>&1 | tee unit5.log
+```
+
+Then note whether it died during `extractPagesWithVision` (PDF reading) or
+`extractNotesByManifest` (AI structuring) — the progress lines distinguish them.
+
+**Unverified leads, in rough order of plausibility.** None of these has been
+tested; they are starting points, not conclusions:
+
+1. **Page count vs the vision cap.** Unit 5 spans printed pages 205–249 = **45
+   pages**, and `MAX_VISION_PAGES` in `src/lib/pdfVision.js` is **40**. That
+   normally produces `skippedVisionPages`, not a crash — and Unit 1 was 48 pages
+   and loaded fine — so this is a lead, not an explanation. Worth checking first
+   because it is the one concrete difference that can be read off the manifest.
+2. **Memory.** A headless Chromium page holding a large PDF's rasterised pages
+   plus three chapters' extraction output can exhaust the default heap. Would
+   present as the process dying rather than a JS exception.
+3. **A malformed or scanned page** in that specific PDF that the extractor
+   handles poorly. Would be file-specific and would reproduce every run.
+
+**Note the asymmetry worth exploiting:** Unit 5 loaded through Content Intake
+(manual, one file, real browser) is the same pipeline. If the manual path
+succeeds where the loader crashes, the difference is the loader's environment —
+headless Chromium, or running three files in one long-lived page — not the
+extraction logic. That single comparison narrows this considerably and costs
+nothing beyond the upload the owner is doing anyway.
+
+---
+
 ## ⏸ BLOCKED ON API DOCS — integrate with the EXISTING billing software (2026-08-13)
 
 **Direction changed. Do not build invoicing here.** There is a separate, existing
