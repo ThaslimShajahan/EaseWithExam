@@ -215,6 +215,24 @@ const GRANT_FIELDS = [
   ['podcasts', 'Podcasts/day'], ['paper_generations', 'Full papers/day'],
 ];
 
+const DURATION_PRESETS = [3, 5, 7, 14]; // days
+
+/**
+ * A stored UTC instant -> the local-time string a <input type="datetime-local">
+ * expects. The browser displays and PARSES that field as local wall-clock time
+ * with no timezone marker, so `date.toISOString()` (UTC) is the wrong
+ * conversion — it silently shifts the displayed time by the viewer's UTC
+ * offset (5.5h for IST) and, if the field is re-saved untouched, shifts the
+ * REAL stored expiry by the same amount, since handleGrant round-trips
+ * whatever string is in the field back through `new Date(str).toISOString()`.
+ * Subtracting the timezone offset before formatting is what makes that
+ * round-trip actually be a round-trip.
+ */
+function toLocalInputValue(date) {
+  const offsetMs = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
 /**
  * Per-student "unlimited until [date]" grant. Reads/writes quota_overrides
  * through the three RPCs added in 20260814080000 — this component owns no
@@ -239,7 +257,7 @@ function QuotaGrantEditor({ firebaseUid }) {
           ai_questions: row.ai_questions, veda_messages: row.veda_messages,
           mock_tests: row.mock_tests, paper_evaluations: row.paper_evaluations,
           podcasts: row.podcasts, paper_generations: row.paper_generations,
-          expiresAt: row.expires_at ? new Date(row.expires_at).toISOString().slice(0, 16) : '',
+          expiresAt: row.expires_at ? toLocalInputValue(new Date(row.expires_at)) : '',
           reason: row.reason || '',
         });
       } else {
@@ -326,6 +344,15 @@ function QuotaGrantEditor({ firebaseUid }) {
 
       <div>
         <label className="text-[10px] text-slate-500 block mb-0.5">Ends at (required)</label>
+        <div className="flex gap-1.5 mb-1.5">
+          {DURATION_PRESETS.map((days) => (
+            <button key={days} type="button"
+              onClick={() => set('expiresAt', toLocalInputValue(new Date(Date.now() + days * 86_400_000)))}
+              className="flex-1 py-1 rounded-lg text-[10px] font-semibold bg-slate-800 hover:bg-emerald-900/40 hover:text-emerald-300 text-slate-400 border border-white/10 transition-colors">
+              {days}d
+            </button>
+          ))}
+        </div>
         <input type="datetime-local" value={form.expiresAt}
           onChange={(e) => set('expiresAt', e.target.value)}
           className="w-full bg-slate-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-emerald-500" />
