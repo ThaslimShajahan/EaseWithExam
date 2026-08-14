@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, getSubscription } from './supabase';
 import { createNotification } from './notifications';
 import { sendTransactionalEmail } from './email';
 import { arePaymentsEnabled, PAYMENTS_CLOSED_ERROR } from './paymentsGate';
@@ -205,7 +205,53 @@ async function verifyAndActivateSubscription(firebaseUid, {
   });
 
   const result = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(result?.error || 'Payment verification failed');
+
+  if (!res.ok) {
+    // "Order not redeemable" specifically — added 2026-08-15, real bug found
+    // investigating a real ₹1 payment. This exact message means
+    // redeem_payment_order refused THIS call, which happens in two very
+    // different situations that used to get the same scary treatment:
+    //   1. razorpay-webhook (the backup path) won the race and already
+    //      activated the subscription correctly — the payment succeeded,
+    //      this call just lost a race it didn't need to win.
+    //   2. The order is genuinely stuck/already-used/unknown — a real
+    //      failure.
+    // Distinguish them by checking whether this exact plan is actually now
+    // active, with a short retry: the webhook's own activate_subscription
+    // call may still be in flight (it does its own network round-trip) when
+    // this 409 comes back, so a single immediate check can still race.
+    // get_user_subscription (via getSubscription) is a self-access RPC
+    // safe to call from the client — no service-role secret needed here.
+    if (result?.error === 'Order not redeemable') {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        await new Promise((r) => setTimeout(r, 1200));
+        const sub = await getSubscription(firebaseUid).catch(() => null);
+        if (sub?.plan === plan && sub.isActive) {
+          console.warn('razorpay-verify lost the redemption race, but the webhook activated it correctly — treating as success.');
+          const planName = PLANS[plan]?.name ?? plan;
+          createNotification(
+            firebaseUid,
+            'subscription_active',
+            `${planName} activated! 🎉`,
+            'All premium features are now unlocked. Welcome to the full EWE experience!',
+            '/dashboard',
+          ).catch(() => {});
+          sendTransactionalEmail(firebaseUid, 'subscription_active', { planName });
+          return {
+            plan, planName,
+            amountPaise: amount_paid, baseAmountPaise: base_amount_paise,
+            gstAmountPaise: gst_amount_paise, taxRatePercent: tax_rate_percent,
+            paymentId: razorpay_payment_id,
+            date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }),
+          };
+        }
+      }
+      // Retries exhausted and still not active — genuinely not redeemable
+      // (stuck order, real replay attempt, etc.), not a race. Falls through
+      // to the normal failure below.
+    }
+    throw new Error(result?.error || 'Payment verification failed');
+  }
 
   const planName = PLANS[plan]?.name ?? plan;
   createNotification(
