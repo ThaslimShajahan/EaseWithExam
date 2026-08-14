@@ -6,6 +6,41 @@ shipped in a degraded state. The narrative of what changed and why lives in
 
 ---
 
+## ⚠️ OPEN — prerendering introduced a self-referencing canonical loop on 4 routes (2026-08-14)
+
+**Found during the deploy that shipped prerendering, verifying live — not anticipated beforehand.**
+
+`scripts/prerender.mjs` writes real files to `dist/about/index.html`,
+`dist/contact/index.html`, etc., so those paths are now real directories on the
+live server. nginx's standard behaviour for a directory request with no
+trailing slash is a 301 to the slash form — `/about` → `/about/`. That is
+correct, ordinary nginx behaviour, not a bug in the prerender script.
+
+**The mismatch:** `sitemap.xml` lists the bare form
+(`https://www.easewithexam.com/about`, no trailing slash — matches
+`PAGE_SEO`'s own canonical value). Requesting that exact URL now 301s to
+`/about/`, and the page served there declares its own canonical as the bare
+`/about` — the URL that just redirected away from itself. A crawler following
+the sitemap link is bounced through a self-referencing loop rather than
+landing cleanly on a 200.
+
+**Not a functional break.** Browsers and crawlers both follow 301s
+transparently; verified live on all four affected routes
+(`/about`, `/contact`, `/privacy`, `/terms` — all 301, all correctly
+canonicalised once followed). Users see nothing wrong. This is a
+crawl-cleanliness issue, not an availability one.
+
+**Fix is an nginx config change** (e.g. `absolute_redirect off` scoped to
+these paths, or a rewrite that serves the directory's `index.html` for the
+bare path without redirecting) — same category as the already-pending 404 fix
+below: a live nginx edit belongs in a maintenance window with `nginx -t` and
+rollback ready, not improvised immediately after a deploy at this hour.
+
+**Until fixed:** low urgency. Google resolves 301 chains fine in practice; this
+costs a small amount of crawl efficiency, not indexation.
+
+---
+
 ## ⚠️ OPEN — an approved chapter manifest cannot be edited, and the workaround is SQL (2026-08-14)
 
 **Two defects that must be fixed together, because fixing either alone makes the other worse.**
