@@ -93,3 +93,35 @@ export function resolveStudentSubjects({ profileSubjects, boardSubjects, classLe
   // not exist would be a dead end.
   return { subjects: board, isScoped: false, needsSetup: false };
 }
+
+/**
+ * Same job as resolveStudentSubjects, but for a caller that may be asking on
+ * behalf of a COMPETITIVE exam type (NEET, JEE Main, ...) rather than a
+ * board/school one. Competitive exam types need a fundamentally different
+ * rule, not just a different boardSubjects list:
+ *
+ * A competitive exam's subject list is FIXED by the exam itself — every NEET
+ * student takes exactly Physics/Chemistry/Biology; there is no per-student
+ * "selection" to validate, unlike a school stream. But profile.subjects holds
+ * the student's SCHOOL stream list (onboarding combines stream_mandatory +
+ * chosen electives there), which for a CBSE Class 12 Science student includes
+ * English and Mathematics too. Running that broader school list through
+ * resolveStudentSubjects' strict reconciliation against NEET's narrower fixed
+ * catalog always finds English/Mathematics "missing" and always blocks —
+ * for every student with a competitive target, not an edge case. Found
+ * 2026-08-14 against the one real profile with subjects set in prod at the
+ * time: target_exam 'BOTH' (-> competitive 'NEET'), subjects ['English',
+ * 'Physics','Chemistry','Mathematics','Biology'] (== SCIENCE_12 in the test
+ * file) — permanently needsSetup:true, with no self-service fix available
+ * (Profile has no subject editor; SubjectSetupPrompt's link is a dead end).
+ *
+ * isCompetitive is supplied by the caller (lib/categories.js's getExamType)
+ * rather than decided in here, so this file stays framework/DB-free and
+ * unit-testable exactly like resolveStudentSubjects above.
+ */
+export function resolveStudentSubjectsForExam({ profileSubjects, boardSubjects, classLevel, isCompetitive }) {
+  if (isCompetitive) {
+    return { subjects: (boardSubjects ?? []).filter(Boolean), isScoped: true, needsSetup: false };
+  }
+  return resolveStudentSubjects({ profileSubjects, boardSubjects, classLevel });
+}

@@ -11,7 +11,7 @@
  * not exist and lock every junior student out of every subject picker.
  */
 import { describe, it, expect } from 'vitest';
-import { resolveStudentSubjects, isStreamClass } from '../studentSubjects';
+import { resolveStudentSubjects, resolveStudentSubjectsForExam, isStreamClass } from '../studentSubjects';
 
 const CBSE_12 = ['English', 'Physics', 'Chemistry', 'Mathematics', 'Biology',
                  'Accountancy', 'Business Studies', 'Economics', 'Psychology', 'Political Science'];
@@ -149,6 +149,51 @@ describe('Classes 8-10 — no streams exist, so nothing is missing', () => {
     });
     expect(r.subjects).toEqual(['Mathematics', 'Science']);
     expect(r.isScoped).toBe(true);
+  });
+});
+
+describe('resolveStudentSubjectsForExam — competitive exam types (2026-08-14 fix)', () => {
+  const NEET_SUBJECTS = ['Physics', 'Chemistry', 'Biology'];
+
+  it('the actual reported bug: a NEET+CBSE-12 student was permanently blocked', () => {
+    // The real live profile at the time: target_exam 'BOTH' -> competitive
+    // 'NEET' as examType, subjects === SCIENCE_12 (their CBSE stream list,
+    // English and Mathematics included). Run through the OLD path
+    // (resolveStudentSubjects, no competitive awareness) this was blocked:
+    const old = resolveStudentSubjects({
+      profileSubjects: SCIENCE_12, boardSubjects: NEET_SUBJECTS, classLevel: '12',
+    });
+    expect(old.needsSetup).toBe(true); // ← the bug, pinned so it can't silently return
+
+    // The fix: same inputs, told this examType is competitive.
+    const fixed = resolveStudentSubjectsForExam({
+      profileSubjects: SCIENCE_12, boardSubjects: NEET_SUBJECTS, classLevel: '12', isCompetitive: true,
+    });
+    expect(fixed.needsSetup).toBe(false);
+    expect(fixed.subjects).toEqual(NEET_SUBJECTS);
+    expect(fixed.isScoped).toBe(true);
+  });
+
+  it('never blocks a competitive exam type, however profile.subjects and the catalog relate', () => {
+    [
+      { profileSubjects: null,              label: 'no profile selection at all' },
+      { profileSubjects: [],                label: 'empty profile selection' },
+      { profileSubjects: ['Latin'],         label: 'a profile subject unrelated to the exam' },
+      { profileSubjects: NEET_SUBJECTS,     label: 'an exact match' },
+    ].forEach(({ profileSubjects, label }) => {
+      const r = resolveStudentSubjectsForExam({
+        profileSubjects, boardSubjects: NEET_SUBJECTS, classLevel: '12', isCompetitive: true,
+      });
+      expect(r.needsSetup, label).toBe(false);
+      expect(r.subjects, label).toEqual(NEET_SUBJECTS);
+    });
+  });
+
+  it('board/school exam types are unaffected — still delegate to resolveStudentSubjects', () => {
+    const r = resolveStudentSubjectsForExam({
+      profileSubjects: SCIENCE_12, boardSubjects: CBSE_12, classLevel: '12', isCompetitive: false,
+    });
+    expect(r).toEqual(resolveStudentSubjects({ profileSubjects: SCIENCE_12, boardSubjects: CBSE_12, classLevel: '12' }));
   });
 });
 
