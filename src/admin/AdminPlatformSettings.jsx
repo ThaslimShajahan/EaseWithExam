@@ -526,14 +526,14 @@ export default function AdminPlatformSettings() {
             <div>
               <p className="text-xs text-slate-500 mb-2">Preview</p>
               <div className={`rounded-2xl overflow-hidden bg-gradient-to-br from-primary-600 to-primary-700 ${lv('landing_campaign_image_url') ? 'sm:grid sm:grid-cols-2 sm:items-center' : ''}`}>
-                <div className={`p-5 ${lv('landing_campaign_image_url') ? '' : 'text-center'}`}>
+                <div className="p-5 text-center">
                   <span className="inline-flex items-center gap-1.5 bg-white/15 text-white text-[10px] font-bold px-2.5 py-1 rounded-full mb-3">
                     <Sparkles size={10} /> Limited time
                   </span>
                   <h3 className="text-lg font-extrabold text-white tracking-tight">
                     {lv('landing_campaign_label') || 'Special campaign'}
                   </h3>
-                  <p className={`text-primary-100 mt-1.5 text-xs whitespace-pre-line ${lv('landing_campaign_image_url') ? '' : 'max-w-sm mx-auto'}`}>
+                  <p className="text-primary-100 mt-1.5 text-xs whitespace-pre-line mx-auto max-w-sm">
                     {lv('landing_campaign_description') || 'Fill in the form below to take part.'}
                   </p>
                   <span className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white text-primary-700 text-xs font-bold">

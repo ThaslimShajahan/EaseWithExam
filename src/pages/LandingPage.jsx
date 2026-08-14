@@ -497,15 +497,21 @@ function CampaignSection() {
   // how to join) appears before a decorative image rather than after it.
   return (
     <section className="px-4 sm:px-6 py-8">
+      {/* items-center on the grid already vertically centers the (shorter)
+          text column against the image column's height. The bug fixed here
+          (2026-08-15) was horizontal only: hasImage dropped text-center
+          entirely, and the description's max-w-sm had no mx-auto to center
+          itself within a centered parent — both made the text column read
+          as left-aligned once an image existed. */}
       <div className={`max-w-4xl mx-auto bg-gradient-to-br from-primary-600 to-primary-700 rounded-[2rem] overflow-hidden ${hasImage ? 'grid lg:grid-cols-2 items-center' : ''}`}>
-        <div className={`p-6 sm:p-10 ${hasImage ? 'lg:py-10' : 'text-center'}`}>
+        <div className={`p-6 sm:p-10 text-center ${hasImage ? 'lg:py-10' : ''}`}>
           <span className="inline-flex items-center gap-1.5 bg-white/15 text-white text-[11px] font-bold px-3 py-1 rounded-full mb-4">
             <Sparkles size={11} /> Limited time
           </span>
           <h2 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
             {landing_campaign_label || 'Special campaign'}
           </h2>
-          <p className={`text-primary-100 mt-2 text-sm ${hasImage ? 'max-w-sm' : 'max-w-md mx-auto'} whitespace-pre-line`}>
+          <p className={`text-primary-100 mt-2 text-sm mx-auto ${hasImage ? 'max-w-sm' : 'max-w-md'} whitespace-pre-line`}>
             {landing_campaign_description || 'Fill in the form below to take part.'}
           </p>
           <a href={landing_campaign_form_url} target="_blank" rel="noopener noreferrer"
