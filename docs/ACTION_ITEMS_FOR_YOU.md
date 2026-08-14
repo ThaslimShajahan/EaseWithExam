@@ -1989,7 +1989,40 @@ though medium is cheaper.
 
 ---
 
-## ⚠ OPEN — three MORE anon-writable content tables (extends the pyq lockdown)
+## ✅ RESOLVED 2026-08-15 — three anon-writable content tables closed
+
+**Investigated before building anything, not assumed from this entry.** Of
+the three tables named below, `content_figures` was found ALREADY locked
+down (its write policies already check `is_verified_admin()`, confirmed
+live with a real anon insert attempt — denied, 42501) — someone closed it
+in an earlier session and this entry was never updated to say so. Only
+`knowledge_base` and `syllabus_nodes` were genuinely still open.
+
+Closed both, same shape as the pyq_questions lockdown: SECURITY DEFINER
+RPCs behind `assert_verified_admin` (`admin_insert_knowledge_chunks`,
+`admin_delete_knowledge_chunks`, `admin_clear_knowledge_base`,
+`admin_insert_syllabus_nodes`, `admin_migrate_syllabus_exam_type` —
+20260815020000), every real writer enumerated via grep and updated
+(`supabase.js`, `AdminContentLibrary.jsx`, `AdminContentIntake.jsx`,
+`AdminContentReview.jsx`, `AdminSyllabus.jsx`, plus `scripts/bulk-load-
+corpus.mjs` and `scripts/run-pilot.mjs`, neither of which had ever
+authenticated at all before this — both now require `ADMIN_UID` and sign
+in via `devAuth.js`). Open policies dropped only after the updated client
+was confirmed deployed (20260815021500) — same create-RPCs-then-drop-
+policies ordering already learned on the pyq lockdown.
+
+**Verified live, both halves:** anon INSERT on both tables now 42501;
+anon SELECT on both still returns rows (read path untouched, and
+`knowledge_base` needed a new explicit SELECT policy added first — it had
+none separate from the ALL policy being removed). **Zero corpus data rows
+altered net of this work** — two smoke-test rows used to prove the RPCs
+before wiring up any client code were both removed afterward (one found
+to only soft-delete via the existing `admin_delete_syllabus_node`, so
+that leftover inactive row was hard-deleted directly for a genuinely
+clean state, not just an app-invisible one). Row counts confirmed
+unchanged before/after: `knowledge_base` 64, `syllabus_nodes` 3.
+
+Original entry, for the record:
 
 Found 2026-08-12 while checking whether the bulk-load scripts still work. The
 `pyq_open` pattern closed in 20260812030000 is repeated on three sibling tables:
@@ -2046,7 +2079,22 @@ window between.
 
 ---
 
-## ⚠ OPEN — anyone with the anon key can rewrite or delete the whole question bank
+## ✅ RESOLVED (found already fixed 2026-08-15) — pyq_questions
+
+**Picked up as part of tonight's #25/#26 pass, found ALREADY closed** —
+not by this session. Verified live: `pyq_questions` RLS shows only
+`pyq_select` (SELECT, anon+authenticated); `pyq_open` and
+`pyq_insert_update` (described below) are gone. Five gated RPCs exist
+(`admin_insert_pyq_rows`, `admin_delete_pyq_rows`, `admin_clear_pyq_
+questions`, `admin_set_pyq_image`, `admin_update_pyq_status`, all
+confirmed `assert_verified_admin`-gated), and a grep of `src/` and
+`scripts/` found zero remaining raw `.insert`/`.update`/`.upsert`/`.delete`
+calls against this table — every write already goes through those RPCs.
+Confirmed live with a real anon insert attempt: denied, 42501. This entry
+was simply never updated to say so — leaving the original write-up below
+for the record of what the hole looked like.
+
+Original entry:
 
 Found 2026-08-12 while checking whether an archive script could write via the
 public key. It can — and so can anyone else.
