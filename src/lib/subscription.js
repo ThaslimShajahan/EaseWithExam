@@ -415,7 +415,15 @@ export async function openRazorpayCheckout({ order, plan, planId, firebaseUid, e
   if (!loaded) { onFailure?.('Payment gateway unavailable. Please try again.'); return; }
 
   const options = {
-    key: import.meta.env.VITE_RAZORPAY_KEY_ID,
+    // From the order response, not a separately-maintained VITE_RAZORPAY_KEY_ID
+    // — 2026-08-14, the third time tonight two independent copies of this
+    // value drifted (most recently: live server-side key vs. a stale test
+    // key still baked into the deployed bundle, which checkout.js surfaced
+    // as a "Test Mode" ribbon plus an uncaught error since the key that
+    // opened checkout didn't match the key that created the order). This
+    // is the exact key_id create-razorpay-order actually used, guaranteed
+    // consistent by construction — there is no second copy left to drift.
+    key: order.key_id,
     amount: order.amount,
     order_id: order.order_id,
     currency: 'INR',

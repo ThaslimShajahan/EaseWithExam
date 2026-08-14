@@ -158,9 +158,19 @@ serve(async (req) => {
     return json(500, { error: 'Could not start checkout. Please try again.' });
   }
 
+  // key_id returned here, 2026-08-14 — this is what checkout.js now opens
+  // with (subscription.js's openRazorpayCheckout), instead of a second,
+  // separately-maintained copy in the frontend's own VITE_RAZORPAY_KEY_ID.
+  // Third time two independently-updated copies of the same key_id drifted
+  // tonight (test/test, test/stale-test, now test/live) — this is not a
+  // secret (Key ID is explicitly the public half, safe in a browser bundle,
+  // same as the .env var it replaces), so returning it here costs nothing
+  // and makes drift structurally impossible instead of something to
+  // remember to keep in sync on every rotation.
   return json(200, {
     order_id: order.id,
     amount: totalPaise, currency: 'INR',
     base_amount: basePaise, gst_amount: gstPaise, tax_rate_percent: hasTax ? taxRatePercent : 0,
+    key_id: RAZORPAY_KEY_ID,
   });
 });
