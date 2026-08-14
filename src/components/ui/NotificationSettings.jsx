@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bell, BellOff, Loader2, Check, MessageCircle, Phone, Mail, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Bell, BellOff, Loader2, MessageCircle, Mail, ShieldCheck, AlertTriangle, Link2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import {
   requestPushPermission, disablePush,
   getNotificationPrefs, updateNotificationPrefs,
 } from '../../lib/notifications';
 import { requestEmailConnect, confirmEmailConnect } from '../../lib/email';
+import Modal from './Modal';
+import PhoneOTP from '../auth/PhoneOTP';
 
 /**
  * Switch used by the push and email rows.
@@ -41,45 +43,6 @@ function Toggle({ on, busy, disabled, onClick, label }) {
         {busy && <Loader2 size={11} className="animate-spin text-primary-600" />}
       </span>
     </button>
-  );
-}
-
-function Field({ label, hint, icon: Icon, iconClass, value, onChange, placeholder, onSave, saving, saved }) {
-  return (
-    <div className="p-4 rounded-2xl border border-slate-200 bg-white space-y-3">
-      <div className="flex items-center gap-3">
-        <div className={`h-9 w-9 rounded-xl flex items-center justify-center ${iconClass}`}>
-          <Icon size={16} />
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-slate-900">{label}</p>
-          <p className="text-xs text-slate-500">{hint}</p>
-        </div>
-      </div>
-      <div className="flex gap-2">
-        <input
-          type="tel"
-          value={value}
-          onChange={onChange}
-          placeholder={placeholder}
-          className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-xl outline-none focus:border-primary-400 transition-colors"
-        />
-        <button
-          onClick={onSave}
-          disabled={saving}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
-            saved
-              ? 'bg-emerald-500 text-white'
-              : 'bg-primary-600 text-white hover:bg-primary-700'
-          }`}
-        >
-          {saved ? <><Check size={13} /> Saved</> : saving ? <Loader2 size={13} className="animate-spin" /> : 'Save'}
-        </button>
-      </div>
-      {value && saved && (
-        <p className="text-xs text-emerald-600 font-medium">✓ Active for {value}</p>
-      )}
-    </div>
   );
 }
 
@@ -213,10 +176,23 @@ export default function NotificationSettings() {
   const [loading,  setLoading]  = useState(true);
   const [toggling, setToggling] = useState(false);
   const [emailToggling, setEmailToggling] = useState(false);
-  const [waNum,    setWaNum]    = useState('');
-  const [phoneNum, setPhoneNum] = useState('');
-  const [waSaved,  setWaSaved]  = useState(false);
-  const [phSaved,  setPhSaved]  = useState(false);
+  const [waToggling, setWaToggling] = useState(false);
+  const [phoneModal, setPhoneModal] = useState(false);
+  const [phoneError, setPhoneError] = useState('');
+
+  // The verified number, not a second manually-typed one — 2026-08-11 this
+  // was a free-text whatsapp_number/phone_number pair in notification_prefs
+  // with no verification at all. Consolidated 2026-08-14: WhatsApp now
+  // targets the SAME Firebase-OTP-verified number Profile's "Linked
+  // Accounts" section already establishes (SignInMethods in ProfilePage.jsx)
+  // — reading currentUser.providerData directly, matching that component's
+  // own check exactly, not userProfile.phone_number (a DB copy that could
+  // in principle drift from the live Firebase state). The standalone
+  // "Phone / Call Number" field is gone outright: nothing in the app ever
+  // read notification_prefs.phone_number for an actual call feature, so
+  // there was nothing to reconnect it to.
+  const phoneProvider = (currentUser?.providerData || []).find((p) => p.providerId === 'phone');
+  const verifiedPhone = phoneProvider?.phoneNumber || null;
   // Notification.permission is read into real state (not just inline off
   // `window.Notification`) so the UI actually re-renders after a permission
   // change — reading it inline worked for the happy path (a successful
@@ -232,8 +208,6 @@ export default function NotificationSettings() {
     if (!uid) return;
     getNotificationPrefs(uid).then((p) => {
       setPrefs(p);
-      setWaNum(p?.whatsapp_number || '');
-      setPhoneNum(p?.phone_number  || '');
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [uid]);
@@ -336,33 +310,22 @@ export default function NotificationSettings() {
     } finally { setToggling(false); }
   };
 
-  const saveWhatsApp = async () => {
-    if (!uid) return;
-    setToggling(true);
+  const waOn = !!prefs?.whatsapp_enabled && !!verifiedPhone;
+
+  const handleWhatsAppToggle = async () => {
+    if (!uid || !verifiedPhone) return;
+    setWaToggling(true);
     try {
-      await updateNotificationPrefs(uid, {
-        whatsapp_number:  waNum.trim(),
-        whatsapp_enabled: !!waNum.trim(),
-      });
-      setPrefs(p => ({ ...p, whatsapp_number: waNum.trim(), whatsapp_enabled: !!waNum.trim() }));
-      setWaSaved(true);
-      setTimeout(() => setWaSaved(false), 2000);
-    } finally { setToggling(false); }
+      const next = !waOn;
+      // whatsapp_number is no longer written here — whatsapp-alert reads
+      // the verified users.phone_number directly now (see that function's
+      // own updated comment). whatsapp_enabled is the only flag this owns.
+      await updateNotificationPrefs(uid, { whatsapp_enabled: next });
+      setPrefs(p => ({ ...p, whatsapp_enabled: next }));
+    } finally { setWaToggling(false); }
   };
 
-  const savePhone = async () => {
-    if (!uid) return;
-    setToggling(true);
-    try {
-      await updateNotificationPrefs(uid, {
-        phone_number:  phoneNum.trim(),
-        call_enabled:  !!phoneNum.trim(),
-      });
-      setPrefs(p => ({ ...p, phone_number: phoneNum.trim(), call_enabled: !!phoneNum.trim() }));
-      setPhSaved(true);
-      setTimeout(() => setPhSaved(false), 2000);
-    } finally { setToggling(false); }
-  };
+  const handlePhoneLinked = () => { setPhoneModal(false); setPhoneError(''); };
 
   if (loading) return <div className="h-20 animate-pulse bg-slate-50 rounded-2xl" />;
 
@@ -423,38 +386,47 @@ export default function NotificationSettings() {
         <ConnectEmailCard uid={uid} onConnected={setConnectedEmail} />
       )}
 
-      {/* WhatsApp — hidden 2026-08-14 on owner's request (Profile, live and
-          dev both). Not deleted: state/save logic (waNum, saveWhatsApp,
-          waSaved) is untouched, so this is a one-line change to bring back
-          if it's re-enabled later, not a rebuild. */}
-      {false && (
-        <Field
-          label="WhatsApp Alerts"
-          hint="Weekly reports, exam alerts, announcements"
-          icon={MessageCircle}
-          iconClass="bg-emerald-50 text-emerald-600"
-          value={waNum}
-          onChange={e => setWaNum(e.target.value)}
-          placeholder="+91 9876543210"
-          onSave={saveWhatsApp}
-          saving={toggling}
-          saved={waSaved}
-        />
-      )}
+      {/* WhatsApp — consolidated 2026-08-14 onto the verified phone number
+          instead of a second unverified free-text field (the old "Phone /
+          Call Number" field is gone outright, see the state comment above
+          for why there was nothing to reconnect it to). Toggle only; no
+          number to type, because there's nothing left to type — it targets
+          whichever number Firebase already verified via SMS OTP. */}
+      <div className="p-4 rounded-2xl border border-slate-200 bg-white">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`h-9 w-9 rounded-xl flex items-center justify-center shrink-0 ${waOn ? 'bg-emerald-50' : 'bg-slate-100'}`}>
+              <MessageCircle size={16} className={waOn ? 'text-emerald-600' : 'text-slate-400'} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-slate-900">WhatsApp Alerts</p>
+              <p className="text-xs text-slate-500 truncate">
+                {verifiedPhone
+                  ? `${waOn ? 'Active' : 'Off'} — sent to ${verifiedPhone}`
+                  : 'Weekly reports, exam alerts, announcements'}
+              </p>
+            </div>
+          </div>
+          {verifiedPhone ? (
+            <Toggle on={waOn} busy={waToggling} onClick={handleWhatsAppToggle} label="WhatsApp alerts" />
+          ) : (
+            <button onClick={() => setPhoneModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary-50 text-primary-700 hover:bg-primary-100 transition-colors shrink-0">
+              <Link2 size={12} /> Link phone
+            </button>
+          )}
+        </div>
+        {!verifiedPhone && (
+          <p className="text-[11px] text-slate-400 mt-2 pt-2 border-t border-slate-100">
+            Link and verify your phone number to enable WhatsApp alerts.
+          </p>
+        )}
+      </div>
 
-      {/* Call number */}
-      <Field
-        label="Phone / Call Number"
-        hint="Preferred number for important calls"
-        icon={Phone}
-        iconClass="bg-blue-50 text-blue-600"
-        value={phoneNum}
-        onChange={e => setPhoneNum(e.target.value)}
-        placeholder="+91 9876543210"
-        onSave={savePhone}
-        saving={toggling}
-        saved={phSaved}
-      />
+      <Modal open={phoneModal} onClose={() => { setPhoneModal(false); setPhoneError(''); }} title="Link Phone Number" size="sm">
+        <PhoneOTP onError={setPhoneError} onStepChange={() => {}} onSuccess={handlePhoneLinked} />
+        {phoneError && <p className="text-xs text-red-500 font-medium mt-2">{phoneError}</p>}
+      </Modal>
     </div>
   );
 }

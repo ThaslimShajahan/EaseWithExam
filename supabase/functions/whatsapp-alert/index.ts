@@ -3,7 +3,11 @@
  * Sends WhatsApp via Twilio. Two modes:
  *   Single:    { to: "+919876543210", message: "Hello!" }
  *   Broadcast: { broadcast: true, message: "Hello everyone!" }
- *              → fetches all users with whatsapp_enabled=true from notification_prefs
+ *              → fetches everyone with whatsapp_enabled=true in notification_prefs,
+ *                sends to their VERIFIED users.phone_number (Firebase OTP,
+ *                see NotificationSettings.jsx) — 2026-08-14, no longer a
+ *                second unverified number typed into notification_prefs
+ *                itself.
  *
  * Supabase Secrets required (set via `supabase secrets set`, values live
  * only in Supabase, never committed here):
@@ -107,22 +111,36 @@ serve(async (req) => {
     .from('admins').select('uid').eq('uid', caller_uid).eq('is_active', true).maybeSingle();
   if (!adminCheck) return json(403, { error: 'Unauthorized' });
 
+  // Targets the Firebase-OTP-verified number (users.phone_number), not a
+  // second manually-typed one — 2026-08-14. notification_prefs.whatsapp_number
+  // no longer exists as a write path (NotificationSettings.jsx's toggle only
+  // sets whatsapp_enabled now); this only reads the opt-in flag from there
+  // and joins the actual number from `users` in JS, since notification_prefs
+  // has no formal FK to users to embed the select through.
   const { data: prefs, error: prefErr } = await db
     .from('notification_prefs')
-    .select('user_id, whatsapp_number')
-    .eq('whatsapp_enabled', true)
-    .not('whatsapp_number', 'is', null);
+    .select('user_id')
+    .eq('whatsapp_enabled', true);
 
   if (prefErr) return json(500, { error: prefErr.message });
+  if (!prefs?.length) return json(200, { sent: 0, message: 'No users with WhatsApp enabled' });
 
-  const targets = (prefs ?? []).filter(p => p.whatsapp_number?.trim());
-  if (!targets.length) return json(200, { sent: 0, message: 'No users with WhatsApp enabled' });
+  const { data: users, error: usersErr } = await db
+    .from('users')
+    .select('firebase_uid, phone_number')
+    .in('firebase_uid', prefs.map((p) => p.user_id))
+    .not('phone_number', 'is', null);
+
+  if (usersErr) return json(500, { error: usersErr.message });
+
+  const targets = (users ?? []).filter((u) => u.phone_number?.trim());
+  if (!targets.length) return json(200, { sent: 0, message: 'No opted-in users have a verified phone number' });
 
   // Send in batches of 5 (Twilio rate limit friendly)
   const results: { ok: boolean; to: string; error?: string }[] = [];
   for (let i = 0; i < targets.length; i += 5) {
     const batch = targets.slice(i, i + 5);
-    const batchResults = await Promise.all(batch.map(p => sendOne(p.whatsapp_number!, text)));
+    const batchResults = await Promise.all(batch.map(u => sendOne(u.phone_number!, text)));
     results.push(...batchResults);
     if (i + 5 < targets.length) await new Promise(r => setTimeout(r, 200));
   }
