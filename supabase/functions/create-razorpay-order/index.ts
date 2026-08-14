@@ -34,7 +34,17 @@ const PLAN_AMOUNTS_PAISE: Record<string, number> = {
   premium_monthly: 39900,
   premium_yearly:  399900,
   neet_complete:   499900,
+  verification_1rs: 100,
 };
+
+// Plans that require is_active_superadmin(firebase_uid) === true to even
+// create an order — 2026-08-14. The UI already hides verification_1rs from
+// anyone but a superadmin (PricingPage.jsx), but that's the primary gate,
+// not the only one: this is the backstop for a direct API call bypassing
+// the UI entirely, same "don't trust the client alone" reasoning as the
+// payments kill switch re-checking arePaymentsEnabled() here even though
+// the UI already hides its own CTA.
+const SUPERADMIN_ONLY_PLANS = new Set(['verification_1rs']);
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
@@ -53,9 +63,21 @@ serve(async (req) => {
   const { plan_id, firebase_uid } = body;
   if (!plan_id || !firebase_uid) return json(400, { error: 'Missing plan_id or firebase_uid' });
 
+  const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+
+  if (SUPERADMIN_ONLY_PLANS.has(plan_id)) {
+    const { data: isSuperadmin } = await supabase.rpc('is_active_superadmin', { p_uid: firebase_uid });
+    if (!isSuperadmin) {
+      // Same non-distinguishing refusal shape used elsewhere tonight
+      // (redeem_payment_order, razorpay-webhook) — don't tell a caller
+      // WHY it failed beyond "invalid plan", which is also what a genuinely
+      // unknown plan_id returns below.
+      return json(400, { error: 'Invalid plan_id' });
+    }
+  }
+
   // Admin-set price (Admin > Pricing) takes priority over the hardcoded catalogue,
   // matching the same precedence the client used to apply itself.
-  const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
   const { data: cfg } = await supabase
     .from('plan_config')
     .select('price_paise')

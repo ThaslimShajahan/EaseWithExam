@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { PLANS, createRazorpayOrder, openRazorpayCheckout, computeGst, formatRupees } from '../lib/subscription';
 import { usePaymentsEnabled, PAYMENTS_CLOSED_TITLE, PAYMENTS_CLOSED_BODY } from '../lib/paymentsGate';
 import { usePlatformSettings } from '../hooks/usePlatformSettings';
+import { useIsSuperadmin } from '../hooks/useIsSuperadmin';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import Button from '../components/ui/Button';
@@ -207,6 +208,10 @@ export default function PricingPage() {
   const { enabled: paymentsEnabled, loading: paymentsLoading } = usePaymentsEnabled();
   const paymentsClosed = !paymentsEnabled || paymentsLoading;
   const { tax_rate_percent: taxRatePercent } = usePlatformSettings();
+  // ₹1 verification plan visibility gate — 2026-08-14. loading counts as
+  // "not a superadmin" (same rule as paymentsClosed above), so the section
+  // never flashes visible for a frame before the check resolves.
+  const { isSuperadmin, loading: superadminLoading } = useIsSuperadmin(currentUser?.uid);
 
   useEffect(() => {
     supabase.from('plan_config').select('*').then(({ data }) => {
@@ -330,6 +335,31 @@ export default function PricingPage() {
             />
           ))}
         </div>
+
+        {/* ₹1 live-mode verification — superadmin only, 2026-08-14. Deliberately
+            styled nothing like a real plan card (dashed border, amber tint,
+            explicit "Superadmin Tools" label) so it reads as tooling, not an
+            offer, on the rare chance the gate is ever seen mid-load. Reuses
+            handleSelect exactly as every real plan does — same order-summary
+            review step, same GST math, same confirmation page — the whole
+            point is exercising that real path, not a shortcut around it. */}
+        {isSuperadmin && !superadminLoading && (
+          <div className="mb-16 border border-dashed border-amber-300 bg-amber-50/50 rounded-2xl p-5 flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <p className="text-[11px] font-bold text-amber-700 uppercase tracking-wide">Superadmin Tools</p>
+              <p className="text-sm font-semibold text-slate-800 mt-1">{PLANS.verification_1rs.name} — {PLANS.verification_1rs.priceLabel}</p>
+              <p className="text-xs text-slate-500 mt-0.5">{PLANS.verification_1rs.description}</p>
+            </div>
+            <Button
+              variant="secondary" size="md"
+              loading={activePlan === 'verification_1rs'}
+              onClick={() => handleSelect('verification_1rs')}
+              disabled={paymentsClosed}
+            >
+              Run Verification Purchase
+            </Button>
+          </div>
+        )}
 
         {/* Feature comparison table */}
         <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden">

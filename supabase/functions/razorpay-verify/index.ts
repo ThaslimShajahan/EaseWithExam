@@ -42,6 +42,9 @@ const PLAN_DAYS: Record<string, number> = {
   // "Lifetime (never expires)"; this must match what the checkout page and
   // pricing cards actually claim. See src/lib/subscription.js.
   neet_complete:   1095,
+  // ₹1 superadmin-only verification plan, 2026-08-14 — 1 day, matching
+  // PLANS.verification_1rs.expiryDays in src/lib/subscription.js.
+  verification_1rs: 1,
 };
 
 // Display names for the receipt email — must match src/lib/subscription.js
@@ -51,6 +54,7 @@ const PLAN_NAMES: Record<string, string> = {
   premium_monthly: 'Premium',
   premium_yearly:  'Premium Yearly',
   neet_complete:   '3-Year Plan',
+  verification_1rs: 'Live Verification',
 };
 
 // Plain "INR", not the ₹ glyph (U+20B9) — 2026-08-14, a real delivered

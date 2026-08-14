@@ -133,6 +133,28 @@ export const PLANS = {
       'One payment — no yearly renewals',
     ],
   },
+  // ₹1 superadmin-only live-mode verification plan — 2026-08-14. Deliberately
+  // NOT in DISPLAY_PLANS (PricingPage/LandingPage/PaywallModal all map over
+  // that array explicitly, never Object.keys(PLANS)), so it structurally
+  // cannot appear in a normal plan grid regardless of who's looking. Real
+  // GST still applies (18% of ₹1 = ₹1.18 total) — the whole point is
+  // exercising the actual checkout -> GST -> confirmation -> receipt ->
+  // webhook -> activation path with real money, not a fee-free shortcut
+  // around it. Visibility AND purchase are both gated on
+  // is_active_superadmin() — see PricingPage.jsx (UI) and
+  // create-razorpay-order (server-side backstop, not just UI hiding).
+  verification_1rs: {
+    id: 'verification_1rs',
+    name: 'Live Verification',
+    priceLabel: '₹1 one-time',
+    description: 'Superadmin-only — real end-to-end payment verification, not a real plan',
+    razorpayAmount: 100,
+    expiryDays: 1,
+    features: [
+      'Exercises the real checkout, GST, confirmation, receipt and webhook path',
+      'Expires automatically in 1 day',
+    ],
+  },
 };
 
 /* ── Subscription CRUD ──────────────────────────────────── */
