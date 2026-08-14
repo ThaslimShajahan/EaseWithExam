@@ -520,12 +520,20 @@ function CampaignSection() {
           </a>
         </div>
         {hasImage && (
-          <div className="h-56 lg:h-full lg:min-h-[320px]">
+          // object-contain, not cover — 2026-08-15. Uploaded campaign images
+          // are promotional flyers with their own embedded text/branding
+          // (real one tested: 2752x1536, ~1.8:1), and this box's ratio never
+          // matches that closely at any width (~1.5:1 on mobile, ~1.4:1 at
+          // lg+) — cover was cropping the sides enough to cut real content
+          // ("EARLY BIRD OFFER" losing its "EA"). contain always shows the
+          // whole image; any letterbox gap shows the card's own gradient
+          // behind it rather than a hard edge, so it reads as intentional.
+          <div className="h-56 lg:h-full lg:min-h-[320px] flex items-center justify-center">
             <img
               src={landing_campaign_image_url}
               alt={landing_campaign_label || 'Campaign'}
               onError={() => setImageBroken(true)}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain"
             />
           </div>
         )}

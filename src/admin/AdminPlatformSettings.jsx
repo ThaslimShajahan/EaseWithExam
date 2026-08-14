@@ -541,8 +541,11 @@ export default function AdminPlatformSettings() {
                   </span>
                 </div>
                 {lv('landing_campaign_image_url') && (
-                  <div className="h-32 sm:h-full">
-                    <img src={lv('landing_campaign_image_url')} alt="" className="w-full h-full object-cover" />
+                  // object-contain, matching CampaignSection's own fix — see
+                  // that component's comment. Kept in sync so this preview
+                  // shows the same crop behavior the public page actually has.
+                  <div className="h-32 sm:h-full flex items-center justify-center">
+                    <img src={lv('landing_campaign_image_url')} alt="" className="w-full h-full object-contain" />
                   </div>
                 )}
               </div>
