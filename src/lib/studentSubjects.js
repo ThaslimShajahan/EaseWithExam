@@ -52,13 +52,30 @@ export function resolveStudentSubjects({ profileSubjects, boardSubjects, classLe
     // If the board list has not loaded yet (empty), fall back to the profile's
     // own list rather than briefly rendering nothing — an empty picker that
     // fills in a moment later reads as a bug.
-    const scoped = board.length ? board.filter((s) => chosen.includes(s)) : chosen;
+    // Board list not loaded yet: fall back to the profile's own list rather than
+    // briefly rendering nothing. An empty picker that fills in a moment later
+    // reads as a bug, and no comparison is meaningful against an empty board.
+    if (!board.length) return { subjects: chosen, isScoped: true, needsSetup: false };
 
-    // A non-empty selection that intersects to nothing means the profile and the
-    // catalogue genuinely disagree (a board reorganisation, or a stale profile).
-    // Treated as "needs setup" rather than silently showing everything: the
-    // student's stated subjects cannot be served, and saying so is honest.
-    if (!scoped.length) return { subjects: [], isScoped: false, needsSetup: true };
+    const scoped  = board.filter((s) => chosen.includes(s));
+    const missing = chosen.filter((s) => !board.includes(s));
+
+    // ANY mismatch -> prompt. Not just a total mismatch.
+    //
+    // Owner decision, and the strict reading is deliberate: a partial match is
+    // ambiguous, and resolving ambiguity by quietly serving the subset that
+    // happens to line up is a best-effort guess dressed as an answer. A legacy
+    // profile carrying 5 valid subjects and 1 the board no longer offers is
+    // exactly the case — we cannot tell whether the 6th was dropped, renamed, or
+    // is simply absent from a board list that has not finished being set up.
+    //
+    // The cost is real and worth stating: a student is blocked from the picker
+    // until they re-select, even when only one subject fails to match. That is
+    // acceptable because re-selecting is an action actually available to them
+    // (11-12 have a stream selection), and because the alternative is a picker
+    // that silently omits a subject they still study — a wrong answer with no
+    // signal that anything is wrong.
+    if (missing.length) return { subjects: [], isScoped: false, needsSetup: true };
 
     return { subjects: scoped, isScoped: true, needsSetup: false };
   }

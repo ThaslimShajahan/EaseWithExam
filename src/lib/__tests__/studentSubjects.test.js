@@ -55,12 +55,26 @@ describe('PERMITTED — a student with a selection', () => {
     expect(subjects).toEqual(['English', 'Physics', 'Biology']);
   });
 
-  it('drops a subject the board no longer offers, rather than showing a dead entry', () => {
-    const { subjects } = resolveStudentSubjects({
+  it('a PARTIAL match prompts rather than serving the subset that lines up', () => {
+    // Owner decision: never guess when uncertain. 5 of 6 matching is ambiguous —
+    // we cannot tell whether the 6th was dropped, renamed, or belongs to a board
+    // list that is still being set up. Serving the 5 would be a best-effort guess
+    // presented as an answer, and would silently omit a subject the student may
+    // still study.
+    const r = resolveStudentSubjects({
       profileSubjects: [...SCIENCE_12, 'Retired Subject'], boardSubjects: CBSE_12, classLevel: '12',
     });
-    expect(subjects).not.toContain('Retired Subject');
-    expect(subjects).toHaveLength(5);
+    expect(r.needsSetup).toBe(true);
+    expect(r.subjects).toEqual([]);
+    expect(r.isScoped).toBe(false);
+  });
+
+  it('an EXACT match is served, so the strict rule does not block the normal case', () => {
+    const r = resolveStudentSubjects({
+      profileSubjects: SCIENCE_12, boardSubjects: CBSE_12, classLevel: '12',
+    });
+    expect(r.needsSetup).toBe(false);
+    expect(r.subjects).toHaveLength(5);
   });
 
   it('falls back to the profile list while the board list is still loading', () => {
@@ -106,6 +120,19 @@ describe('Classes 8-10 — no streams exist, so nothing is missing', () => {
     expect(r.subjects).toEqual(CBSE_8);
     expect(r.needsSetup).toBe(false);   // prompting would point at a step that does not exist
     expect(r.isScoped).toBe(false);     // honest: this is the catalogue, not a selection
+  });
+
+  it('Classes 6 and 7 are handled, though onboarding does not currently offer them', () => {
+    // exam_categories carries Class 6 and 7 (4 rows each) but
+    // onboarding_category_display does not, so no student can select them today.
+    // The resolver keys on "is this a stream class", not on an enumerated list,
+    // so they take the junior path by construction — full board list, no prompt,
+    // no crash — if they are ever enabled.
+    ['6', '7'].forEach((cls) => {
+      const r = resolveStudentSubjects({ profileSubjects: null, boardSubjects: CBSE_8, classLevel: cls });
+      expect(r.subjects, cls).toEqual(CBSE_8);
+      expect(r.needsSetup, cls).toBe(false);
+    });
   });
 
   it('every junior class behaves the same', () => {
