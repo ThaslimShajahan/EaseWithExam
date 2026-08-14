@@ -423,19 +423,24 @@ export default function NotificationSettings() {
         <ConnectEmailCard uid={uid} onConnected={setConnectedEmail} />
       )}
 
-      {/* WhatsApp */}
-      <Field
-        label="WhatsApp Alerts"
-        hint="Weekly reports, exam alerts, announcements"
-        icon={MessageCircle}
-        iconClass="bg-emerald-50 text-emerald-600"
-        value={waNum}
-        onChange={e => setWaNum(e.target.value)}
-        placeholder="+91 9876543210"
-        onSave={saveWhatsApp}
-        saving={toggling}
-        saved={waSaved}
-      />
+      {/* WhatsApp — hidden 2026-08-14 on owner's request (Profile, live and
+          dev both). Not deleted: state/save logic (waNum, saveWhatsApp,
+          waSaved) is untouched, so this is a one-line change to bring back
+          if it's re-enabled later, not a rebuild. */}
+      {false && (
+        <Field
+          label="WhatsApp Alerts"
+          hint="Weekly reports, exam alerts, announcements"
+          icon={MessageCircle}
+          iconClass="bg-emerald-50 text-emerald-600"
+          value={waNum}
+          onChange={e => setWaNum(e.target.value)}
+          placeholder="+91 9876543210"
+          onSave={saveWhatsApp}
+          saving={toggling}
+          saved={waSaved}
+        />
+      )}
 
       {/* Call number */}
       <Field
