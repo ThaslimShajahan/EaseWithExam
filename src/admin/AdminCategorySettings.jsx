@@ -29,44 +29,76 @@ function getCallerUidFallback() {
   } catch { return ''; }
 }
 
-/* ── Chip input for subject lists ─────────────────────────────── */
-function ChipInput({ value, onChange, placeholder }) {
+/* ── Subject picker for category subject lists ─────────────────────
+ * Was a free-text chip input. Free text is how subject-name drift got in
+ * (docs/STREAM_SELECTION_HANDOFF.md §12 — 21 names on student profiles that
+ * no content screen could resolve), so this now offers only names from the
+ * vocabulary (public.subjects), the same way the Streams editor's
+ * SubjectChips does. admin_upsert_exam_category rejects unknown names too
+ * (20260814030000) — this picker is so an admin never has to hit that error.
+ *
+ * `vocabulary` empty (not loaded / fetch failed) falls back to the original
+ * free-text behaviour rather than blocking all editing: the RPC is the real
+ * guard, so the worst case is a rejected save with a clear message, never a
+ * screen that cannot be used.
+ */
+function ChipInput({ value, onChange, placeholder, vocabulary = [] }) {
   const [draft, setDraft] = useState('');
   const tags = Array.isArray(value) ? value : [];
+  const available = vocabulary.filter((s) => !tags.some((t) => t.toLowerCase() === s.name.toLowerCase()));
+  const noVocabulary = vocabulary.length === 0;
 
-  function add() {
-    const name = draft.trim();
+  function add(name) {
+    const n = String(name ?? '').trim();
     // Case-insensitive dedup — "Hindi" vs "hindi" silently created two separate
     // chips before, and unioning multiple subject lists (board + both class
     // tiers) compounded that into visible duplicate pills for admins.
-    if (!name || tags.some((t) => t.toLowerCase() === name.toLowerCase())) { setDraft(''); return; }
-    onChange([...tags, name]);
+    if (!n || tags.some((t) => t.toLowerCase() === n.toLowerCase())) { setDraft(''); return; }
+    onChange([...tags, n]);
     setDraft('');
   }
 
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5 min-h-[28px]">
-        {tags.map((t, i) => (
-          <span key={i} className="flex items-center gap-1 bg-primary-900/40 border border-primary-700/40 text-primary-300 text-[11px] px-2 py-0.5 rounded-full">
-            {t}
-            <button type="button" onClick={() => onChange(tags.filter((_, idx) => idx !== i))} className="hover:text-red-400 ml-0.5">
-              <X size={9} />
-            </button>
-          </span>
-        ))}
+        {tags.map((t, i) => {
+          const known = noVocabulary || vocabulary.some((s) => s.name === t);
+          return (
+            <span key={i} title={known ? undefined : 'Not in the subject list — this save will be rejected'}
+              className={`flex items-center gap-1 border text-[11px] px-2 py-0.5 rounded-full ${known
+                ? 'bg-primary-900/40 border-primary-700/40 text-primary-300'
+                : 'bg-red-900/40 border-red-600/50 text-red-300'}`}>
+              {t}
+              <button type="button" onClick={() => onChange(tags.filter((_, idx) => idx !== i))} className="hover:text-red-400 ml-0.5">
+                <X size={9} />
+              </button>
+            </span>
+          );
+        })}
         {tags.length === 0 && <span className="text-[11px] text-slate-600 italic">None yet</span>}
       </div>
-      <div className="flex gap-2">
-        <input
-          className="flex-1 text-sm bg-slate-800 border border-white/10 rounded-lg px-3 py-1.5 text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-          placeholder={placeholder}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
-        />
-        <button type="button" onClick={add} className="px-3 py-1.5 bg-primary-600 text-white text-xs rounded-lg hover:bg-primary-700 font-medium">Add</button>
-      </div>
+      {noVocabulary ? (
+        <div className="flex gap-2">
+          <input
+            className="flex-1 text-sm bg-slate-800 border border-white/10 rounded-lg px-3 py-1.5 text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            placeholder={placeholder}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(draft); } }}
+          />
+          <button type="button" onClick={() => add(draft)} className="px-3 py-1.5 bg-primary-600 text-white text-xs rounded-lg hover:bg-primary-700 font-medium">Add</button>
+        </div>
+      ) : (
+        <select className="w-full text-sm bg-slate-800 border border-white/10 rounded-lg px-3 py-1.5 text-white focus:outline-none focus:ring-1 focus:ring-primary-500"
+          value="" onChange={(e) => { if (e.target.value) add(e.target.value); }}>
+          <option value="">Add a subject…</option>
+          {available.map((s) => (
+            <option key={s.name} value={s.name}>
+              {s.name}{s.content_bearing === false ? '  (profile only — no content)' : ''}
+            </option>
+          ))}
+        </select>
+      )}
     </div>
   );
 }
@@ -154,10 +186,19 @@ export default function AdminCategorySettings() {
   const [modal, setModal] = useState(null); // { kind: 'competitive'|'board', existing }
   const [deleteTarget, setDeleteTarget] = useState(null); // { kind, exam_key(s) }
 
+  // The subject vocabulary (public.subjects) the pickers offer and
+  // admin_upsert_exam_category enforces (20260814030000). Read-open RLS, so a
+  // plain select — no RPC needed.
+  const [vocabulary, setVocabulary] = useState([]);
+
   const load = async () => {
     setLoading(true);
-    const { data } = await supabase.rpc('admin_list_exam_categories', { p_caller: callerUid });
+    const [{ data }, vocab] = await Promise.all([
+      supabase.rpc('admin_list_exam_categories', { p_caller: callerUid }),
+      supabase.from('subjects').select('name, content_bearing').order('name'),
+    ]);
     setRows(Array.isArray(data) ? data : []);
+    setVocabulary(Array.isArray(vocab.data) ? vocab.data : []);
     setLoading(false);
   };
   useEffect(() => { if (callerUid) load(); }, [callerUid]);
@@ -291,10 +332,10 @@ export default function AdminCategorySettings() {
 
       {/* Competitive exam modal */}
       {modal?.kind === 'competitive' && (
-        <CompetitiveForm existing={modal.existing} onClose={() => setModal(null)} onSave={saveCompetitive} saving={saving} error={error} />
+        <CompetitiveForm existing={modal.existing} onClose={() => setModal(null)} onSave={saveCompetitive} saving={saving} error={error} vocabulary={vocabulary} />
       )}
       {modal?.kind === 'board' && (
-        <BoardForm existing={modal.existing} rows={rows} onClose={() => setModal(null)} onSave={saveBoard} saving={saving} error={error} />
+        <BoardForm existing={modal.existing} rows={rows} onClose={() => setModal(null)} onSave={saveBoard} saving={saving} error={error} vocabulary={vocabulary} />
       )}
 
       {/* Delete confirm */}
@@ -339,7 +380,7 @@ export default function AdminCategorySettings() {
 
 /* ── Forms ─────────────────────────────────────────────────────── */
 
-function CompetitiveForm({ existing, onClose, onSave, saving, error }) {
+function CompetitiveForm({ existing, onClose, onSave, saving, error, vocabulary }) {
   const [key,      setKey]      = useState(existing?.exam_key ?? '');
   const [label,    setLabel]    = useState(existing?.label ?? '');
   const [group,    setGroup]    = useState(existing?.group_label ?? '');
@@ -362,13 +403,13 @@ function CompetitiveForm({ existing, onClose, onSave, saving, error }) {
       </div>
       <div>
         <label className={FIELD_LABEL}>Subjects</label>
-        <ChipInput value={subjects} onChange={setSubjects} placeholder="Add subject and press Enter…" />
+        <ChipInput value={subjects} onChange={setSubjects} placeholder="Add subject and press Enter…" vocabulary={vocabulary} />
       </div>
     </Modal>
   );
 }
 
-function BoardForm({ existing, rows, onClose, onSave, saving, error }) {
+function BoardForm({ existing, rows, onClose, onSave, saving, error, vocabulary }) {
   const [key,   setKey]   = useState(existing?.board_key ?? existing?.exam_key ?? '');
   const [label, setLabel] = useState(existing?.label ?? '');
 
@@ -392,11 +433,11 @@ function BoardForm({ existing, rows, onClose, onSave, saving, error }) {
       </div>
       <div>
         <label className={FIELD_LABEL}>Subjects — Classes 6 to 10</label>
-        <ChipInput value={subjects8to10} onChange={setSubjects8to10} placeholder="Add subject and press Enter…" />
+        <ChipInput value={subjects8to10} onChange={setSubjects8to10} placeholder="Add subject and press Enter…" vocabulary={vocabulary} />
       </div>
       <div>
         <label className={FIELD_LABEL}>Subjects — Classes 11 to 12</label>
-        <ChipInput value={subjects11to12} onChange={setSubjects11to12} placeholder="Add subject and press Enter…" />
+        <ChipInput value={subjects11to12} onChange={setSubjects11to12} placeholder="Add subject and press Enter…" vocabulary={vocabulary} />
       </div>
       <div className="flex items-start gap-2 bg-blue-900/20 border border-blue-700/20 rounded-xl p-3">
         <AlertTriangle size={13} className="text-blue-400 mt-0.5 shrink-0" />

@@ -4,9 +4,15 @@
 You have the repo and this file. That is enough. Everything below is either verifiable in the repo
 or was measured against the live database and recorded here.
 
-Last updated: 2026-08-13, Phase 1 (of THIS file's plan — see §5) done and applied to live. Phase 2 (Study
-Notes write path) not yet started.
-Branch: `nonstem-stage-a-taxonomy` (50+ commits ahead of `origin/main`, **never pushed**). This is git —
+Last updated: 2026-08-14. **Phase 1 AND Phase 2 done and applied to live.** Phase 2 (Study Notes write
+path) shipped as a deliberately minimal slice — `knowledge_base.chapter_key` (20260814000000),
+`assignChapters()` wiring in `AdminContentIntake.jsx`, and the atomic `syllabus_nodes` upsert-on-save —
+plus the same treatment for **PYQ** (`pyq_questions.chapter_key`, 20260814010000), which was the real
+remaining gap rather than Phases 3-9. Both proven with fixture-only end-to-end tests (positive AND
+negative) through the real admin UI. See §12.
+**Phases 3-9 were assessed and are NOT blocking a first real upload** — they are scale/team features
+(job queue, status tab, pure-view refactors) for a solo operator. See §12 for that assessment.
+Branch: `main` (merged and pushed 2026-08-14; some later commits may be local — check `git status`). This is git —
 the live *database* is separate and is now ahead of it: `chapter_manifests` exists live via a direct
 `supabase db push`, done on explicit owner instruction, independent of any git push.
 
@@ -578,3 +584,38 @@ rebuild this file tracks. **Moved to [`docs/STREAM_SELECTION_HANDOFF.md`](STREAM
 and [`docs/SECURITY_INCIDENTS.md`](SECURITY_INCIDENTS.md) (the security finding specifically) — go
 there for them, not here.** This file stays scoped to the content-engine rebuild: chapter identity,
 manifests, Study Notes, PYQ resolution, and the non-STEM taxonomy.
+
+---
+
+## 12. Phase 2 — DONE (Study Notes AND PYQ), and why Phases 3-9 aren't blocking
+
+**Study Notes write path** (`f720796`, `e2a2693`, `4c84014`, `adf3a90`):
+- `knowledge_base.chapter_key` (migration `20260814000000`), additive/nullable.
+- `assignChapters()` in `chapterIdentity.js` — the integration point, reusing every Phase 1
+  primitive (`decideAssignments`, `candidatesForFile`, `fileOrdinalFrom`, `chapterForPage`,
+  `chapterKeyFor`). Returns data, never touches Supabase, so it stays unit-testable.
+- `AdminContentIntake.jsx` calls it per lesson when an approved manifest exists; a REJECT blocks
+  the whole file (never a silent fallback to a model-guessed name). Atomic `syllabus_nodes`
+  upsert-on-save via the existing `admin_upsert_syllabus_node` RPC.
+- **Additive, not a cutover**: a book with no approved manifest takes the exact pre-Phase-2 path.
+  The new engine activates per book, once its manifest is approved.
+
+**PYQ write path** (`8aaf027`, `2ee256c`) — the real remaining gap:
+- PYQ's problem is structurally different: one paper spans many chapters, so there is no
+  file-ordinal signal and manifests don't apply. Resolution is by NAME-match against real
+  `syllabus_nodes` (`matchSyllabusChapterKeyed()`), per this file's own §2 architecture.
+- `pyq_questions.chapter_key` (`20260814010000`). On no match: **reject that individual question,
+  save the rest of the paper** (owner decision) — never write an unconstrained guess.
+- Found by the live acceptance test, not inspection: `admin_insert_pyq_rows` had a hardcoded INSERT
+  column list that silently dropped `chapter_key` (`20260814020000`).
+
+**Ordering dependency worth knowing**: PYQ snaps against `syllabus_nodes`, which Study Notes
+uploads populate. **For a new subject, upload Notes (with an approved manifest) before PYQs**, or
+every question is correctly rejected with "no syllabus exists yet for X".
+
+**Phases 3-9 assessment** (asked for explicitly, answered honestly): only the PYQ slice above was
+genuinely blocking a first real upload. Phase 3 (job queue) — not needed for solo one-at-a-time
+uploads. Phase 4 (status tab) — "visible to the whole admin team"; there is no team. Phase 5 — its
+essential part IS the PYQ work above; the separate flagging UI is covered by the inline result
+message. Phase 6 (pure views) — read-side refactor. Phase 7 (taxonomy) — already measured 0% defect.
+Phase 8 — that's the upload itself. Phase 9 — unrelated layer.
