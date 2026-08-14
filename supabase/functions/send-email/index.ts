@@ -124,6 +124,21 @@ async function renderTemplate(
       expiryDate: (data.expiryDate as string) || '',
     } :
     template === 'subscription_receipt' ? {
+      // Found 2026-08-15: this transaction is always tied to a real user —
+      // `user` (fetched below, single-send only) already has display_name
+      // and email in scope, the same values 'welcome' already reads via
+      // data.displayName. The receipt template just never asked for them.
+      // Composed into one billedTo string (rather than separate name/email
+      // vars substituted into a fixed "Name (Email)" bullet) so a student
+      // who never set a display name gets a clean "Billed to: their@email"
+      // instead of an awkward "Billed to:  (their@email)" with a dangling
+      // leading space — no placeholder like "there" either; a genuinely
+      // missing name should read as absent, not faked.
+      billedTo: (() => {
+        const name  = (data.displayName as string) || '';
+        const email = (data.recipientEmail as string) || '';
+        return name ? `${name} (${email})` : email;
+      })(),
       planName:       (data.planName as string) || 'Premium',
       baseAmount:     (data.baseAmount as string) || '',
       gstAmount:      (data.gstAmount as string) || '',
@@ -263,8 +278,15 @@ serve(async (req) => {
     return json(503, { error: 'Email sending is not configured (RESEND_API_KEY missing)' });
   }
 
+  // recipientEmail added 2026-08-15 alongside displayName's existing
+  // fallback — user.email is already fetched right above for the send
+  // itself, the receipt template just never received it as a var. Same
+  // reasoning as displayName: the caller (razorpay-verify/-webhook) doesn't
+  // need to know or pass this, it's already known here.
   const payload = await buildEmailPayload(
-    supabase, template, { ...data, displayName: data.displayName ?? user.display_name }, user.email, user_id!,
+    supabase, template,
+    { ...data, displayName: data.displayName ?? user.display_name, recipientEmail: data.recipientEmail ?? user.email },
+    user.email, user_id!,
   );
   if (!payload) return json(400, { error: `Unknown template: ${template}` });
 

@@ -96,6 +96,7 @@ export default function AdminPlatformSettings() {
   const logoRef   = useRef();
   const avatarRef = useRef();
   const campaignImageRef = useRef();
+  const errRef    = useRef();
 
   const [settings,    setSettings]    = useState({});
   const [loading,     setLoading]     = useState(true);
@@ -115,6 +116,19 @@ export default function AdminPlatformSettings() {
       setLoading(false);
     })();
   }, []);
+
+  // Found 2026-08-15 chasing a real "upload does nothing" report: the error
+  // banner lives once, at the very top of this (long) page, decoupled from
+  // whichever field actually triggered it — an oversized file selected in
+  // the campaign section (or the logo/avatar fields above it, same bug,
+  // pre-existing) sets `err` correctly, but nothing visibly changes at the
+  // admin's actual scroll position, ~1750px below where the message
+  // renders. Every setErr(...) call in this file shares one `err` state, so
+  // fixing it here covers all of them at once rather than wiring a scroll
+  // per field.
+  useEffect(() => {
+    if (err) errRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [err]);
 
   async function saveSetting(key, value) {
     setSavingKey(key); setErr('');
@@ -254,7 +268,7 @@ export default function AdminPlatformSettings() {
       </div>
 
       {err && (
-        <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">
+        <div ref={errRef} className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">
           <AlertTriangle size={14} className="text-red-400 shrink-0" />
           <p className="text-sm text-red-400">{err}</p>
         </div>

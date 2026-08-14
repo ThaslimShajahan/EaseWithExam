@@ -251,6 +251,12 @@ export const FALLBACK_TEMPLATES: Record<string, TemplateRow> = {
     // matching what create-razorpay-order actually charged (never
     // recomputed here — see razorpay-verify's own comment on this).
     bullet_points: [
+      // Added 2026-08-15: the receipt previously carried no identifying
+      // name/email at all — real bug, found while confirming the real ₹1
+      // test payment's receipt. billedTo is composed server-side (send-
+      // email/index.ts) as "Name (email)", or just the email alone if the
+      // student never set a display name.
+      'Billed to: {{billedTo}}',
       'Plan: {{planName}}',
       'Amount: {{baseAmount}}',
       'GST ({{gstRatePercent}}%): {{gstAmount}}',
