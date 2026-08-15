@@ -19,7 +19,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   BookOpen, Upload, Loader2, CheckCircle2, AlertTriangle, Plus, Trash2,
-  ShieldCheck, RefreshCw, Info,
+  ShieldCheck, RefreshCw, Info, GitMerge,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
@@ -91,6 +91,31 @@ export default function AdminChapterManifest() {
   const [saving,   setSaving]   = useState(false);
   const [msg,      setMsg]      = useState(null);   // { kind: 'ok'|'err'|'info', text }
 
+  // Merge — for the case text-only extraction genuinely cannot resolve on its
+  // own: whether two adjacent contents-page lines are two separate entries or
+  // one entry whose title/paired-piece got split, is sometimes only knowable
+  // by opening the real PDF (see CBSE Class 9 English "Kaveri" — verified live
+  // that case was actually 16 real entries, but a book that draft-splits a
+  // single wrapped title the same way needs the opposite correction). Indices
+  // into the CURRENT `entries` array — cleared any time that array changes
+  // structurally, so a stale index can never merge the wrong rows.
+  const [selected, setSelected] = useState(() => new Set());
+  const clearSelection = () => setSelected(new Set());
+  const toggleSelect = (i) => setSelected((prev) => {
+    const next = new Set(prev);
+    next.has(i) ? next.delete(i) : next.add(i);
+    return next;
+  });
+  const selectedSorted = useMemo(() => [...selected].sort((a, b) => a - b), [selected]);
+  // Merging non-adjacent rows would silently absorb whatever sits between them
+  // into the new page range without the admin ever having selected it — that
+  // is exactly the kind of guess this tool exists to not make. Refuse rather
+  // than merge across a gap.
+  const selectionIsAdjacent = useMemo(
+    () => selectedSorted.length >= 2 && selectedSorted.every((v, i) => i === 0 || v === selectedSorted[i - 1] + 1),
+    [selectedSorted],
+  );
+
   /* Load whatever manifest already exists for this exact (exam, subject, book)
    * key. Deliberately the SAME key shape the intake screen looks it up by,
    * including `.is('book', null)` for a blank Book — a manifest approved under a
@@ -98,7 +123,7 @@ export default function AdminChapterManifest() {
    * that is a refused upload rather than a silently mis-filed one. */
   const load = useCallback(async () => {
     if (!subject) { setRow(null); setEntries([]); return; }
-    setLoading(true); setMsg(null);
+    setLoading(true); setMsg(null); clearSelection();
     let q = supabase.from('chapter_manifests')
       .select('id, exam_type, subject, book, class_level, key_prefix, source_file, entries, status, approved_by, approved_at, file_structure')
       .eq('exam_type', dbExamType).eq('subject', subject);
@@ -132,7 +157,7 @@ export default function AdminChapterManifest() {
   /* ── Draft from the book's own contents page ─────────────────────── */
   async function handleDraft(file) {
     if (!file) return;
-    setDrafting(true); setMsg({ kind: 'info', text: 'Reading the contents page…' });
+    setDrafting(true); setMsg({ kind: 'info', text: 'Reading the contents page…' }); clearSelection();
     try {
       const buf = await file.arrayBuffer();
       const { entries: drafted } = await draftManifestFromContentsPage(buf, {
@@ -163,10 +188,48 @@ export default function AdminChapterManifest() {
   const patch = (i, field, value) =>
     setEntries((prev) => prev.map((e, n) => (n === i ? { ...e, [field]: value } : e)));
 
-  const addRow = () =>
+  const addRow = () => {
     setEntries((prev) => [...prev, blankEntry(prev.length ? Math.max(...prev.map((e) => e.ordinal || 0)) + 1 : 1)]);
+    clearSelection();
+  };
 
-  const removeRow = (i) => setEntries((prev) => prev.filter((_, n) => n !== i));
+  const removeRow = (i) => { setEntries((prev) => prev.filter((_, n) => n !== i)); clearSelection(); };
+
+  /* ── Merge — the generalised fix for "text-only extraction can't tell
+   * whether two lines are one entry or two" ─────────────────────────────
+   *
+   * Deliberately mechanical, not a guess at which title is "correct": the
+   * merged row inherits identity/type fields (title, unit, numbered,
+   * printedNumber, fileOrdinal, band) from the FIRST selected entry and the
+   * page range spans first.pageStart to last.pageEnd — a real, checkable
+   * default the admin edits immediately after, same posture as every other
+   * default in this pipeline (fileOrdinal defaulting to printedNumber, e.g.).
+   * Ordinals are renumbered sequentially afterward, safe because nothing can
+   * be approved (and so nothing can reference an ordinal) before Save. */
+  function mergeSelected() {
+    if (!selectionIsAdjacent) return;
+    const [first, last] = [selectedSorted[0], selectedSorted[selectedSorted.length - 1]];
+    const group = entries.slice(first, last + 1);
+    const anchor = group[0];
+    const merged = {
+      ...anchor,
+      pageStart: group.find((e) => e.pageStart != null)?.pageStart ?? anchor.pageStart,
+      pageEnd:   [...group].reverse().find((e) => e.pageEnd != null)?.pageEnd ?? anchor.pageEnd,
+    };
+    setEntries((prev) => {
+      const next = [...prev.slice(0, first), merged, ...prev.slice(last + 1)];
+      // Re-sequence 1..N in display order — matches what a fresh draft
+      // produces, and keeps ordinal a stable running count after a merge
+      // removes rows from the middle.
+      return next.map((e, n) => ({ ...e, ordinal: n + 1 }));
+    });
+    clearSelection();
+    setMsg({
+      kind: 'info',
+      text: `Merged ${group.length} entries into one: pages ${merged.pageStart ?? '?'}–${merged.pageEnd ?? '?'}, `
+          + `title kept from "${anchor.title || '(untitled)'}" — edit the row if that's not the real combined title.`,
+    });
+  }
 
   /* ── Persist ─────────────────────────────────────────────────────── */
   async function handleSave() {
@@ -341,10 +404,32 @@ export default function AdminChapterManifest() {
       {/* ── Entries ─────────────────────────────────────────────────── */}
       {entries.length > 0 && (
         <div className="bg-slate-900/40 rounded-2xl border border-white/8 overflow-hidden">
+          {/* Merge toolbar — only visible once 2+ rows are checked, so it never
+              competes for attention on a screen most admins use without merging
+              anything. */}
+          {!isApproved && selected.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-primary-900/20 border-b border-primary-700/25">
+              <GitMerge size={13} className="text-primary-400 shrink-0" />
+              <p className="text-xs text-primary-300">
+                {selected.size} row{selected.size === 1 ? '' : 's'} selected
+                {selectionIsAdjacent
+                  ? ' — will combine into one entry spanning their full page range.'
+                  : selected.size > 1 ? ' — not adjacent, cannot merge (select a contiguous run of rows).' : '.'}
+              </p>
+              <button onClick={mergeSelected} disabled={!selectionIsAdjacent}
+                className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary-600 hover:bg-primary-500 text-white disabled:opacity-40 disabled:cursor-not-allowed">
+                <GitMerge size={13} /> Merge selected
+              </button>
+              <button onClick={clearSelection} className="text-xs text-slate-500 hover:text-white">Clear</button>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[860px]">
               <thead>
                 <tr className="text-[11px] uppercase tracking-wide text-slate-500 border-b border-white/8">
+                  {!isApproved && (
+                    <th className="text-left px-3 py-2 w-10" title="Select adjacent rows to merge into one entry">Sel</th>
+                  )}
                   <th className="text-left px-3 py-2 w-14">Ord</th>
                   <th className="text-left px-3 py-2">Title</th>
                   <th className="text-left px-3 py-2 w-56">Unit (grouping heading)</th>
@@ -358,7 +443,13 @@ export default function AdminChapterManifest() {
               </thead>
               <tbody>
                 {entries.map((e, i) => (
-                  <tr key={i} className="border-b border-white/5 last:border-0">
+                  <tr key={i} className={`border-b border-white/5 last:border-0 ${selected.has(i) ? 'bg-primary-900/10' : ''}`}>
+                    {!isApproved && (
+                      <td className="px-3 py-1.5">
+                        <input type="checkbox" checked={selected.has(i)} onChange={() => toggleSelect(i)}
+                          className="accent-primary-500" />
+                      </td>
+                    )}
                     <td className="px-3 py-1.5">
                       <input value={e.ordinal ?? ''} onChange={(ev) => patch(i, 'ordinal', numOrNull(ev.target.value))}
                         disabled={isApproved} className={`${inputCls} w-12 disabled:opacity-60`} />
