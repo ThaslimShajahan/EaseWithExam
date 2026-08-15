@@ -6,6 +6,43 @@ shipped in a degraded state. The narrative of what changed and why lives in
 
 ---
 
+## 💡 FUTURE, NOT SCOPED — a real no-terminal background upload (2026-08-15)
+
+**Deliberately not built tonight.** Tier 2 (content_jobs queue + Status tab, same
+session) makes bulk loading crash-resilient and resumable, but running it still
+means `--enqueue --dir=...` then `--work` at a terminal.
+
+**Two options were investigated for removing the terminal step entirely, and
+both were rejected for tonight, for different reasons:**
+
+- **An in-tab background worker** (drain the queue via a JS loop running inside
+  the already-open Admin browser tab, reusing the exact same claim/process/record
+  pipeline) — genuinely one click, zero new processes. **Rejected**: it doesn't
+  actually remove the terminal step's real value, which is walking away — the
+  browser tab still has to stay open and the machine awake the whole time. Not
+  worth building for that.
+- **A real server-side worker** (or a persistent local daemon the Admin UI talks
+  to over `localhost`) — the only way to get an actual "close the laptop, it
+  keeps going" experience. **Not built, and not a small addition**: server-side
+  means uploading PDFs to storage and running the extraction pipeline somewhere
+  with admin credentials and AI keys of its own — a different project with its
+  own attack surface, which is exactly why the original Tier 1/2 design
+  ("worker stays local") decided against it in the first place. A local daemon
+  is smaller but still a new always-on process to install, start, and trust,
+  which is close to the same shape of problem it's meant to remove.
+
+**If this is ever worth building for real**, it's a proper scoping exercise on
+its own — hosting, auth for the daemon/service, and how it gets AI keys and a
+verified admin identity without just re-creating today's `ADMIN_UID` env-var
+trust model in a less visible place. Not a follow-on to tonight's work; a
+separate project.
+
+**What tonight's session left ready to use as-is**: `bulk-load-unit-notes.mjs
+--enqueue --dir="..."` to queue a folder, `--work` any time after (same
+session, next day, doesn't matter) to drain it — crash-resilient, checked live.
+
+---
+
 ## ⚠️ OPEN — daily cron cadence can miss short-lived grants entirely (2026-08-14)
 
 **Verified live, not assumed: `cron.job_run_details` was completely empty for
