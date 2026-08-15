@@ -201,24 +201,52 @@ ssh easewithexam 'find ~/htdocs/www.easewithexam.com -type f -exec chmod 644 {} 
 
 ## One-time — the nginx change that makes 404s real
 
-**Not yet applied. Prepared 2026-08-11, needs a maintenance window.**
+**Applied 2026-08-15, via CloudPanel's Vhost editor — not the SSH procedure
+below.** Kept as a maintenance-window fix for the record, and because
+`deploy/nginx-easewithexam.conf` stays the source of truth for the block
+itself whenever a route changes — only the *application mechanism* differs
+from what's documented below.
 
-The site currently answers **HTTP 200 to every path**, including ones that do
-not exist. Nothing serves a 404, so a stale backlink or a typo returns homepage
-content under a bogus URL, and Google reads an unbounded set of duplicate
-homepages.
+**The SSH steps in this section do not work with the current deploy
+credentials, for any nginx vhost change, not just this one.** Confirmed live:
+`easewithexamdeploy` has no passwordless sudo (`sudo: a password is
+required`) and can't even read the vhost file directly (`ls`:
+`Permission denied`). This is a structural constraint, not specific to this
+fix — anyone following the SSH steps below as written will hit the same wall.
 
-The React half of the fix ships in the bundle (`src/pages/NotFoundPage.jsx`) and
-takes effect on the next normal deploy. It renders a proper 404 page — but under
-a 200, because nginx has already answered by the time React runs. **Only the
-server can send the status code.**
+**What actually works**: CloudPanel's Vhost tab for the site edits and applies
+the raw nginx config through its own privileged process, fully decoupled from
+the SSH user's permissions. It validates and reloads nginx on Save — no `ssh`,
+no `sudo`, no manual `nginx -t`. Regenerate `deploy/nginx-easewithexam.conf`
+the same way (`npm run nginx:routes` if a route was added), then paste its
+`location` blocks into the CloudPanel editor in place of the existing
+`location /` block — everything else in the vhost (the `{{ssl_certificate}}`,
+`{{root}}`, `{{settings}}` placeholders, the existing extension-based caching
+`location ~* ^.+\.(css|js|...)$` block) stays untouched. That extension block
+predates this fix and is a **regex** location like the new app-route block —
+nginx checks regex locations in file order and stops at the first match, so
+the existing one keeps winning for `/assets/*.js` etc.; harmless, since it
+already does equivalent caching (`expires max`).
+
+The SSH procedure below is kept only in case sudo is ever granted to the
+deploy user later — do not follow it as a first attempt.
+
+The site previously answered **HTTP 200 to every path**, including ones that
+do not exist. Nothing served a 404, so a stale backlink or a typo returned
+homepage content under a bogus URL, and Google read an unbounded set of
+duplicate homepages.
+
+The React half of the fix ships in the bundle (`src/pages/NotFoundPage.jsx`)
+and took effect on the next normal deploy. It renders a proper 404 page — but
+under a 200, because nginx has already answered by the time React runs.
+**Only the server can send the status code.**
 
 `deploy/nginx-easewithexam.conf` holds the replacement block. It is **generated**
 from the routes in `src/App.jsx` by `npm run nginx:routes`, and the test suite
 fails if the two drift — otherwise adding a route to the app would silently make
 that route 404 in production.
 
-### Applying it
+### Applying it (SSH path — currently non-functional, see above)
 
 ```bash
 # 1. Confirm the conf matches the app's routes

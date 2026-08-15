@@ -664,6 +664,24 @@ the vhost first and never reload without `nginx -t` passing. Note the conf is
 generated from `src/App.jsx` — if a route is ever added, run
 `npm run nginx:routes` and reapply rather than hand-editing the server.
 
+> **RESOLVED 2026-08-15 — applied via CloudPanel's Vhost editor, not SSH.**
+> The documented SSH/`sudo nginx -t`/`reload` procedure above turned out to
+> be unusable as written: the deploy SSH user (`easewithexamdeploy`) has no
+> passwordless sudo and can't even read the vhost file directly
+> (`Permission denied` on a plain `ls`) — confirmed live, not assumed.
+> CloudPanel's own Vhost tab applies changes through its own privileged
+> process, completely decoupled from that SSH user's permissions, and
+> validates + reloads nginx on Save itself. No SSH/sudo access was needed or
+> used. See `docs/DEPLOY.md`'s nginx section for the note on this and the
+> exact file that was pasted.
+>
+> **Verified live, independently, not just trusted:**
+> `/` → 200, `/about` → 200, `/dashboard` → 200 (confirms the route
+> alternation didn't accidentally 404 a real app path), `/no-such-page` → 404
+> serving the real ~4.8KB branded 404 page (`<title>Page Not Found |
+> EaseWithExam`), distinct from the ~60KB homepage it used to silently
+> return for every bad URL.
+
 ### 2. Confirm the sitemap is submitted in Search Console
 
 You said the property is already verified. Worth confirming the sitemap is
