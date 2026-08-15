@@ -64,6 +64,20 @@ describe('draftManifestFromContentsPage — fileOrdinal defaults, never null for
     expect(entries[1].fileOrdinal).toBeNull();
   });
 
+  it('a model-returned pageEnd of 0 (found live drafting Ganithaprakash Part 2 — the model sent 0 instead of null for the last chapter) is coerced to null, not kept as a fake page number', async () => {
+    chatComplete.mockResolvedValue(modelReply([
+      { ordinal: 7, title: 'Area', pageStart: 148, pageEnd: 0, numbered: true, printedNumber: 7 },
+    ]));
+    const { entries } = await draftManifestFromContentsPage(new ArrayBuffer(0), { examType: 'CBSE Class 8', subject: 'Mathematics', book: 'Ganithaprakash Part 2' });
+    // Page numbers are 1-indexed; 0 can never be real. Kept as null (matching
+    // what the prompt asks for on a last chapter with no known end), not
+    // coerced by Number.isFinite(0) === true into looking like a real range —
+    // that would have made pageEnd < pageStart read as a genuine mismatch
+    // rather than what it actually was, a missing value.
+    expect(entries[0].pageEnd).toBeNull();
+    expect(entries[0].pageStart).toBe(148);
+  });
+
   it('the Hornbill-style irregular case is NOT silently fixed by the default — it still needs a human, and the default does not paper over the mismatch', async () => {
     // Real corpus fact: Writing Skills prints 1-6 but files are kehb111-116.
     // ordinal here is the manifest's running count (9-14, after 8 Reading

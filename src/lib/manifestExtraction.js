@@ -128,8 +128,15 @@ function normaliseEntries(entries) {
       // browsers, and "the model returned whitespace" means "no unit", not
       // "a unit whose name is nothing".
       unit:          String(e?.unit ?? '').trim() || null,
-      pageStart:     Number.isFinite(Number(e?.pageStart)) ? Math.trunc(Number(e.pageStart)) : null,
-      pageEnd:       Number.isFinite(Number(e?.pageEnd)) ? Math.trunc(Number(e.pageEnd)) : null,
+      // Page numbers are 1-indexed and can never legitimately be 0 or
+      // negative — a model reply of 0 is its own "unknown", not a real page,
+      // most often the last chapter's pageEnd (the prompt asks for null
+      // there; some replies send 0 instead). Coercing to null rather than
+      // trusting Number.isFinite(0) === true matters: an uncaught 0 makes
+      // pageEnd < pageStart look like a real "page range" error rather than
+      // what it actually is — a missing value.
+      pageStart:     Number.isFinite(Number(e?.pageStart)) && Number(e.pageStart) >= 1 ? Math.trunc(Number(e.pageStart)) : null,
+      pageEnd:       Number.isFinite(Number(e?.pageEnd)) && Number(e.pageEnd) >= 1 ? Math.trunc(Number(e.pageEnd)) : null,
       numbered,
       printedNumber,
       // Defaults to what the book prints next to the chapter (or, failing
