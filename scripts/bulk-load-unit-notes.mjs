@@ -124,16 +124,51 @@ await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
   console.log(`Signed in as admin ${ADMIN_UID}`);
 }
 
+/* ── Shared: which files in a folder are real chapter files ──────────
+ *
+ * USED TO require the literal substring "unit" in the filename — a leftover
+ * from when this script only ever loaded Poorvi-style "UNIT 1 WIT AND
+ * WISDOM.pdf" files. Found live: it matches ZERO of a real book's files
+ * named "1 How I Taught My Grandmother to Read.pdf", "2 The Pot Maker.pdf"
+ * etc. — a completely ordinary numbered-chapter naming pattern outside a
+ * "unit"-labelled book. It also would have wrongly MATCHED "full unit.pdf"
+ * (that book's audio-transcripts appendix, not a chapter).
+ *
+ * Fixed by using the real signal the rest of the pipeline already trusts —
+ * fileOrdinalFrom(), the same function candidatesForFile() uses to match an
+ * uploaded file to a manifest entry. A file is a candidate chapter file if
+ * and only if its name parses to a real ordinal; anything that doesn't
+ * (front matter, indexes, appendices, answer keys) is excluded for the same
+ * reason it would be refused at upload time anyway — this just moves that
+ * refusal earlier, before any AI call, and reports it instead of silently
+ * dropping the file. Runs through the page so it is the real module, not a
+ * second copy of the regex. */
+async function chapterFilesIn(dir) {
+  const all = readdirSync(dir)
+    .filter((f) => extname(f).toLowerCase() === '.pdf')
+    .filter((f) => !EXCLUDE.includes(f))
+    .filter((f) => statSync(join(dir, f)).isFile());
+
+  const withOrdinal = await page.evaluate(async (names) => {
+    const { fileOrdinalFrom } = await import('/src/lib/chapterManifest.js');
+    return names.map((name) => ({ name, ordinal: fileOrdinalFrom(name) }));
+  }, all);
+
+  const skipped = withOrdinal.filter((f) => f.ordinal == null).map((f) => f.name);
+  if (skipped.length) {
+    console.log(`Skipped ${skipped.length} file(s) with no parseable chapter number: ${skipped.join(', ')}`);
+  }
+
+  return withOrdinal
+    .filter((f) => f.ordinal != null)
+    .map((f) => ({ name: f.name, path: resolvePath(join(dir, f.name)) }));
+}
+
 /* ════════════════════════ MODE 2 — ENQUEUE ════════════════════════════ */
 if (ENQUEUE) {
-  const pdfs = readdirSync(DIR)
-    .filter((f) => extname(f).toLowerCase() === '.pdf')
-    .filter((f) => /unit/i.test(f))
-    .filter((f) => !EXCLUDE.includes(f))
-    .map((f) => ({ name: f, path: resolvePath(join(DIR, f)) }))
-    .filter((f) => statSync(f.path).isFile());
+  const pdfs = await chapterFilesIn(DIR);
 
-  if (!pdfs.length) { console.error(`\nNo *unit*.pdf files found in ${DIR}\n`); await browser.close(); process.exit(1); }
+  if (!pdfs.length) { console.error(`\nNo files with a parseable chapter number found in ${DIR}\n`); await browser.close(); process.exit(1); }
 
   console.log(`Enqueuing ${pdfs.length} file(s) for ${EXAM} / ${SUBJECT}${BOOK ? ` / ${BOOK}` : ''}…\n`);
 
@@ -380,16 +415,11 @@ if (WORK) {
 /* Files, in ordinal order. Sorting by the ordinal the MANIFEST will match on —
  * not by filename — so the run order matches the book's order regardless of how
  * the files happen to be named. */
-const pdfs = readdirSync(DIR)
-  .filter((f) => extname(f).toLowerCase() === '.pdf')
-  .filter((f) => /unit/i.test(f))
-  .filter((f) => !EXCLUDE.includes(f))
-  .map((f) => ({ name: f, path: join(DIR, f) }))
-  .filter((f) => statSync(f.path).isFile());
+const pdfs = await chapterFilesIn(DIR);
 
 if (EXCLUDE.length) console.log(`Excluded by --exclude: ${EXCLUDE.join(', ')}`);
 
-if (!pdfs.length) { console.error(`\nNo *unit*.pdf files found in ${DIR}\n`); await browser.close(); process.exit(1); }
+if (!pdfs.length) { console.error(`\nNo files with a parseable chapter number found in ${DIR}\n`); await browser.close(); process.exit(1); }
 
 /* Serve the PDFs to the browser page. Reading them in Node and passing bytes
  * through page.evaluate would mean base64-ing multi-MB buffers across the CDP
