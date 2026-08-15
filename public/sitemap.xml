@@ -5,7 +5,7 @@
   appear in robots.txt's Disallow list — both are asserted by
   src/lib/__tests__/seoRoutes.test.js.
 
-  This currently lists five URLs, which is the entire public surface of the
+  This currently lists six URLs, which is the entire public surface of the
   site. Everything else is behind authentication. Growing this list means
   creating public content pages (Tier 2), not adding entries here.
 -->
@@ -36,6 +36,12 @@
   </url>
   <url>
     <loc>https://www.easewithexam.com/terms/</loc>
+    <lastmod>2026-08-15</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>https://www.easewithexam.com/refund/</loc>
     <lastmod>2026-08-15</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>

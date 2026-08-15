@@ -205,7 +205,10 @@ export default function PaywallModal({ onClose, feature, firebaseUid, email, nam
                   {paying ? 'Opening payment...' : `Pay ${PLANS[selectedPlan]?.priceLabel}`}
                 </Button>
                 <p className="text-[10px] text-slate-400 text-center mt-2">
-                  Secured by Razorpay · Cancel anytime · Money-back guarantee
+                  Secured by Razorpay · Cancel anytime ·{' '}
+                  <a href="/refund/" target="_blank" rel="noopener noreferrer" className="underline hover:text-slate-300">
+                    Money-back guarantee
+                  </a>
                 </p>
               </>
             )}

@@ -122,6 +122,7 @@ const FOOTER_COLUMNS = [
       { label: 'Contact',             href: '/contact/' },
       { label: 'Privacy & Cookies',   href: '/privacy/' },
       { label: 'Terms of Service',    href: '/terms/' },
+      { label: 'Refund Policy',       href: '/refund/' },
       { label: 'info@acenzos.com',    href: 'mailto:info@acenzos.com' },
     ],
   },

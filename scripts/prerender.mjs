@@ -40,7 +40,7 @@ const DIST = join(ROOT, 'dist');
 
 /* Kept in step with sitemap.xml and PAGE_SEO by seoRoutes.test.js, which asserts
  * the indexable set is the same in all three places. */
-const ROUTES = ['/', '/about', '/contact', '/privacy', '/terms'];
+const ROUTES = ['/', '/about', '/contact', '/privacy', '/terms', '/refund'];
 
 if (!existsSync(join(DIST, 'index.html'))) {
   console.error('\ndist/index.html not found — run `npm run build` first.\n');

@@ -74,7 +74,8 @@ export default function TermsOfServicePage() {
           <Section title="Payments & subscriptions">
             <p>Premium subscriptions are billed via Razorpay at the price shown at checkout. Subscriptions
               renew as described on the Pricing page; you can cancel future renewal at any time from your
-              Profile. Refunds, where applicable, are handled case-by-case — contact support.</p>
+              Profile. Refunds are handled per our{' '}
+              <a href="/refund/" className="text-primary-600 hover:underline font-semibold">Refund Policy</a>.</p>
           </Section>
 
           <Section title="Acceptable use">

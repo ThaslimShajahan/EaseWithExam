@@ -406,7 +406,8 @@ export default function PricingPage() {
               for real (create-razorpay-order, computeGst). Each plan card
               and the order-summary modal already show the GST-inclusive
               total; no separate disclaimer needed here. */}
-          <p className="mt-1">Payments secured by Razorpay · Refund within 7 days if unhappy.</p>
+          <p className="mt-1">Payments secured by Razorpay ·{' '}
+            <a href="/refund/" className="underline hover:text-primary-600">Refund within 7 days if unhappy</a>.</p>
         </div>
       </div>
 

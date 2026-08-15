@@ -37,6 +37,7 @@ const ParentDashboardPage  = lazy(() => import('./pages/ParentDashboardPage'));
 const HelpPage             = lazy(() => import('./pages/HelpPage'));
 const PrivacyPolicyPage    = lazy(() => import('./pages/PrivacyPolicyPage'));
 const TermsOfServicePage   = lazy(() => import('./pages/TermsOfServicePage'));
+const RefundPolicyPage     = lazy(() => import('./pages/RefundPolicyPage'));
 const AboutPage            = lazy(() => import('./pages/AboutPage'));
 const ContactPage          = lazy(() => import('./pages/ContactPage'));
 
@@ -271,6 +272,7 @@ export default function App() {
         <Route path="/join/:code" element={<JoinCentrePage />} />
         <Route path="/privacy"    element={<PrivacyPolicyPage />} />
         <Route path="/terms"      element={<TermsOfServicePage />} />
+        <Route path="/refund"     element={<RefundPolicyPage />} />
         <Route path="/about"      element={<AboutPage />} />
         <Route path="/contact"    element={<ContactPage />} />
         {COACHING_MODULE_ENABLED && (

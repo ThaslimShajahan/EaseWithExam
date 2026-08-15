@@ -93,6 +93,11 @@ export const PAGE_SEO = {
     description:
       'The terms governing use of EaseWithExam, including accounts, subscriptions, acceptable use and content ownership.',
   },
+  '/refund': {
+    title: 'Refund Policy | EaseWithExam',
+    description:
+      'EaseWithExam refund policy for Premium subscriptions: the 7-day window, eligibility, and how to request one.',
+  },
   // Not in the sitemap and noindexed below — a 404 that competes for search
   // traffic is worse than no 404 at all.
   '/404': {
