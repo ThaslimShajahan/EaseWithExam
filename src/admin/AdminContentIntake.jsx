@@ -475,6 +475,71 @@ function StepDots({ steps, current }) {
   );
 }
 
+// Admin-override picker for a file that couldn't be auto-matched to a
+// manifest entry. Same discipline as everywhere else in this pipeline: the
+// admin picks from the manifest's own closed set (`entries`), never types a
+// name — see chapterIdentity.js's note on why free text is how 'Poorvi' and
+// 'Critical Reflection' got in. No entry is pre-selected; the admin must
+// actively click one, or Cancel to leave the file unmatched.
+function ManifestEntryPicker({ prompt, onSelect, onCancel }) {
+  if (!prompt) return null;
+  const { filename, reason, entries } = prompt;
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.98 }}
+        className="bg-slate-900 border border-white/10 rounded-2xl max-w-lg w-full max-h-[80vh] flex flex-col overflow-hidden shadow-2xl"
+      >
+        <div className="px-5 py-4 border-b border-white/10 flex items-start gap-3 shrink-0">
+          <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-white">Couldn&apos;t auto-match this file</p>
+            <p className="text-xs text-slate-400 mt-1 break-words">
+              <span className="font-mono text-slate-300">&quot;{filename}&quot;</span> — {reason}.
+            </p>
+          </div>
+        </div>
+
+        <div className="px-5 py-3 overflow-y-auto flex-1 space-y-1.5">
+          <p className="text-[11px] text-slate-500 uppercase tracking-wide font-semibold mb-1.5">
+            Which chapter does this file actually contain?
+          </p>
+          {entries.map((e) => (
+            <button
+              key={e.ordinal}
+              onClick={() => onSelect(e)}
+              className="w-full text-left px-3 py-2.5 rounded-xl bg-slate-800/60 hover:bg-primary-900/30 border border-white/5 hover:border-primary-500/50 transition-colors flex items-center justify-between gap-3 group"
+            >
+              <div className="min-w-0">
+                <p className="text-sm text-white font-medium truncate">{e.title}</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Chapter {e.ordinal}
+                  {e.printedNumber != null ? ` · printed #${e.printedNumber}` : ''}
+                  {e.fileOrdinal != null ? ` · File # ${e.fileOrdinal}` : ' · File # unset'}
+                </p>
+              </div>
+              <ArrowRight size={14} className="text-slate-600 group-hover:text-primary-400 shrink-0" />
+            </button>
+          ))}
+        </div>
+
+        <div className="px-5 py-3.5 border-t border-white/10 flex items-center justify-between gap-3 shrink-0">
+          <p className="text-[11px] text-slate-500">Nothing uploads until you pick one.</p>
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
+          >
+            Cancel — don&apos;t upload this file
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 /* ── Main page ──────────────────────────────────────────────────── */
 
 const WIZARD_STEPS = ['type', 'classify', 'input', 'results'];
@@ -555,6 +620,29 @@ export default function AdminContentIntake() {
   // Approved-and-usable is what the upload gate actually cares about; the raw
   // row is kept for the banner so it can distinguish draft from missing.
   const approvedManifest = manifestRow?.status === 'approved' ? manifestRow.entries : null;
+
+  // Admin-override picker — shown when a file's filename can't be auto-matched
+  // to a manifest entry (unparseable, or parses to an ordinal no entry has).
+  // Rather than a hard refusal with no path forward, the admin picks the real
+  // entry from the manifest's own closed set (never free text — see
+  // chapterIdentity.js's adminSelectedOrdinal, which this feeds into via
+  // extractNotesByManifest's `covered` list). promptForManifestEntry() blocks
+  // the CURRENT file only — handleProcess's loop is a plain `for`, and this
+  // resolver-per-prompt pattern lets it await one decision without touching
+  // the other files in the batch.
+  const [manifestPrompt, setManifestPrompt] = useState(null); // { filename, reason, entries } | null
+  const manifestPromptResolveRef = useRef(null);
+  function promptForManifestEntry(filename, reason, entries) {
+    return new Promise((resolve) => {
+      manifestPromptResolveRef.current = resolve;
+      setManifestPrompt({ filename, reason, entries });
+    });
+  }
+  function resolveManifestPrompt(entry) {
+    manifestPromptResolveRef.current?.(entry ?? null);
+    manifestPromptResolveRef.current = null;
+    setManifestPrompt(null);
+  }
 
   // Step 3 — items to process, regardless of source
   const [inputTab,  setInputTab]  = useState('file'); // file | url | folder
@@ -761,26 +849,49 @@ export default function AdminContentIntake() {
           // Which approved manifest entries does THIS file cover? Resolved from
           // the filename's ordinal against the manifest's File # values.
           //
-          // There is deliberately NO operator-pick fallback here. An earlier
-          // version of this block referenced `adminSelectedOrdinal`, which is a
-          // parameter of saveNoteChunks and has never existed in this scope —
-          // there is no ordinal picker in this screen's state. The branch could
-          // therefore only ever throw a ReferenceError, which is exactly what it
-          // did on the first real upload. Removed rather than back-filled with
-          // invented state: a picker is a real feature (see the hand-named-file
-          // limitation in docs/REBUILD_HANDOFF.md §13.1a), and until it exists
-          // the honest behaviour is to refuse and say what to fix.
+          // There USED TO be no operator-pick fallback here — an earlier version
+          // referenced a nonexistent `adminSelectedOrdinal` and threw a
+          // ReferenceError on the first real upload, so it was removed rather
+          // than back-filled with invented state. The real feature (a picker,
+          // never free text — see chapterIdentity.js's own note on why) now
+          // exists: on a failed auto-match, the admin is shown the manifest's
+          // full entry list and picks explicitly, or cancels and nothing is
+          // uploaded. Same fail-closed guarantee, with a supervised path around
+          // the dead end instead of just the dead end.
           const fileOrdinal = fileOrdinalFrom(it.name);
-          const covered = candidatesForFile(approvedManifest, fileOrdinal, null);
+          let covered = candidatesForFile(approvedManifest, fileOrdinal, null);
           if (!covered.length) {
             // Fail closed. Guessing which chapters a file holds is precisely
-            // the guess that produced "Poorvi".
-            throw new Error(
-              `"${it.name}" matches no entry in the approved manifest`
-              + (fileOrdinal == null
-                ? ' and no chapter number could be read from its filename. Set this file\'s chapter explicitly, or give the manifest entries a File # that matches.'
-                : ` (file ordinal ${fileOrdinal}). Set File # on the manifest entries this file contains.`),
-            );
+            // the guess that produced "Poorvi" — so this never guesses. It asks.
+            const reason = fileOrdinal == null
+              ? 'no chapter number could be read from its filename'
+              : `file ordinal ${fileOrdinal} (parsed from the filename) does not match any manifest entry`;
+            const numberedEntries = approvedManifest.filter((e) => e.numbered !== false);
+            const picked = await promptForManifestEntry(it.name, reason, numberedEntries);
+
+            if (!picked) {
+              // Cancel — unchanged fail-closed behaviour, nothing written.
+              throw new Error(
+                `"${it.name}" matches no entry in the approved manifest`
+                + (fileOrdinal == null
+                  ? ' and no chapter number could be read from its filename. Set this file\'s chapter explicitly, or give the manifest entries a File # that matches.'
+                  : ` (file ordinal ${fileOrdinal}). Set File # on the manifest entries this file contains.`),
+              );
+            }
+
+            // A decisive human pick, not a guess — narrows to exactly the
+            // chosen entry, same as extractNotesByManifest expects from
+            // candidatesForFile's own `own` match.
+            covered = [picked];
+
+            // Traceable now: which file went to which entry, by whom, when.
+            // This is also what closes the "book field untraceable" gap —
+            // the override itself is the record, independent of any UI form
+            // state that was or wasn't filled in at upload time.
+            logChange(ENTITY.CONTENT_ITEM, it.name, ACTION.UPDATE, {
+              before: { autoMatched: false, parsedFileOrdinal: fileOrdinal, reason },
+              after:  { chosenOrdinal: picked.ordinal, chosenTitle: picked.title, chosenFileOrdinal: picked.fileOrdinal ?? null },
+            }, `Admin override at upload: "${it.name}" could not be auto-matched (${reason}) — manually assigned to "${picked.title}" (chapter ${picked.ordinal}).`);
           }
 
           // Manifest-driven split: N covered entries produce exactly N chapters.
@@ -1196,6 +1307,16 @@ export default function AdminContentIntake() {
           )}
         </motion.div>
       )}
+
+      <AnimatePresence>
+        {manifestPrompt && (
+          <ManifestEntryPicker
+            prompt={manifestPrompt}
+            onSelect={(entry) => resolveManifestPrompt(entry)}
+            onCancel={() => resolveManifestPrompt(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
