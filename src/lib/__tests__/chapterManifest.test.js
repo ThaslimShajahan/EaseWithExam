@@ -1,6 +1,40 @@
 import { describe, it, expect } from 'vitest';
-import { fileOrdinalFrom, validateManifest, candidatesForFile } from '../chapterManifest';
+import { fileOrdinalFrom, validateManifest, candidatesForFile, inferFileStructure } from '../chapterManifest';
 import { decideAssignments, VERDICT } from '../chapterIdentity';
+
+/* ── inferFileStructure — the Issue 2 suggestion, always admin-overridable ── */
+describe('inferFileStructure', () => {
+  const numbered = (fileOrdinal, ordinal = fileOrdinal) => ({ ordinal, numbered: true, fileOrdinal });
+
+  it('per_chapter: every numbered entry has its own distinct fileOrdinal (CBSE Class 8 Maths shape — 7 files, 7 entries)', () => {
+    const entries = [1, 2, 3, 4, 5, 6, 7].map((n) => numbered(n));
+    expect(inferFileStructure(entries)).toBe('per_chapter');
+  });
+
+  it('combined: a fileOrdinal is shared by more than one numbered entry (Poorvi shape — 5 files, 15 entries, 3 sharing each)', () => {
+    const entries = [
+      numbered(1, 1), numbered(1, 2), numbered(1, 3),
+      numbered(2, 4), numbered(2, 5), numbered(2, 6),
+    ];
+    expect(inferFileStructure(entries)).toBe('combined');
+  });
+
+  it('interleaved entries (numbered: false) are excluded from the count either way', () => {
+    const entries = [
+      numbered(1, 1), numbered(2, 2),
+      { ordinal: 3, numbered: false, fileOrdinal: null },
+    ];
+    expect(inferFileStructure(entries)).toBe('per_chapter');
+  });
+
+  it('returns null — not a guess — when some numbered entries have no fileOrdinal yet', () => {
+    expect(inferFileStructure([numbered(1, 1), { ordinal: 2, numbered: true, fileOrdinal: null }])).toBeNull();
+  });
+
+  it('returns null for an empty manifest', () => {
+    expect(inferFileStructure([])).toBeNull();
+  });
+});
 
 /* Filenames are the REAL ones from the corpus, including their typos. */
 describe('fileOrdinalFrom — the third corroboration signal', () => {

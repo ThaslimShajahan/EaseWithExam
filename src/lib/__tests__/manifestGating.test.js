@@ -171,6 +171,100 @@ describe('extractNotesByManifest — the manifest decides the split, not the mod
   });
 });
 
+/* ── extractNotesByManifest: fileStructure — 'combined' vs 'per_chapter' ──
+ *
+ * Real incident, same night: CBSE Class 8 Mathematics is 7 separate
+ * per-chapter files (Chapter 1..7), not one combined PDF. Its manifest's
+ * page ranges are BOOK-WIDE printed numbers (pp19-47 for "Power Play"), but
+ * the real "Chapter 2 Power Play.pdf" file is 46 pages on its own — the
+ * combined-mode page-range check (correctly, for a combined book) refused
+ * it: "claims printed pages 19-47 ... outside this 46-page file". For a
+ * per_chapter book that check is not meaningful at all — fileOrdinal having
+ * already selected exactly this one file IS the corroboration. */
+const MATHS_CH2 = [
+  { ordinal: 2, title: 'Power Play', unit: null, pageStart: 19, pageEnd: 47, numbered: true, printedNumber: 2, fileOrdinal: 2, band: null },
+];
+
+describe('extractNotesByManifest — fileStructure: per_chapter skips the page-range check', () => {
+  it('PERMIT: the real Power Play case — book-wide page range does not fit the 46-page file, but per_chapter extracts anyway', async () => {
+    chatComplete.mockResolvedValue(modelReply(oneLesson()));
+    const { lessons, warnings } = await extractNotesByManifest({
+      pages: pagesFor(46), entries: MATHS_CH2, examType: 'CBSE Class 8', subject: 'Mathematics',
+      fileStructure: 'per_chapter',
+    });
+    expect(lessons).toHaveLength(1);
+    expect(lessons[0].title).toBe('Power Play');
+    // Whole file consumed, not a slice bounded by the (irrelevant) pageStart/pageEnd.
+    expect(chatComplete).toHaveBeenCalledTimes(1);
+    expect(chatComplete.mock.calls[0][0].messages[1].content).toContain('page 46 body text');
+    expect(warnings).toEqual([]);
+  });
+
+  it('DENY (combined, unchanged): the exact real incident reproduced — two entries sharing one fileOrdinal (a mistaken combined-style read of a per-chapter book) still gets caught by the page-range check', async () => {
+    chatComplete.mockResolvedValue(modelReply(oneLesson()));
+    // What was ACTUALLY live for a few minutes during this incident: chapter
+    // 1 and chapter 2 both pointing at fileOrdinal 2, so candidatesForFile
+    // returns both and offset comes from chapter 1's pageStart (1), not
+    // chapter 2's own (19) — chapter 2 then needs file page 47, one past the
+    // real file's 46. A single-entry `covered` list (MATHS_CH2 alone) cannot
+    // reproduce this: offset always equals that one entry's own pageStart,
+    // so the math trivially fits regardless of file length. Two entries
+    // sharing a file is what makes the offset — and the mismatch — real.
+    const chapter1And2ShareAFile = [
+      { ordinal: 1, title: 'A Square and A Cube', pageStart: 1,  pageEnd: 18, numbered: true, printedNumber: 1, fileOrdinal: 2 },
+      ...MATHS_CH2,
+    ];
+    await expect(extractNotesByManifest({
+      pages: pagesFor(46), entries: chapter1And2ShareAFile, examType: 'CBSE Class 8', subject: 'Mathematics',
+      // fileStructure omitted — defaults to 'combined', proving the default
+      // preserves the existing, still-correct behaviour for combined books.
+    })).rejects.toThrow(/outside this 46-page file/);
+  });
+
+  it('FLAG, DO NOT BLOCK: an implausibly short per_chapter file is warned, not refused', async () => {
+    chatComplete.mockResolvedValue(modelReply(oneLesson()));
+    const { lessons, warnings } = await extractNotesByManifest({
+      pages: pagesFor(1), entries: MATHS_CH2, examType: 'CBSE Class 8', subject: 'Mathematics',
+      fileStructure: 'per_chapter',
+    });
+    expect(lessons).toHaveLength(1);   // still extracted — a flag, not a gate
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/1 page\(s\).*short/);
+  });
+
+  it('FLAG, DO NOT BLOCK: an implausibly long per_chapter file is warned, not refused', async () => {
+    chatComplete.mockResolvedValue(modelReply(oneLesson()));
+    const { warnings } = await extractNotesByManifest({
+      pages: pagesFor(400), entries: MATHS_CH2, examType: 'CBSE Class 8', subject: 'Mathematics',
+      fileStructure: 'per_chapter',
+    });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/400 page\(s\).*long/);
+  });
+
+  it('no warning for a normal-length per_chapter file', async () => {
+    chatComplete.mockResolvedValue(modelReply(oneLesson()));
+    const { warnings } = await extractNotesByManifest({
+      pages: pagesFor(29), entries: MATHS_CH2, examType: 'CBSE Class 8', subject: 'Mathematics',
+      fileStructure: 'per_chapter',
+    });
+    expect(warnings).toEqual([]);
+  });
+
+  it('DENY: a per_chapter file matching more than one entry is a manifest inconsistency, refused rather than silently duplicated', async () => {
+    chatComplete.mockResolvedValue(modelReply(oneLesson()));
+    const twoEntriesSameFile = [
+      { ordinal: 1, title: 'A Square and A Cube', pageStart: 1,  pageEnd: 18, numbered: true, printedNumber: 1, fileOrdinal: 2 },
+      { ordinal: 2, title: 'Power Play',          pageStart: 19, pageEnd: 47, numbered: true, printedNumber: 2, fileOrdinal: 2 },
+    ];
+    await expect(extractNotesByManifest({
+      pages: pagesFor(46), entries: twoEntriesSameFile, examType: 'CBSE Class 8', subject: 'Mathematics',
+      fileStructure: 'per_chapter',
+    })).rejects.toThrow(/matched 2 manifest entries.*per_chapter/s);
+    expect(chatComplete).not.toHaveBeenCalled();
+  });
+});
+
 /* ── assignChapters still corroborates, and now carries unit ─────────── */
 describe('assignChapters — corroboration after the manifest-driven split', () => {
   it('PERMIT: a split lesson corroborates against its own entry and carries the unit through', () => {

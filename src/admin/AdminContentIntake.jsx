@@ -545,7 +545,7 @@ export default function AdminContentIntake() {
     // this wrong would silently break every single-book subject's lookup,
     // which is most of them. Under fail-closed this now surfaces as a REFUSED
     // upload rather than a silently mis-filed one, which is the point.
-    let q = supabase.from('chapter_manifests').select('id, status, entries, book')
+    let q = supabase.from('chapter_manifests').select('id, status, entries, book, file_structure')
       .eq('exam_type', dbExamType).eq('subject', subject);
     q = book ? q.eq('book', book) : q.is('book', null);
     q.maybeSingle().then(({ data }) => { if (!cancelled) setManifestRow(data ?? null); });
@@ -786,9 +786,10 @@ export default function AdminContentIntake() {
           // Manifest-driven split: N covered entries produce exactly N chapters.
           // The model never decides a chapter boundary — see
           // extractNotesByManifest's header for the failure this replaces.
-          const { unit, lessons } = await extractNotesByManifest({
+          const { unit, lessons, warnings: structureWarnings } = await extractNotesByManifest({
             pages, entries: covered, examType: dbExamType, subject,
             onProgress: (msg) => setStepMsg({ message: msg }),
+            fileStructure: manifestRow?.file_structure ?? 'combined',
           });
           setStepMsg({ message: `Saving ${lessons.length} chapter(s)…` });
           const { kbCount, chapterName, lessonCount, flagged } = await saveNoteChunks({
@@ -797,6 +798,10 @@ export default function AdminContentIntake() {
             figures, equationsByPage,
             manifestRow, filename: it.name, book: book || null, classLevel,
           });
+          // Non-blocking page-count sanity flag from extractNotesByManifest
+          // (per_chapter books only) — a chapter was written, this is a
+          // "worth a glance" note, not a failure.
+          const structureNote = structureWarnings?.length ? ` · ⚠ ${structureWarnings.join('; ')}` : '';
           setStepMsg({
             status: failedPages?.length ? 'partial' : 'done',
             message: `${kbCount} chunks saved across ${lessonCount} lesson${lessonCount !== 1 ? 's' : ''}${unit ? ` (${unit})` : ''} · "${chapterName}"`
@@ -807,7 +812,8 @@ export default function AdminContentIntake() {
               // assignChapters' own note) — expected, not a defect, surfaced
               // so an admin knows the corroboration was partial, not absent.
               + (flagged ? ' · chapter accepted with 2 of 3 signals (no printed-header check yet)' : '')
-              + failNote,
+              + failNote
+              + structureNote,
           });
         }
         // Deselect on success so a stray re-click of Process can't duplicate-save.

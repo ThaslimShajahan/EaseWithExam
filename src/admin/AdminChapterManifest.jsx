@@ -24,7 +24,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { draftManifestFromContentsPage } from '../lib/manifestExtraction';
-import { validateManifest } from '../lib/chapterManifest';
+import { validateManifest, inferFileStructure } from '../lib/chapterManifest';
 import { BOARDS, CLASS_LEVELS, CATEGORIES, getSubjectsForExam } from '../lib/categories';
 
 function getCallerUid() {
@@ -80,6 +80,12 @@ export default function AdminChapterManifest() {
   const [entries,  setEntries]  = useState([]);
   const [prefix,   setPrefix]   = useState(DEFAULT_PREFIX);
   const [sourceFile, setSourceFile] = useState('');
+  // 'combined' = one physical file legitimately covers several entries
+  // (Poorvi: 5 files, 3 texts each). 'per_chapter' = one file per chapter
+  // (CBSE Class 8 Maths: 7 files, 7 entries). Pre-filled from inferFileStructure
+  // when a fresh draft is read, loaded from the saved row otherwise — always
+  // admin-confirmable via the dropdown below, never saved without being shown.
+  const [fileStructure, setFileStructure] = useState('per_chapter');
   const [loading,  setLoading]  = useState(false);
   const [drafting, setDrafting] = useState(false);
   const [saving,   setSaving]   = useState(false);
@@ -94,7 +100,7 @@ export default function AdminChapterManifest() {
     if (!subject) { setRow(null); setEntries([]); return; }
     setLoading(true); setMsg(null);
     let q = supabase.from('chapter_manifests')
-      .select('id, exam_type, subject, book, class_level, key_prefix, source_file, entries, status, approved_by, approved_at')
+      .select('id, exam_type, subject, book, class_level, key_prefix, source_file, entries, status, approved_by, approved_at, file_structure')
       .eq('exam_type', dbExamType).eq('subject', subject);
     q = book.trim() ? q.eq('book', book.trim()) : q.is('book', null);
     const { data, error } = await q.maybeSingle();
@@ -104,12 +110,24 @@ export default function AdminChapterManifest() {
     setEntries(data?.entries ?? []);
     setPrefix(data?.key_prefix ?? DEFAULT_PREFIX);
     setSourceFile(data?.source_file ?? '');
+    setFileStructure(data?.file_structure ?? 'per_chapter');
   }, [dbExamType, subject, book]);
 
   useEffect(() => { load(); }, [load]);
 
   const validation = useMemo(() => validateManifest(entries), [entries]);
   const isApproved = row?.status === 'approved';
+  // Live suggestion only — never overwrites fileStructure on its own past the
+  // initial draft. null means "not enough signal yet" (some numbered entries
+  // still have no File #), shown as-is rather than guessed at.
+  const suggestedStructure = useMemo(() => inferFileStructure(entries), [entries]);
+  // Client-side mirror of the DB approval gate (20260815030000) — same rule,
+  // shown before Approve is even clicked rather than only after the RPC
+  // refuses it. The RPC is still the real gate; this is just faster feedback.
+  const missingFileOrdinal = useMemo(
+    () => entries.filter((e) => e?.numbered !== false && e?.fileOrdinal == null),
+    [entries],
+  );
 
   /* ── Draft from the book's own contents page ─────────────────────── */
   async function handleDraft(file) {
@@ -123,10 +141,16 @@ export default function AdminChapterManifest() {
       if (!drafted.length) throw new Error('No entries could be read from that file.');
       setEntries(drafted);
       setSourceFile(file.name);
+      // Every entry gets a default File # now (printedNumber, or ordinal as a
+      // fallback — see manifestExtraction.normaliseEntries), so a fresh draft
+      // is always inferable immediately. Pre-fills the dropdown as a
+      // suggestion; still fully overridable below before Save.
+      setFileStructure(inferFileStructure(drafted) ?? 'per_chapter');
       setMsg({
         kind: 'info',
         text: `Drafted ${drafted.length} entr${drafted.length === 1 ? 'y' : 'ies'} from "${file.name}". `
-            + 'Nothing is saved yet — check every row against the book, then Save, then Approve.',
+            + 'Nothing is saved yet — check every row (including File #) against the book, confirm the file '
+            + 'structure below, then Save, then Approve.',
       });
     } catch (e) {
       setMsg({ kind: 'err', text: `Draft failed: ${e.message}` });
@@ -159,6 +183,7 @@ export default function AdminChapterManifest() {
       p_source_file: sourceFile || null,
       p_entries:     entries,
       p_notes:       null,
+      p_file_structure: fileStructure,
     });
     setSaving(false);
     if (error) { setMsg({ kind: 'err', text: `Save failed: ${error.message}` }); return; }
@@ -258,11 +283,27 @@ export default function AdminChapterManifest() {
             {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Reload
           </button>
           <div className="flex items-center gap-1.5 ml-auto">
+            <label className="text-[11px] text-slate-500" title="'combined': one file legitimately covers several entries (Poorvi: 5 files, 3 texts each) — page ranges stay checked. 'per_chapter': one file per chapter (CBSE Class 8 Maths: 7 files, 7 entries) — File # alone is the check, no page range needed.">
+              File structure
+            </label>
+            <select value={fileStructure} onChange={(e) => setFileStructure(e.target.value)} disabled={isApproved}
+              className={`${inputCls} disabled:opacity-50`}>
+              <option value="per_chapter">per_chapter — one file per chapter</option>
+              <option value="combined">combined — several chapters share a file</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-1.5">
             <label className="text-[11px] text-slate-500">Key prefix</label>
             <input value={prefix} onChange={(e) => setPrefix(e.target.value)} disabled={isApproved}
               className={`${inputCls} w-16 disabled:opacity-50`} />
           </div>
         </div>
+        {!isApproved && suggestedStructure && suggestedStructure !== fileStructure && (
+          <p className="text-[11px] text-primary-400">
+            Based on the current File # values, this looks like <b>{suggestedStructure}</b> — the dropdown above is
+            set to <b>{fileStructure}</b>. Double-check before saving if that wasn't deliberate.
+          </p>
+        )}
       </div>
 
       {/* ── Status ──────────────────────────────────────────────────── */}
@@ -378,13 +419,29 @@ export default function AdminChapterManifest() {
             </div>
           )}
 
+          {/* Client-side mirror of the DB approval gate (20260815030000) —
+              validateManifest allows a null File # (it's a legitimate mid-draft
+              state), but approval never should. Shown separately from the red
+              validation block above so "not ready to save" and "ready to save,
+              not ready to approve" read as the different states they are. */}
+          {validation.ok && missingFileOrdinal.length > 0 && (
+            <div className="bg-amber-900/20 border-t border-amber-700/25 p-3 space-y-1">
+              <p className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                <AlertTriangle size={13} /> Missing File # on {missingFileOrdinal.length} entr{missingFileOrdinal.length === 1 ? 'y' : 'ies'} — can save as a draft, but approval will be refused
+              </p>
+              <ul className="text-[11px] text-amber-300/90 list-disc pl-5 space-y-0.5">
+                {missingFileOrdinal.map((e) => <li key={e.ordinal}>#{e.ordinal} ("{e.title}")</li>)}
+              </ul>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center gap-2 p-3 border-t border-white/8">
             <button onClick={handleSave} disabled={!validation.ok || saving || isApproved}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-slate-700 hover:bg-slate-600 text-white disabled:opacity-40 disabled:cursor-not-allowed">
               {saving ? <Loader2 size={13} className="animate-spin" /> : <BookOpen size={13} />}
               {row ? 'Save draft' : 'Create draft'}
             </button>
-            <button onClick={handleApprove} disabled={!row || !validation.ok || saving || isApproved}
+            <button onClick={handleApprove} disabled={!row || !validation.ok || missingFileOrdinal.length > 0 || saving || isApproved}
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-40 disabled:cursor-not-allowed">
               <ShieldCheck size={13} /> Approve manifest
             </button>

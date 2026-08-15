@@ -711,15 +711,51 @@ ${batches[b]}`,
  * @param {string[]} pages         per-page text, index 0 = first page of THIS file
  * @param {object[]} entries       approved manifest entries this file covers
  * @param {number}   pageOffset    printed page number of pages[0]; index = printed - pageOffset
- * @returns {{ unit, lessons }}    same shape runNotesExtraction returns
+ * @param {string}   fileStructure 'combined' (default) or 'per_chapter' — see
+ *   chapterManifest.inferFileStructure's header for what each means. Only
+ *   'combined' runs the printed-page-range-vs-file-length check below; a
+ *   per_chapter file's own page 1 is not guaranteed to be the chapter's
+ *   logical page 1 (cover pages, blank pages, back matter vary per file), so
+ *   fileOrdinal having already selected exactly this entry (candidatesForFile,
+ *   called upstream) IS the corroboration — the whole file is the chapter.
+ * @returns {{ unit, lessons, warnings }}  same shape runNotesExtraction
+ *   returns, plus `warnings` (page-count sanity flags, non-fatal, empty
+ *   unless fileStructure is 'per_chapter')
  */
 export async function extractNotesByManifest({
-  pages, entries, pageOffset = null, examType, subject, onProgress = () => {},
+  pages, entries, pageOffset = null, examType, subject, onProgress = () => {}, fileStructure = 'combined',
 }) {
   if (!pages?.length) throw new Error('extractNotesByManifest requires the `pages` array — the split is sliced from it.');
   if (!entries?.length) throw new Error('extractNotesByManifest requires at least one manifest entry to split by.');
 
   const ordered = [...entries].sort((a, b) => a.pageStart - b.pageStart);
+  const warnings = [];
+
+  // per_chapter: fileOrdinal already established "this whole file IS this
+  // chapter" (candidatesForFile matched it upstream) — there is no meaningful
+  // printed-page-range to validate or slice by, so every candidate entry gets
+  // the entire file. More than one candidate here means this specific file
+  // matched multiple manifest entries despite the book being marked
+  // per_chapter, which is a real manifest inconsistency (not something to
+  // silently pick one of) — fail loudly rather than duplicate content across
+  // "chapters" that would all extract the same pages.
+  if (fileStructure === 'per_chapter') {
+    if (ordered.length > 1) {
+      throw new Error(
+        `This file matched ${ordered.length} manifest entries (${ordered.map((e) => `"${e.title}"`).join(', ')}) `
+        + `but the book is marked per_chapter, where one file must map to exactly one chapter. `
+        + `Either the manifest's File # values are wrong, or this book is actually 'combined'.`,
+      );
+    }
+    // Cheap, non-blocking sanity check — not a range, just "does this look
+    // like a real chapter file". Flagged for a human to glance at, never
+    // refused: a genuinely 1-page or 500-page chapter is rare but not
+    // impossible, and this must not become a third way to silently block an
+    // upload the way the null-fileOrdinal bug did.
+    if (pages.length < 2 || pages.length > 300) {
+      warnings.push(`"${ordered[0].title}" is ${pages.length} page(s) — unusually ${pages.length < 2 ? 'short' : 'long'} for a single chapter, worth a quick look.`);
+    }
+  }
 
   // Default: assume the file begins exactly at its first covered chapter, which
   // is what a per-chapter or per-unit extract is. Stated rather than detected —
@@ -730,14 +766,17 @@ export async function extractNotesByManifest({
   const lessons = [];
   for (let i = 0; i < ordered.length; i++) {
     const entry = ordered[i];
-    const startIdx = entry.pageStart - offset;
-    const endIdx   = entry.pageEnd   - offset;
+    const wholeFile = fileStructure === 'per_chapter';
+    const startIdx = wholeFile ? 0 : entry.pageStart - offset;
+    const endIdx   = wholeFile ? pages.length - 1 : entry.pageEnd - offset;
 
     // Refuse rather than clamp. A range falling outside the file means the
     // manifest and the file disagree about what this file contains — exactly
     // the disagreement the rebuild exists to catch, and clamping would paper
-    // over it by silently extracting the wrong pages.
-    if (startIdx < 0 || endIdx >= pages.length || endIdx < startIdx) {
+    // over it by silently extracting the wrong pages. Skipped entirely for
+    // per_chapter — see the header comment on why a page range is not a
+    // meaningful check there.
+    if (!wholeFile && (startIdx < 0 || endIdx >= pages.length || endIdx < startIdx)) {
       throw new Error(
         `Manifest entry ${entry.ordinal} ("${entry.title}") claims printed pages ${entry.pageStart}-${entry.pageEnd}, `
         + `which maps to file pages ${startIdx + 1}-${endIdx + 1} — outside this ${pages.length}-page file. `
@@ -788,7 +827,7 @@ export async function extractNotesByManifest({
   // per-lesson `unit` above is what actually gets written — this top-level
   // value is only the banner summary.
   const units = [...new Set(lessons.map((l) => l.unit).filter(Boolean))];
-  return { unit: units.length === 1 ? units[0] : null, lessons };
+  return { unit: units.length === 1 ? units[0] : null, lessons, warnings };
 }
 
 /* ── Subject families ────────────────────────────────────────────────────

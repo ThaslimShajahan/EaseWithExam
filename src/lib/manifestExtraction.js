@@ -113,21 +113,41 @@ export async function draftManifestFromContentsPage(arrayBuffer, ctx = {}) {
  *  it does not get quietly patched into something that looks fine. */
 function normaliseEntries(entries) {
   if (!Array.isArray(entries)) return [];
-  return entries.map((e) => ({
-    ordinal:       Number.isFinite(Number(e?.ordinal)) ? Math.trunc(Number(e.ordinal)) : null,
-    title:         String(e?.title ?? '').trim(),
-    // Trimmed to null rather than kept as '' — validateManifest rejects an
-    // empty unit precisely so a blank grouping heading can never reach the
-    // browsers, and "the model returned whitespace" means "no unit", not
-    // "a unit whose name is nothing".
-    unit:          String(e?.unit ?? '').trim() || null,
-    pageStart:     Number.isFinite(Number(e?.pageStart)) ? Math.trunc(Number(e.pageStart)) : null,
-    pageEnd:       Number.isFinite(Number(e?.pageEnd)) ? Math.trunc(Number(e.pageEnd)) : null,
-    numbered:      e?.numbered !== false,
-    printedNumber: e?.numbered === false ? null : (Number.isFinite(Number(e?.printedNumber)) ? Math.trunc(Number(e.printedNumber)) : null),
-    fileOrdinal:   null, // filled in later, once real filenames are matched — see chapterManifest.fileOrdinalFrom
-    band:          e?.band ? String(e.band).trim().toLowerCase() : null,
-  }));
+  return entries.map((e) => {
+    const numbered = e?.numbered !== false;
+    const printedNumber = numbered
+      ? (Number.isFinite(Number(e?.printedNumber)) ? Math.trunc(Number(e.printedNumber)) : null)
+      : null;
+    const ordinal = Number.isFinite(Number(e?.ordinal)) ? Math.trunc(Number(e.ordinal)) : null;
+
+    return {
+      ordinal,
+      title:         String(e?.title ?? '').trim(),
+      // Trimmed to null rather than kept as '' — validateManifest rejects an
+      // empty unit precisely so a blank grouping heading can never reach the
+      // browsers, and "the model returned whitespace" means "no unit", not
+      // "a unit whose name is nothing".
+      unit:          String(e?.unit ?? '').trim() || null,
+      pageStart:     Number.isFinite(Number(e?.pageStart)) ? Math.trunc(Number(e.pageStart)) : null,
+      pageEnd:       Number.isFinite(Number(e?.pageEnd)) ? Math.trunc(Number(e.pageEnd)) : null,
+      numbered,
+      printedNumber,
+      // Defaults to what the book prints next to the chapter (or, failing
+      // that, this manifest's own running ordinal) — a real starting value
+      // instead of null, because the overwhelming common case in this corpus
+      // is a filename that embeds exactly that number ("Chapter 2 Power
+      // Play.pdf" -> printedNumber 2). This is a DEFAULT, never a silent
+      // final answer: the admin reviews and can correct every File # in the
+      // manifest screen before saving, same as every other field here. It
+      // does NOT fix the irregular case (Hornbill's Writing Skills print
+      // 1-6 but file kehb111-116) — nothing can guess that blind, and the
+      // admin still has to type the real numbers for books like that. What
+      // it fixes is the twice-repeated failure mode: a normal, predictably-
+      // named book shipping with every File # simply forgotten as null.
+      fileOrdinal:   numbered ? (printedNumber ?? ordinal) : null,
+      band:          e?.band ? String(e.band).trim().toLowerCase() : null,
+    };
+  });
 }
 
 /**

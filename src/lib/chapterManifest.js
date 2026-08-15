@@ -126,3 +126,33 @@ export function candidatesForFile(entries, fileOrdinal, filePageRange) {
     : [];
   return [...own, ...inside];
 }
+
+/**
+ * Suggests a book's file_structure from its entries' own fileOrdinal values —
+ * a starting point for the admin to confirm or override, never the value
+ * that gets saved without a human looking at it.
+ *
+ * 'combined': at least one fileOrdinal is shared by more than one numbered
+ * entry (Poorvi: 5 files, 15 entries, 3 sharing each fileOrdinal — the File #
+ * column's own tooltip already describes this: "Several chapters in one unit
+ * file share the same File #"). Printed page ranges are real corroboration
+ * there and stay enforced.
+ *
+ * 'per_chapter': every numbered entry's fileOrdinal is unique (the 1:1 case —
+ * CBSE Class 8 Mathematics: 7 files, 7 entries). A file's own page 1 is not
+ * guaranteed to be the chapter's logical page 1, so page-range validation is
+ * meaningless there and fileOrdinal matching alone is the signal.
+ *
+ * Entries with no fileOrdinal set yet (mid-draft, before the admin has filled
+ * in the File # column) don't have enough signal to infer from — returns
+ * null rather than guessing, so the UI can show "not yet inferable" instead
+ * of a confident-looking wrong answer.
+ */
+export function inferFileStructure(entries) {
+  const numbered = (entries ?? []).filter((e) => e?.numbered !== false);
+  const ordinals = numbered.map((e) => e?.fileOrdinal).filter((v) => v != null);
+  if (ordinals.length === 0 || ordinals.length < numbered.length) return null;
+
+  const distinct = new Set(ordinals).size;
+  return distinct < ordinals.length ? 'combined' : 'per_chapter';
+}
