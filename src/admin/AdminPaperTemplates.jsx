@@ -62,7 +62,7 @@ RAW TEXT:
 ${batch}`,
         },
       ],
-    });
+    }, { feature: 'paper-template-gen' });
 
     const data = JSON.parse(resp.choices[0].message.content);
     total_questions   = total_questions   ?? data.total_questions   ?? null;

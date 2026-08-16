@@ -87,7 +87,7 @@ Return JSON only:
         response_format: { type: 'json_object' },
         max_tokens: 300,
         temperature: 0,
-      });
+      }, { feature: 'mock-test-answer-eval' });
 
       const ev = JSON.parse(resp.choices[0].message.content);
       return { id: q.id, ...ev };

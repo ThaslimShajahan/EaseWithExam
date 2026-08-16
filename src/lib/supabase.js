@@ -469,10 +469,10 @@ async function _addEmbeddings(rows) {
     const end = Math.min(i + BATCH, out.length);
     await Promise.all(
       out.slice(i, end).map(async (row, j) => {
-        let emb = await embedText(row.content);
+        let emb = await embedText(row.content, { feature: 'kb-chunk-embed' });
         if (!emb) {
           await new Promise((r) => setTimeout(r, 1000));
-          emb = await embedText(row.content);
+          emb = await embedText(row.content, { feature: 'kb-chunk-embed' });
         }
         if (emb) {
           out[i + j].embedding = emb;

@@ -104,7 +104,7 @@ SOURCE MATERIAL:
 ${input.slice(0, 12000)}`,
           },
         ],
-      });
+      }, { feature: 'summarizer' });
       const text = resp.choices?.[0]?.message?.content ?? '';
       if (!text) throw new Error('No summary was generated — try again.');
       setSummary(text);

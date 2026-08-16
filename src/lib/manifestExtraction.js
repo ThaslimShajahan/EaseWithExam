@@ -84,7 +84,7 @@ export async function draftManifestFromContentsPage(arrayBuffer, ctx = {}) {
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: `${examType ?? ''} ${subject ?? ''}${book ? ` — ${book}` : ''}\n\nCONTENT:\n${marked}` },
     ],
-  });
+  }, { feature: 'manifest-draft' });
 
   const finish = resp.choices[0].finish_reason;
   if (finish && finish !== 'stop') {

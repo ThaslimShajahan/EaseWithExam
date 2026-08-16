@@ -172,7 +172,7 @@ Score 1–10 (7+ = approve, <7 = manual review).
 Return: { "score": 8, "verdict": "approve" | "review", "reason": "one line" }`,
               },
             ],
-          });
+          }, { feature: 'content-review' });
 
           const r = JSON.parse(resp.choices[0].message.content);
           newScores[item.id] = { score: r.score, reason: r.reason };

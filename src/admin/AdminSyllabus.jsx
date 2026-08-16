@@ -92,7 +92,7 @@ async function fetchChaptersFromAI(dbExamType, subject) {
 
 Return ONLY JSON: {"chapters": ["...", "..."]}`,
     }],
-  });
+  }, { feature: 'admin-syllabus-fetch' });
   const parsed = JSON.parse(res.choices[0].message.content);
   return Array.isArray(parsed.chapters) ? parsed.chapters.map((c) => String(c).trim()).filter(Boolean) : [];
 }

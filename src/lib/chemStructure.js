@@ -51,7 +51,7 @@ Examples:
 "Galvanic cell with zinc and copper electrodes" -> NONE
 "Energy profile of an exothermic reaction" -> NONE` },
       ],
-    }, { signal });
+    }, { signal, feature: 'chem-structure-gen' });
 
     const raw = (res?.choices?.[0]?.message?.content ?? '').trim().split(/\s+/)[0];
     if (!raw || /^none$/i.test(raw)) return null;

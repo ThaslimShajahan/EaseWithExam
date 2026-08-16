@@ -22,7 +22,7 @@ Return a JSON object with a "cards" key containing an array of flashcard objects
     temperature: 0.4,
     max_tokens: 1800,
     response_format: { type: 'json_object' },
-  });
+  }, { feature: 'flashcards' });
 
   const raw = res.choices?.[0]?.message?.content || '{"cards":[]}';
   let cards;

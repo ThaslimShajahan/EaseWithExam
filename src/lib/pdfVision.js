@@ -352,7 +352,7 @@ async function visionAttempt(dataUri, textLayer, ctx, signal, empty) {
           ],
         },
       ],
-    }, { signal });
+    }, { signal, feature: 'vision-page-extract' });
 
     const raw = resp?.choices?.[0]?.message?.content;
     if (!raw) {

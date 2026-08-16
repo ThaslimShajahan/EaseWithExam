@@ -165,7 +165,7 @@ export async function verifyOne(q, { signal, model = MODEL } = {}) {
         { role: 'system', content: SYSTEM },
         { role: 'user', content: buildPrompt(q) },
       ],
-    }, { signal });
+    }, { signal, feature: 'answer-verification' });
 
     const raw = resp?.choices?.[0]?.message?.content;
     if (!raw) return { status: 'error', reason: 'empty verifier response' };

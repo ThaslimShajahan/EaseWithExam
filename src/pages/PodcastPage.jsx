@@ -26,7 +26,7 @@ STUDY MATERIAL:
 ${notes.slice(0, 8000)}`,
       },
     ],
-  });
+  }, { feature: 'podcast-script' });
   return (resp.choices?.[0]?.message?.content ?? '').trim();
 }
 
@@ -63,7 +63,7 @@ export default function PodcastPage() {
       setScript(narration);
 
       setStage('speaking');
-      const blob = await generateSpeech(narration.slice(0, SCRIPT_CHAR_CAP), { voice: 'alloy' });
+      const blob = await generateSpeech(narration.slice(0, SCRIPT_CHAR_CAP), { voice: 'alloy', feature: 'podcast-tts' });
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
       const url = URL.createObjectURL(blob);
       setAudioUrl(url);

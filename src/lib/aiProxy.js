@@ -243,16 +243,24 @@ async function getOpenAI() {
  * so a caller can tell a rate limit from a malformed request.
  *
  * @param {object} params
- * @param {{ signal?: AbortSignal, timeoutMs?: number, maxAttempts?: number }} [opts]
+ * @param {{ signal?: AbortSignal, timeoutMs?: number, maxAttempts?: number, feature?: string, callerUid?: string }} [opts]
  *   `signal` cancels the call — a caller that unmounts mid-request (navigated
  *   away, or hit Cancel) stops it instead of letting it complete unattended in
  *   the background, which would still burn quota and write its result. A caller
  *   abort is never retried; only our own deadline is.
+ *   `feature`/`callerUid` are logging-only tags for ai_call_log (see
+ *   20260816000000_ai_call_log.sql) — sent as `_feature`/`_caller_uid`
+ *   alongside `params`, stripped by ai-proxy before the request reaches
+ *   OpenAI. Every real call site should pass `feature`; a call with none
+ *   shows up as feature:null in admin_ai_usage_summary, which is itself a
+ *   signal that a caller still needs tagging.
  */
 export async function chatComplete(params, {
   signal,
   timeoutMs = AI_REQUEST_TIMEOUT_MS,
   maxAttempts = AI_MAX_ATTEMPTS,
+  feature = null,
+  callerUid = null,
 } = {}) {
   const attempt = USE_EDGE
     ? async (sig) => {
@@ -262,7 +270,7 @@ export async function chatComplete(params, {
           'Content-Type':  'application/json',
           'Authorization': `Bearer ${ANON_KEY}`,
         },
-        body: JSON.stringify(params),
+        body: JSON.stringify({ ...params, _feature: feature, _caller_uid: callerUid }),
         signal: sig,
       });
       if (!res.ok) {
@@ -301,7 +309,7 @@ export async function chatComplete(params, {
  * Returns an async iterable yielding the same chunk shape as the OpenAI SDK
  * ({ choices: [{ delta: { content } }] }) regardless of edge vs. dev-fallback path.
  */
-export async function chatCompleteStream(params) {
+export async function chatCompleteStream(params, { feature = null, callerUid = null } = {}) {
   const body = { ...params, stream: true };
 
   if (!USE_EDGE) {
@@ -315,7 +323,7 @@ export async function chatCompleteStream(params) {
       'Content-Type':  'application/json',
       'Authorization': `Bearer ${ANON_KEY}`,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, _feature: feature, _caller_uid: callerUid }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -359,7 +367,7 @@ async function* parseSSEStream(body) {
  * @param {{ size?: string, quality?: string, n?: number }} opts
  * @returns {Promise<string|null>}
  */
-export async function generateImage(prompt, { size = '1024x1024', quality = 'standard', n = 1, responseFormat } = {}) {
+export async function generateImage(prompt, { size = '1024x1024', quality = 'standard', n = 1, responseFormat, feature = null, callerUid = null } = {}) {
   try {
     const body = { model: 'dall-e-3', prompt, size, quality, n, ...(responseFormat && { response_format: responseFormat }) };
     const pick = (data) => responseFormat === 'b64_json' ? (data?.[0]?.b64_json ?? null) : (data?.[0]?.url ?? null);
@@ -371,7 +379,7 @@ export async function generateImage(prompt, { size = '1024x1024', quality = 'sta
           'Content-Type':  'application/json',
           'Authorization': `Bearer ${ANON_KEY}`,
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, _feature: feature, _caller_uid: callerUid }),
       });
       if (!res.ok) return null;
       const json = await res.json();
@@ -394,14 +402,14 @@ export async function generateImage(prompt, { size = '1024x1024', quality = 'sta
  * @param {{ voice?: string }} opts
  * @returns {Promise<Blob>}
  */
-export async function generateSpeech(text, { voice = 'alloy' } = {}) {
+export async function generateSpeech(text, { voice = 'alloy', feature = null, callerUid = null } = {}) {
   const body = { model: 'tts-1', voice, input: text };
 
   if (USE_EDGE) {
     const res = await fetch(`${PROXY_URL}?route=tts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ANON_KEY}` },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, _feature: feature, _caller_uid: callerUid }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -420,13 +428,13 @@ export async function generateSpeech(text, { voice = 'alloy' } = {}) {
  * Generate a 1536-dim embedding via text-embedding-3-small.
  * Returns a float array or null on failure.
  */
-export async function embedText(text) {
+export async function embedText(text, { feature = null, callerUid = null } = {}) {
   try {
     if (USE_EDGE) {
       const res = await fetch(`${PROXY_URL}?route=embeddings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ANON_KEY}` },
-        body: JSON.stringify({ model: 'text-embedding-3-small', input: text }),
+        body: JSON.stringify({ model: 'text-embedding-3-small', input: text, _feature: feature, _caller_uid: callerUid }),
       });
       if (!res.ok) return null;
       const json = await res.json();

@@ -143,7 +143,7 @@ Return ONLY valid JSON:
       { role: 'system', content: 'You are an expert exam question setter. Return only valid JSON.' },
       { role: 'user',   content: prompt },
     ],
-  });
+  }, { feature: 'daily-challenge' });
 
   const raw = JSON.parse(resp.choices[0].message.content);
 

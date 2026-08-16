@@ -314,7 +314,7 @@ export async function analyzeText(text, filename) {
         { role: 'system', content: ANALYSIS_PROMPT },
         { role: 'user',   content: `Filename: ${filename}\n\nContent:\n${text.slice(0, 4_000)}` },
       ],
-    });
+    }, { feature: 'pdf-analyzer' });
     return { ...fallback, ...JSON.parse(resp.choices[0].message.content) };
   } catch {
     /* GPT failed — fall back to filename inference */

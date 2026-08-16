@@ -143,7 +143,7 @@ export async function generateDiagramSvg(description, subject, { signal } = {}) 
         { role: 'system', content: SYSTEM },
         { role: 'user',   content: buildPrompt(description, subject) },
       ],
-    }, { signal });
+    }, { signal, feature: 'diagram-gen' });
 
     const raw = res?.choices?.[0]?.message?.content ?? '';
     // Models still wrap in ```svg fences often enough to be worth handling.

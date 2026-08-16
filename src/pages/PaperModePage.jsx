@@ -591,7 +591,7 @@ Return ONLY valid JSON:
         ],
       },
     ],
-  });
+  }, { feature: 'paper-mode-grade' });
 
   return JSON.parse(resp.choices[0].message.content);
 }
@@ -747,7 +747,7 @@ Return this exact JSON:
         ],
       },
     ],
-  });
+  }, { feature: 'paper-mode-evaluate' });
 
   return JSON.parse(resp.choices[0].message.content);
 }

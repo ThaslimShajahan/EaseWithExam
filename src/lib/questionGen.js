@@ -744,7 +744,7 @@ async function fetchKBChunks(subject, topicHints, { examType = null, contentType
   const query = [subject !== 'Mixed' ? subject : '', topicHints || ''].filter(Boolean).join(' ');
 
   // Try semantic search first
-  const embedding = query ? await embedText(query) : null;
+  const embedding = query ? await embedText(query, { feature: 'question-gen-embed' }) : null;
   if (embedding) {
     try {
       const { data } = await supabase.rpc('match_knowledge_base', {
@@ -868,7 +868,7 @@ export async function analyzeTopicDistribution(subject, examType) {
       { role: 'system', content: 'Extract topics from text. Return JSON.' },
       { role: 'user', content: `From these ${examType} ${subject} excerpts, identify the top 15 topics and estimate their relative frequency (1-10 scale).\n\n${chunks.join('\n---\n')}\n\nReturn: { "topics": [{ "topic": "...", "frequency": 5 }] }` },
     ],
-  });
+  }, { feature: 'question-gen-topic-distribution' });
 
   const raw    = JSON.parse(resp.choices[0].message.content);
   const topics = (raw.topics || []).slice(0, 15);
@@ -1205,7 +1205,7 @@ MATCH THE FOLLOWING — mandatory shape, options must NEVER be null for this typ
         { role: 'system', content: 'You are an expert exam question generator who creates questions indistinguishable from official exam papers. Return only valid JSON.' },
         { role: 'user',   content: batchPrompt },
       ],
-    }, { signal });
+    }, { signal, feature: 'question-gen-paper' });
 
     const choice = resp.choices?.[0];
     if (!choice) { console.warn('[questionGen] empty choices in batch — skipping'); continue; }
@@ -1428,7 +1428,7 @@ TEXT:
 ${batchText}`,
           },
         ],
-      });
+      }, { feature: 'pyq-extract-from-kb' });
 
       const parsed = JSON.parse(resp.choices[0].message.content);
       const qs     = parsed.questions || [];
@@ -1601,7 +1601,7 @@ Return this EXACT JSON structure — populate every field richly:
 }`,
       },
     ],
-  });
+  }, { feature: 'chapter-notes-gen' });
 
   return JSON.parse(resp.choices[0].message.content);
 }
@@ -1722,7 +1722,7 @@ Return this EXACT JSON structure:
 For AI-synthesized questions not drawn from a real past-year question, set "asked_years": [] and "tag": "High-Yield Concept". Never set "asked_years" to a year unless that exact question genuinely appears in the past-year list above.`,
       },
     ],
-  });
+  }, { feature: 'important-qa-gen' });
 
   const parsed    = JSON.parse(resp.choices[0].message.content);
   const questions = (parsed.questions || []).slice(0, 15);
@@ -1806,7 +1806,7 @@ Make the plan realistic for ${daysLeft} days.${weakSubjects.length > 0 ? ` Only 
       { role: 'system', content: 'You are a precise study planner. Return only valid JSON.' },
       { role: 'user', content: prompt },
     ],
-  });
+  }, { feature: 'study-plan-gen' });
 
   return JSON.parse(res.choices[0].message.content);
 }

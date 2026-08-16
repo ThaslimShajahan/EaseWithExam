@@ -58,7 +58,7 @@ Respond ONLY with this JSON format:
         }],
         temperature: 0.3,
         max_tokens: 800,
-      });
+      }, { feature: 'admin-study-notes' });
       const raw = res.choices[0].message.content.trim();
       const parsed = JSON.parse(raw.replace(/```json\n?|\n?```/g, ''));
       setAnalysisResult({ ...parsed, pdf_url: url });

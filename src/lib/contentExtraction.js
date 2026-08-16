@@ -428,7 +428,7 @@ RAW TEXT:
 ${batches[b]}`,
         },
       ],
-    });
+    }, { feature: 'pyq-extraction' });
 
     // Truncation matters more here than in notes: a cut-off response doesn't
     // just shorten a chunk, it silently drops questions off the end of a paper
@@ -605,7 +605,7 @@ CONTENT:
 ${batches[b]}`,
         },
       ],
-    });
+    }, { feature: 'notes-extraction' });
 
     // A truncated response is a cut-off JSON string, so JSON.parse below would
     // fail with a position offset that says nothing about the cause. Naming it

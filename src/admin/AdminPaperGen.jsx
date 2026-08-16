@@ -835,7 +835,7 @@ Return ONLY valid JSON, no markdown.`;
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.2,
     response_format: { type: 'json_object' },
-  });
+  }, { feature: 'admin-paper-gen' });
   const raw = resp.choices[0].message.content;
   const data = JSON.parse(raw);
   const allTypes = [...new Set((data.sections ?? []).map((s) => s.qType).filter(Boolean))];

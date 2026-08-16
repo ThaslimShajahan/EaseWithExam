@@ -546,7 +546,7 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
           { role: 'system', content: buildSystemPrompt(userProfile) },
           ...recentContext(historyRef.current),
         ],
-      });
+      }, { feature: 'doubt-chat-image' });
 
       let full = '';
       for await (const chunk of stream) {
@@ -638,7 +638,7 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
     try {
       let embedding = null;
       try {
-        embedding = await embedText(text);
+        embedding = await embedText(text, { feature: 'doubt-chat-embed' });
       } catch {
         embedding = null;
       }
@@ -662,7 +662,7 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
           { role: 'system', content: systemPrompt },
           ...recentContext(historyRef.current),
         ],
-      });
+      }, { feature: 'doubt-chat-text' });
 
       let full = '';
       let started = false;
