@@ -17,6 +17,7 @@ import {
   matchSyllabusChapterKeyed, normaliseMarks,
 } from '../lib/contentExtraction';
 import { fileOrdinalFrom, candidatesForFile } from '../lib/chapterManifest';
+import { detectPrintedPageRange, matchFileToManifest } from '../lib/pageRangeMatch';
 import { assignChapters } from '../lib/chapterIdentity';
 import { requireApprovedManifest } from '../lib/manifestExtraction';
 import { getSubjectsForExam, BOARDS, CLASS_LEVELS, EXAM_TYPE_GROUPS } from '../lib/categories';
@@ -540,6 +541,128 @@ function ManifestEntryPicker({ prompt, onSelect, onCancel }) {
   );
 }
 
+const CONFIDENCE = {
+  confirmed: { label: 'Content + filename agree', cls: 'bg-emerald-900/30 text-emerald-300 border-emerald-700/30' },
+  content:   { label: 'Matched by content',        cls: 'bg-blue-900/30 text-blue-300 border-blue-700/30' },
+  filename:  { label: 'Matched by filename only',  cls: 'bg-slate-800 text-slate-300 border-white/10' },
+  conflict:  { label: 'Conflict — pick manually',  cls: 'bg-red-900/30 text-red-300 border-red-700/30' },
+  multiple:  { label: 'Spans multiple chapters',   cls: 'bg-amber-900/30 text-amber-300 border-amber-700/30' },
+  none:      { label: 'No match — pick manually',  cls: 'bg-red-900/30 text-red-300 border-red-700/30' },
+};
+
+/**
+ * Multi-file match & review — one row per uploaded file. A suggestion (from
+ * pageRangeMatch.js) may pre-select a dropdown value, but `confirmed` is
+ * always false until the admin explicitly says so, regardless of confidence
+ * — "Confirm All" only confirms rows that already have a selection, it never
+ * invents one. Nothing in this component ever calls a save path; onProcess is
+ * the one function that does, and it only runs on click.
+ */
+function MatchReviewScreen({ rows, manifestEntries, onChoose, onConfirm, onUnconfirm, onConfirmAll, onCancel, onProcess }) {
+  const numbered = manifestEntries.filter((e) => e.numbered !== false);
+  const usable = rows.filter((r) => !r.error);
+  const confirmedCount = usable.filter((r) => r.confirmed).length;
+  const readyToConfirmCount = usable.filter((r) => !r.confirmed && r.chosenOrdinal != null).length;
+  const needsPickCount = usable.filter((r) => r.chosenOrdinal == null).length;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-2 bg-slate-800/40 border border-white/8 rounded-xl p-3">
+        <Info size={14} className="text-slate-400 mt-0.5 shrink-0" />
+        <p className="text-xs text-slate-400 leading-relaxed">
+          Nothing has been saved yet. Every row below needs an explicit Confirm — even the ones the match found
+          agreement on — before <b className="text-slate-300">Process</b> touches anything. Rows without a match
+          require picking a chapter from the dropdown first.
+        </p>
+      </div>
+
+      <div className="bg-slate-900/60 border border-white/8 rounded-2xl overflow-hidden">
+        <div className="divide-y divide-white/5">
+          {rows.map((r, i) => {
+            if (r.error) {
+              return (
+                <div key={i} className="flex items-center gap-3 px-4 py-3">
+                  <AlertTriangle size={14} className="text-red-400 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-slate-300 truncate">{r.item.name}</p>
+                    <p className="text-xs text-red-400">{r.error}</p>
+                  </div>
+                </div>
+              );
+            }
+            const badge = CONFIDENCE[r.suggestion?.confidence] ?? CONFIDENCE.none;
+            const range = r.detectedRange?.firstPage != null
+              ? `pages ${r.detectedRange.firstPage}–${r.detectedRange.lastPage}`
+              : 'no printed page numbers detected';
+            return (
+              <div key={i} className={`px-4 py-3 space-y-2 ${r.confirmed ? 'bg-emerald-900/5' : ''}`}>
+                <div className="flex items-start gap-3 flex-wrap">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-slate-200 truncate">{r.item.name}</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">{range}</p>
+                  </div>
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded-lg border shrink-0 ${badge.cls}`}>{badge.label}</span>
+                  {r.confirmed && (
+                    <span className="text-[10px] font-bold px-2 py-1 rounded-lg border shrink-0 bg-emerald-600/20 text-emerald-300 border-emerald-600/40 flex items-center gap-1">
+                      <CheckCircle2 size={11} /> Confirmed
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500">{r.suggestion?.reason}</p>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={r.chosenOrdinal ?? ''}
+                    disabled={r.confirmed}
+                    onChange={(e) => onChoose(i, e.target.value === '' ? null : Number(e.target.value))}
+                    className="flex-1 bg-slate-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  >
+                    <option value="">— pick a chapter —</option>
+                    {numbered.map((e) => (
+                      <option key={e.ordinal} value={e.ordinal}>
+                        Chapter {e.ordinal} — {e.title}{e.fileOrdinal != null ? ` (File #${e.fileOrdinal})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {r.confirmed ? (
+                    <button onClick={() => onUnconfirm(i)}
+                      className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors">
+                      Unconfirm
+                    </button>
+                  ) : (
+                    <button onClick={() => onConfirm(i)} disabled={r.chosenOrdinal == null}
+                      className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold bg-primary-600 hover:bg-primary-700 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors">
+                      Confirm
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <p className="text-xs text-slate-500">
+          {confirmedCount} confirmed · {readyToConfirmCount} ready to confirm · {needsPickCount} need a manual pick
+        </p>
+        <div className="ml-auto flex items-center gap-2">
+          <button onClick={onCancel} className="px-3 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:text-white hover:bg-white/5 transition-colors">
+            Cancel, back to file list
+          </button>
+          <button onClick={onConfirmAll} disabled={readyToConfirmCount === 0}
+            className="px-3 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 transition-colors">
+            Confirm All ({readyToConfirmCount})
+          </button>
+          <button onClick={onProcess} disabled={confirmedCount === 0}
+            className="px-4 py-2 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white transition-colors">
+            Process {confirmedCount} Confirmed File{confirmedCount === 1 ? '' : 's'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Main page ──────────────────────────────────────────────────── */
 
 const WIZARD_STEPS = ['type', 'classify', 'input', 'results'];
@@ -610,10 +733,23 @@ export default function AdminContentIntake() {
     // this wrong would silently break every single-book subject's lookup,
     // which is most of them. Under fail-closed this now surfaces as a REFUSED
     // upload rather than a silently mis-filed one, which is the point.
+    // Excludes 'superseded' explicitly, then picks in JS rather than trusting
+    // .maybeSingle() — 20260813020000 lets superseded revisions "pile up
+    // freely", and a book mid-revision can briefly have BOTH a live approved
+    // row and a new not-yet-approved draft. Either shape returns more than
+    // one row for this combo, which .maybeSingle() treats as an error and
+    // silently resolves to null here — the upload gate below reads that as
+    // "no manifest", wrongly blocking uploads against a manifest that's
+    // still perfectly approved. Preferring 'approved' over 'draft' keeps
+    // uploads working off the live manifest while a revision is in flight.
     let q = supabase.from('chapter_manifests').select('id, status, entries, book, file_structure')
-      .eq('exam_type', dbExamType).eq('subject', subject);
+      .eq('exam_type', dbExamType).eq('subject', subject).in('status', ['draft', 'approved']);
     q = book ? q.eq('book', book) : q.is('book', null);
-    q.maybeSingle().then(({ data }) => { if (!cancelled) setManifestRow(data ?? null); });
+    q.then(({ data }) => {
+      if (cancelled) return;
+      const rows = data ?? [];
+      setManifestRow(rows.find((r) => r.status === 'approved') ?? rows.find((r) => r.status === 'draft') ?? null);
+    });
     return () => { cancelled = true; };
   }, [dbExamType, subject, book, step, contentType]);
 
@@ -667,6 +803,20 @@ export default function AdminContentIntake() {
   // never created a controller, so it was dead wiring and an operator watching
   // a stuck page had nothing to press.
   const abortRef = useRef(null);
+
+  // Multi-file match & review — notes uploads against an approved manifest
+  // only. Extraction (extractPagesWithVision) runs ONCE per file here, during
+  // matching; Process below reuses the same `pages` rather than re-fetching
+  // and re-extracting, so confirming a match costs no extra AI call. Detection
+  // itself (pageRangeMatch.js) is deliberately NOT an AI call either — see
+  // that file's header for why running the model here would reintroduce the
+  // exact un-anchored chapter-boundary guess this whole pipeline exists to
+  // prevent.
+  const [matchPhase, setMatchPhase] = useState('idle'); // 'idle' | 'matching' | 'review'
+  const [matchRows,  setMatchRows]  = useState([]);
+  // [{ item, pages, figures, equationsByPage, visionPageCount, failedPages,
+  //    detectedRange, suggestion, chosenOrdinal, confirmed, error }]
+  const [matchErr, setMatchErr] = useState('');
 
   function changeExamBase(e) {
     setExamBase(e);
@@ -735,6 +885,147 @@ export default function AdminContentIntake() {
 
   function handleCancel() {
     abortRef.current?.abort(new DOMException('Cancelled by operator', 'AbortError'));
+  }
+
+  /* ── Multi-file match & review (notes + approved manifest only) ──────
+   *
+   * Runs extraction ONCE per file (extractPagesWithVision, identical to what
+   * handleProcess already does for a single file) and a cheap, deterministic
+   * page-range detection — no second AI call, no model-guessed chapter
+   * boundaries. Produces a SUGGESTION per file; nothing is written here.
+   */
+  async function handleMatchFiles() {
+    const selected = items.filter((it) => it.selected);
+    if (!selected.length || !approvedManifest) return;
+    setMatchErr(''); setMatchPhase('matching');
+
+    const rows = [];
+    for (const it of selected) {
+      try {
+        const buf = await getBytes(it);
+        const { pages, figures, equationsByPage, visionPageCount, failedPages } = await extractPagesWithVision(
+          buf, { subject, examType: dbExamType, chapter: it.chapter || chapterHint }, { forceVision },
+        );
+        const rawText = pages.join('\n\n').trim();
+        if (!rawText || rawText.length < 100) {
+          rows.push({ item: it, error: 'No extractable text found in this file.' });
+          continue;
+        }
+        const detectedRange = detectPrintedPageRange(pages);
+        const suggestion = matchFileToManifest({ detectedRange, filename: it.name, entries: approvedManifest });
+        rows.push({
+          item: it, pages, figures, equationsByPage, visionPageCount, failedPages,
+          detectedRange, suggestion,
+          // Pre-selected ONLY when the suggestion resolved to exactly one
+          // candidate — 'multiple' and 'conflict' and 'none' all leave this
+          // null, forcing an explicit pick. `confirmed` starts false even
+          // when pre-selected: no confidence tier ever auto-confirms.
+          chosenOrdinal: suggestion.suggested.length === 1 ? suggestion.suggested[0].ordinal : null,
+          confirmed: false, error: null,
+        });
+      } catch (e) {
+        rows.push({ item: it, error: e.message });
+      }
+    }
+    setMatchRows(rows);
+    setMatchPhase('review');
+  }
+
+  function chooseOrdinalForRow(i, ordinal) {
+    setMatchRows((rs) => rs.map((r, n) => n === i ? { ...r, chosenOrdinal: ordinal, confirmed: false } : r));
+  }
+  function confirmRow(i) {
+    setMatchRows((rs) => rs.map((r, n) => n === i && r.chosenOrdinal != null ? { ...r, confirmed: true } : r));
+  }
+  function unconfirmRow(i) {
+    setMatchRows((rs) => rs.map((r, n) => n === i ? { ...r, confirmed: false } : r));
+  }
+  // Convenience only — confirms whatever is CURRENTLY selected per row. A row
+  // with no selection (ambiguous/conflict/none) has nothing to confirm and
+  // stays exactly as unconfirmed as it was; there is no selection this could
+  // silently invent.
+  function confirmAllRows() {
+    setMatchRows((rs) => rs.map((r) => r.chosenOrdinal != null && !r.error ? { ...r, confirmed: true } : r));
+  }
+  function cancelMatchReview() {
+    setMatchPhase('idle'); setMatchRows([]); setMatchErr('');
+  }
+
+  /* Processes only CONFIRMED rows. Reuses the `pages` already extracted
+   * during matching — no second extraction, no second AI-cost pass. Rows
+   * left unconfirmed simply aren't touched and stay in the review list for a
+   * later round; this is the one save path for the whole feature — same
+   * saveNoteChunks call handleProcess's notes branch already makes. */
+  async function handleProcessConfirmed() {
+    const toRun = matchRows.filter((r) => r.confirmed && r.chosenOrdinal != null);
+    if (!toRun.length) return;
+    setStep('results');
+    setBatchRunning(true);
+    setBatchErr('');
+    setBatchResults(toRun.map((r) => ({ name: r.item.name, status: 'pending', message: 'Waiting…' })));
+
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
+    for (let i = 0; i < toRun.length; i++) {
+      const row = toRun[i];
+      const it = row.item;
+      const setStepMsg = (patch) => setBatchResults((rs) => rs.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+
+      if (ctrl.signal.aborted) { setStepMsg({ status: 'cancelled', message: 'Cancelled before it started' }); continue; }
+      setStepMsg({ status: 'processing', message: 'Structuring…' });
+
+      try {
+        const entry = approvedManifest.find((e) => e.ordinal === row.chosenOrdinal);
+        const covered = [entry];
+
+        // Same traceability as the reactive picker — which file went to
+        // which entry, by whom, and whether the match screen suggested it or
+        // the admin overrode it, independent of confidence tier.
+        logChange(ENTITY.CONTENT_ITEM, it.name, ACTION.UPDATE, {
+          before: { detectedRange: row.detectedRange, confidence: row.suggestion?.confidence ?? null },
+          after:  { chosenOrdinal: entry.ordinal, chosenTitle: entry.title },
+        }, `Multi-file review: "${it.name}" confirmed for "${entry.title}" (chapter ${entry.ordinal}), `
+          + `match confidence was "${row.suggestion?.confidence ?? 'n/a'}".`);
+
+        const { unit, lessons, warnings: structureWarnings } = await extractNotesByManifest({
+          pages: row.pages, entries: covered, examType: dbExamType, subject,
+          onProgress: (msg) => setStepMsg({ message: msg }),
+          fileStructure: manifestRow?.file_structure ?? 'combined',
+        });
+        setStepMsg({ message: `Saving ${lessons.length} chapter(s)…` });
+        const { kbCount, chapterName, lessonCount, flagged } = await saveNoteChunks({
+          unit, lessons, examType: dbExamType, subject, chapter: it.chapter || chapterHint,
+          source: `${it.source}:${it.name}`, callerUid, syllabusChapters: syllabusChapterNames,
+          figures: row.figures, equationsByPage: row.equationsByPage,
+          manifestRow, filename: it.name, book: book || null, classLevel,
+        });
+        const structureNote = structureWarnings?.length ? ` · ⚠ ${structureWarnings.join('; ')}` : '';
+        const failNote = row.failedPages?.length
+          ? ` · ${row.failedPages.length} page(s) FAILED to read`
+          : '';
+        setStepMsg({
+          status: row.failedPages?.length ? 'partial' : 'done',
+          message: `${kbCount} chunks saved across ${lessonCount} lesson${lessonCount !== 1 ? 's' : ''}${unit ? ` (${unit})` : ''} · "${chapterName}"`
+            + (row.visionPageCount ? ` · ${row.visionPageCount} page(s) read by vision` : '')
+            + (flagged ? ' · chapter accepted with 2 of 3 signals' : '')
+            + failNote + structureNote,
+        });
+      } catch (e) {
+        if (e?.name === 'AbortError' || ctrl.signal.aborted) {
+          setStepMsg({ status: 'cancelled', message: 'Cancelled — nothing was saved for this file' });
+        } else {
+          setStepMsg({ status: 'error', message: e.message });
+        }
+      }
+    }
+
+    abortRef.current = null;
+    setBatchRunning(false);
+    // Drop only the rows that actually ran — anything left unconfirmed stays
+    // available if the admin wants to come back to it in this same session.
+    setMatchRows((rs) => rs.filter((r) => !(r.confirmed && r.chosenOrdinal != null)));
+    if (!matchRows.some((r) => !(r.confirmed && r.chosenOrdinal != null))) setMatchPhase('idle');
   }
 
   async function handleProcess() {
@@ -1165,7 +1456,7 @@ export default function AdminContentIntake() {
             )}
           </div>
 
-          {items.length > 0 && (
+          {matchPhase !== 'review' && items.length > 0 && (
             <div className="bg-slate-900/60 border border-white/8 rounded-2xl p-5 space-y-2">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{items.filter((i) => i.selected).length} file(s) queued</p>
               <div className="border border-white/5 rounded-xl divide-y divide-white/5 max-h-72 overflow-y-auto">
@@ -1186,6 +1477,8 @@ export default function AdminContentIntake() {
             </div>
           )}
 
+          {matchPhase !== 'review' && (
+          <>
           {/* Restates the destination immediately above Process. The exam type
               is chosen two steps earlier and persists across uploads, so
               without this the only place it appears is a screen the admin has
@@ -1220,15 +1513,43 @@ export default function AdminContentIntake() {
             </span>
           </label>
 
+          {matchErr && <p className="text-sm text-red-300 bg-red-900/20 border border-red-700/20 rounded-xl px-4 py-3">{matchErr}</p>}
+
           <div className="flex gap-3">
             <button onClick={goBack} className="px-4 py-2.5 rounded-xl border border-white/10 text-slate-400 hover:text-white hover:bg-white/5 text-sm font-semibold flex items-center gap-1.5 transition-colors">
               <ChevronLeft size={14} /> Back
             </button>
-            <button onClick={handleProcess} disabled={!canProceedInput}
-              className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2 transition-colors">
-              <Inbox size={15} /> Process {items.filter((i) => i.selected).length || ''} File{items.filter((i) => i.selected).length === 1 ? '' : 's'}
-            </button>
+            {contentType === 'notes' && approvedManifest ? (
+              <button onClick={handleMatchFiles} disabled={!canProceedInput || matchPhase === 'matching'}
+                className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2 transition-colors">
+                {matchPhase === 'matching' ? <Loader2 size={15} className="animate-spin" /> : <Network size={15} />}
+                {matchPhase === 'matching' ? 'Matching…' : `Match ${items.filter((i) => i.selected).length || ''} File${items.filter((i) => i.selected).length === 1 ? '' : 's'} to Chapters`}
+              </button>
+            ) : (
+              <button onClick={handleProcess} disabled={!canProceedInput}
+                className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2 transition-colors">
+                <Inbox size={15} /> Process {items.filter((i) => i.selected).length || ''} File{items.filter((i) => i.selected).length === 1 ? '' : 's'}
+              </button>
+            )}
           </div>
+          </>
+          )}
+
+          {/* ── Match & review screen — notes + approved manifest only.
+              Nothing above this line has saved anything; nothing below saves
+              anything either until a row is explicitly confirmed. ── */}
+          {matchPhase === 'review' && (
+            <MatchReviewScreen
+              rows={matchRows}
+              manifestEntries={approvedManifest ?? []}
+              onChoose={chooseOrdinalForRow}
+              onConfirm={confirmRow}
+              onUnconfirm={unconfirmRow}
+              onConfirmAll={confirmAllRows}
+              onCancel={cancelMatchReview}
+              onProcess={handleProcessConfirmed}
+            />
+          )}
         </motion.div>
       )}
 
@@ -1299,7 +1620,10 @@ export default function AdminContentIntake() {
                   <Network size={15} /> View in Content Map <ArrowRight size={13} />
                 </button>
               )}
-              <button onClick={() => { setStep('type'); setContentType(''); setItems([]); setBatchResults([]); }}
+              <button onClick={() => {
+                setStep('type'); setContentType(''); setItems([]); setBatchResults([]);
+                setMatchPhase('idle'); setMatchRows([]); setMatchErr('');
+              }}
                 className="flex-1 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white text-sm font-bold transition-colors">
                 Start New Upload
               </button>
