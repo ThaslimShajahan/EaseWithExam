@@ -1,11 +1,13 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Mail, MessageCircle, Phone } from 'lucide-react';
 import { PublicNavBar, PublicFooter } from '../components/layout/PublicChrome';
 import { useSeo } from '../lib/seo';
+import { usePlatformSettings } from '../hooks/usePlatformSettings';
 
 export default function ContactPage() {
   useSeo('/contact');
   const navigate = useNavigate();
+  const { support_widget_enabled } = usePlatformSettings();
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -34,6 +36,24 @@ export default function ContactPage() {
             Questions about your account, a bug report, a billing issue, or feedback on EaseWithExam — email or
             call us and we'll get back to you.
           </p>
+          {/* Redber chat, gated behind Admin > Platform > Settings — same
+              on/off pattern as the cookie banner, default off. Links into
+              the same /support page the Help Center entry does, not a
+              second implementation — see docs/CHANGELOG.md 2026-08-19. */}
+          {support_widget_enabled === 'true' && (
+            <Link
+              to="/support"
+              className="flex items-center gap-3 p-4 rounded-2xl border border-slate-100 hover:border-primary-200 hover:bg-primary-50/50 transition-colors"
+            >
+              <div className="h-10 w-10 rounded-xl bg-primary-100 flex items-center justify-center shrink-0">
+                <MessageCircle size={18} className="text-primary-600" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-900">Chat with us</p>
+                <p className="text-xs text-slate-400">Get an instant answer from EWE Support</p>
+              </div>
+            </Link>
+          )}
           <a
             href="mailto:info@acenzos.com"
             className="flex items-center gap-3 p-4 rounded-2xl border border-slate-100 hover:border-primary-200 hover:bg-primary-50/50 transition-colors"

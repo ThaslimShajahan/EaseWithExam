@@ -40,6 +40,7 @@ const TermsOfServicePage   = lazy(() => import('./pages/TermsOfServicePage'));
 const RefundPolicyPage     = lazy(() => import('./pages/RefundPolicyPage'));
 const AboutPage            = lazy(() => import('./pages/AboutPage'));
 const ContactPage          = lazy(() => import('./pages/ContactPage'));
+const SupportPage          = lazy(() => import('./pages/SupportPage'));
 
 /* ── Admin (fully isolated) ────────────────────────────────── */
 // ~27 individual admin screens are grouped into 8 hubs (see Admin*Hub.jsx) — each hub
@@ -275,6 +276,7 @@ export default function App() {
         <Route path="/refund"     element={<RefundPolicyPage />} />
         <Route path="/about"      element={<AboutPage />} />
         <Route path="/contact"    element={<ContactPage />} />
+        <Route path="/support"    element={<SupportPage />} />
         {COACHING_MODULE_ENABLED && (
           <Route path="/coaching-invite/:code" element={<CoachingStaffJoinPage />} />
         )}

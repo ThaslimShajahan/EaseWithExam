@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Settings, Upload, Image, Cookie, Palette, Globe, CheckCircle2, Loader2, AlertTriangle, Trash2, Sparkles, Percent, ArrowUpRight } from 'lucide-react';
+import { Settings, Upload, Image, Cookie, Palette, Globe, CheckCircle2, Loader2, AlertTriangle, Trash2, Sparkles, Percent, ArrowUpRight, LifeBuoy } from 'lucide-react';
 import { supabase, adminClearAllData } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { invalidatePlatformSettings } from '../hooks/usePlatformSettings';
@@ -620,6 +620,29 @@ export default function AdminPlatformSettings() {
                 loading={savingKey === 'tax_label'} saved={saved === 'tax_label'} />
             </div>
           </div>
+        </SettingRow>
+      </div>
+
+      <div className="bg-slate-800/50 border border-white/5 rounded-2xl p-6">
+        <h2 className="font-bold text-white text-base mb-1">Support Widget</h2>
+        <p className="text-slate-500 text-xs mb-4">Redber AI chat, reached from Help Center's "Chat with us" — a full page (/support), not a floating bubble</p>
+
+        <SettingRow icon={LifeBuoy} label="Chat Support" hint="Enable or disable the Redber support chat link">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <div
+              onClick={() => {
+                const newVal = lv('support_widget_enabled') !== 'true' ? 'true' : 'false';
+                setLocalVals(prev => ({ ...prev, support_widget_enabled: newVal }));
+                saveSetting('support_widget_enabled', newVal);
+              }}
+              className={`relative w-10 h-6 rounded-full transition-colors ${lv('support_widget_enabled') === 'true' ? 'bg-emerald-500' : 'bg-slate-600'}`}
+            >
+              <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-all ${lv('support_widget_enabled') === 'true' ? 'left-5' : 'left-1'}`} />
+            </div>
+            <span className="text-sm text-slate-300">
+              {lv('support_widget_enabled') === 'true' ? 'Widget enabled' : 'Widget disabled'}
+            </span>
+          </label>
         </SettingRow>
       </div>
 

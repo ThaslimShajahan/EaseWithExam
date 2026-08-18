@@ -10,6 +10,10 @@ const DEFAULTS = {
   ewe_avatar_url:         '',
   cookie_banner_enabled:  'false',
   cookie_banner_text:     'We use cookies to improve your experience. By continuing, you agree to our use of cookies.',
+  // Redber chat support — gates the "Chat with us" link on HelpPage, which
+  // opens /support (SupportPage.jsx), a full page, not a floating bubble.
+  // Off by default — added 2026-08-19, not turned on until checked live.
+  support_widget_enabled: 'false',
   // The prefix on a student's "Bonus access" badge (ExpiryBadge.jsx) when they
   // have an active quota grant — e.g. swap it to "Independence Day Special" for
   // the duration of a named campaign. Only the label is editable; the day/hour

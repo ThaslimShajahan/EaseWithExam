@@ -8,6 +8,7 @@ import {
   Sparkles, HelpCircle, ExternalLink, Headphones, BookMarked,
 } from 'lucide-react';
 import { FAQ_FLAT } from '../lib/landingContent';
+import { usePlatformSettings } from '../hooks/usePlatformSettings';
 
 /* ─── Data ──────────────────────────────────────────────────────────── */
 const FEATURES = [
@@ -230,6 +231,8 @@ export default function HelpPage() {
   const [search,   setSearch]   = useState('');
   const [catTab,   setCatTab]   = useState('All');
   const [faqQuery, setFaqQuery] = useState('');
+  const navigate = useNavigate();
+  const { support_widget_enabled } = usePlatformSettings();
 
   const filteredFeatures = useMemo(() => {
     const q = search.toLowerCase();
@@ -422,7 +425,7 @@ export default function HelpPage() {
       </div>
 
       {/* ── Support nudge ── */}
-      <div className="bg-gradient-to-br from-slate-50 to-primary-50 rounded-2xl p-5 border border-primary-100 flex items-center gap-4">
+      <div className="bg-gradient-to-br from-slate-50 to-primary-50 rounded-2xl p-5 border border-primary-100 flex items-center gap-4 flex-wrap">
         <div className="h-12 w-12 rounded-2xl bg-primary-100 flex items-center justify-center shrink-0">
           <MessageCircle size={22} className="text-primary-600" />
         </div>
@@ -430,10 +433,32 @@ export default function HelpPage() {
           <p className="font-semibold text-slate-800 text-sm">Still have questions?</p>
           <p className="text-xs text-slate-500 mt-0.5">Ask EWE — it knows your progress and can help with study strategy, not just subject doubts.</p>
         </div>
-        <a href="mailto:support@easewithexam.in"
-          className="flex items-center gap-1 text-xs font-bold text-primary-600 hover:text-primary-700 shrink-0 transition-colors">
-          Email <ExternalLink size={11} />
-        </a>
+        <div className="flex items-center gap-3 shrink-0">
+          {/* Redber chat, gated behind Admin > Platform > Settings — same
+              on/off pattern as the cookie banner, default off. A full page
+              (/support), not a floating bubble — see SupportPage.jsx /
+              docs/CHANGELOG.md 2026-08-19 for why the floating widget.js
+              approach was dropped (hardcoded position overlapped real page
+              content, no icon control, an unconditional auto-open). */}
+          {support_widget_enabled === 'true' && (
+            <button
+              onClick={() => navigate('/support')}
+              className="flex items-center gap-1 text-xs font-bold text-primary-600 hover:text-primary-700 transition-colors"
+            >
+              Chat with us <MessageCircle size={11} />
+            </button>
+          )}
+          <a href="mailto:support@easewithexam.in"
+            className="flex items-center gap-1 text-xs font-bold text-primary-600 hover:text-primary-700 transition-colors">
+            Email <ExternalLink size={11} />
+          </a>
+          {/* Parity with the public /contact page's phone entry — a signed-in
+              student had no phone option here before, only email + (now) chat. */}
+          <a href="tel:+916238910451"
+            className="flex items-center gap-1 text-xs font-bold text-primary-600 hover:text-primary-700 transition-colors">
+            Call <ExternalLink size={11} />
+          </a>
+        </div>
       </div>
 
     </div>
