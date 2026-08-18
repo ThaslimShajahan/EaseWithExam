@@ -734,6 +734,60 @@ bug that was just fixed, and it should climb once the fix is deployed.
 
 Re-submit the sitemap after deploying, since `lastmod` changed.
 
+> **RESOLVED 2026-08-19 — sitemap resubmitted, but only after finding and
+> fixing a real regression that was silently undoing the canonical fix.**
+>
+> Checking real indexation status (`site:easewithexam.com`, zero results)
+> surfaced something worse than "was the sitemap resubmitted": **every one
+> of `/about`, `/contact`, `/privacy`, `/terms`, `/refund` had been serving
+> the HOMEPAGE's title and canonical since 2026-08-15** — the exact
+> duplicate-content bug the prerender/canonical fix (RESOLVED 2026-08-14,
+> below) was supposed to have closed for good, quietly undone by the
+> nginx-404 fix (RESOLVED above) that shipped the very same day.
+>
+> **Root cause:** the nginx app-route block used `try_files $uri
+> /index.html;` for every route, including the 5 that are real prerendered
+> *directories* (`dist/about/index.html`, not a file at `/about`). Without
+> `$uri/` in that list, nginx never resolved the directory and fell
+> straight through to the root shell — same HTTP 200, completely
+> different content. **4 days undetected**, because both the original
+> fix's own verification and this project's own deploy procedure checked
+> status codes and the bundle hash only — neither can tell "the right
+> page" from "a different page that also returns 200."
+>
+> **Fix:** `scripts/gen-nginx-routes.mjs` now splits the app-route
+> alternation in two — prerendered routes (derived from `PAGE_SEO`, not a
+> fourth hand-maintained list) get `try_files $uri $uri/ /index.html;`;
+> pure SPA-only routes (`/dashboard`, `/study`, etc.) keep the original
+> `try_files $uri /index.html;` unchanged. Reapplied via CloudPanel's
+> Vhost editor (same manual path as the original fix — still no SSH/sudo
+> for this).
+>
+> **Verified live by content, not status code**, all 5 routes:
+> - `/about/` → title "About EaseWithExam...", canonical `.../about/`
+> - `/contact/` → title "Contact EaseWithExam...", canonical `.../contact/`
+> - `/privacy/` → title "Privacy & Cookie Policy...", canonical `.../privacy/`
+> - `/terms/` → title "Terms of Service...", canonical `.../terms/`
+> - `/refund/` → title "Refund Policy...", canonical `.../refund/`
+>
+> Each response is now a distinct byte size (16954/17566/20010/18996/18324),
+> not the identical 60677-byte homepage copy all five returned before. Bonus:
+> the bare no-slash form (`/about`) now correctly issues a real `301 →
+> /about/`, matching this file's own original description of expected
+> static-server behavior — before the fix it silently 200'd with homepage
+> content directly, a second symptom of the same bug. Confirmed the fix
+> didn't touch what it wasn't meant to: `/dashboard` still falls through to
+> the empty SPA shell exactly as before, `/no-such-page` still a genuine 404.
+>
+> Sitemap resubmitted in Search Console *after* this landed — resubmitting
+> earlier would just have had Google re-crawl 5 duplicate-homepage pages.
+>
+> **Lesson recorded structurally, not just here:** `docs/DEPLOY.md` gained a
+> standing step (Gotcha 4) requiring a title+canonical check for every
+> prerendered route on every future deploy that touches routing — a 200
+> status code proved nothing about which page was actually served, and
+> won't next time either unless someone actually reads the content.
+
 ### 3. Decide on analytics
 
 No vendor is wired — `src/lib/analytics.js` is a working no-op with both paths
