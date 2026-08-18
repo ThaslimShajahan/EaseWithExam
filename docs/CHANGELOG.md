@@ -4,6 +4,20 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-19 — Student/parent support chat (Help Center + Contact), disabled by default
+
+Redber AI chat (bot `ewe-support-vo3wl`) wired up as a "Chat with us" entry on `/help` (student, authenticated) and `/contact` (public — parents and prospective students evaluating EWE pre-signup are often the ones with the most pricing/offer questions). Both link to one new `/support` page rather than a duplicate implementation.
+
+**Not their `widget.js` floating bubble.** The task started as "embed this script tag, exclude it from /admin". Reading the actual script (not just the embed snippet Redber gives you) surfaced three real problems: a hardcoded `bottom:20px;right:20px;z-index:999999` position that collided with this app's own fixed bottom UI (BottomNav, the cookie banner, NotificationToast) and, worse, real page content on some screens; no attribute to swap the generic red chat icon for the brand mark; and an **unconditional 5-second auto-open** on every single page load, found only by reading the script — nothing in the embed snippet mentions it. Went through three shapes before landing: a raw floating bubble (dropped for the above), a smaller logo-only floating trigger (dropped — still overlapped real content on mobile), and finally a plain entry point inside the existing Help Center and Contact pages, no floating element anywhere.
+
+`/support` iframes Redber's own standalone `/embed/{botId}` page directly (confirmed live: a genuine full page, not a widget fragment) inside this app's normal layout — full control over placement and icon, no surprise auto-open.
+
+**Found and fixed a real rendering bug along the way**, not just a cosmetic one: the chat body rendered blank white inside the first `/support` layout, which sized the iframe via `min-h-[70vh]` nested inside a `flex-1` chain. Isolated the cause by testing a plain fixed-height iframe against the same embed URL outside the app entirely — that rendered correctly, which meant Redber's page needs a definite, already-resolved iframe height on first layout, not one that only resolves after a later flex reflow. Fixed with an explicit `height: 70vh` in place of the flex-computed one.
+
+Gated behind Admin → Platform → Settings (`support_widget_enabled`, default `'false'`, same on/off pattern this project already uses for `cookie_banner_enabled`) — verified `false` via a direct query before and after every local test, and again after this deploy. The project owner will turn it on once ready for real students, same as the campaign section earlier.
+
+`/help`'s existing support nudge also gained a phone entry — it only had email before this, while `/contact` already had chat/email/phone; this closes that parity gap for signed-in students.
+
 ## 2026-08-19 — Found and fixed a 4-day regression silently undoing the canonical fix; tonight's deploy shipped it
 
 Started as a routine indexation check (`site:easewithexam.com`, zero results — Google search results confirm the site is not indexed) and a request to investigate a robots.txt "blocked" signal in Search Console. The robots.txt check came back clean: none of the 6 public routes match any of the 29 `Disallow` prefixes, and the "Indexed, though blocked" GSC signal is consistent with a stale index entry from before 2026-08-11 (when 19 routes moved from crawlable to disallowed), not a live bug — left alone.
