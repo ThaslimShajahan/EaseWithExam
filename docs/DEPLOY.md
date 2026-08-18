@@ -80,6 +80,20 @@ curl -s https://www.easewithexam.com/ | grep -o 'assets/index-[A-Za-z0-9_-]*\.js
 #   must equal the hash from step 1
 curl -s -o /dev/null -w '%{http_code}\n' https://www.easewithexam.com/assets/<hash>.js
 
+# 7b. Content check for every PRERENDERED route (currently /about, /contact,
+#     /privacy, /terms, /refund — the keys of PAGE_SEO minus '/' and '/404',
+#     same set scripts/gen-nginx-routes.mjs's prerenderedRoutes() derives).
+#     A 200 status code is NOT sufficient evidence the right page was served —
+#     see gotcha 4. Each one must show its OWN title and its OWN canonical,
+#     not the homepage's.
+for p in about contact privacy terms refund; do
+  echo "=== /$p/ ==="
+  curl -s "https://www.easewithexam.com/$p/" | grep -o '<title>[^<]*'
+  curl -s "https://www.easewithexam.com/$p/" | grep -o '<link rel="canonical" href="[^"]*"'
+done
+#   every title must be that page's own (never the homepage's), every
+#   canonical must end in /$p/ (never bare "/")
+
 # 8. Clean up — belt and braces; step 3 is the one that actually protects you
 ssh easewithexam 'rm -f ~/ewe-dist.tar.gz'
 ```
@@ -191,6 +205,29 @@ root. (`/home/easewithexam/htdocs/...` and
 `/home/easewithexamdeploy/htdocs/...` are the same directory — verified by
 inode, `2049:3146753` — so either path is fine; they are not two copies.)
 
+## Gotcha 4 — a 200 status code does not mean the right page was served
+
+**Every one of `/about`, `/contact`, `/privacy`, `/terms`, `/refund` served
+the HOMEPAGE's title and canonical for 4 days (2026-08-15 to 2026-08-19)
+while returning a clean HTTP 200 the entire time.** The nginx conf's
+app-route block tried `$uri` only; a prerendered route is a real
+*directory* (`dist/about/index.html`), not a file, so that check always
+failed and fell straight through to the root `index.html` — same status
+code, completely different content. Both the fix's own "RESOLVED" check
+and this project's own deploy step 7 checked status codes
+(`200/200/200/404`) and the served bundle hash, neither of which can
+distinguish "the right page" from "a different page that happens to also
+return 200."
+
+**Status code proves the server answered. It does not prove it answered
+with the page you asked for.** This applies beyond nginx changes — any
+change touching routing, `try_files`, redirects, or prerendering needs
+the content check in step 7b above, not just the status/hash checks
+above it. A wrong canonical or duplicate title is invisible to `curl -o
+/dev/null -w '%{http_code}'` and to a bundle-hash diff, and is exactly
+the kind of signal that gets a page quietly dropped from search results
+rather than erroring loudly enough to notice.
+
 ## Rollback
 
 ```bash
@@ -278,6 +315,13 @@ curl -s https://www.easewithexam.com/no-such-page | grep -o '<title>[^<]*'      
 
 All four must match. A 404 on `/dashboard` means the route alternation is
 missing a prefix — regenerate and reapply rather than hand-patching the server.
+
+**This is not sufficient on its own — see Gotcha 4.** `/about` returning 200
+does not mean it served *its own* page; run step 7b's content check
+(title + canonical for every prerendered route) after any nginx change,
+not just the status codes above. That exact gap is what let 4 days of
+every prerendered route silently serving the homepage's content go
+unnoticed the first time this section's procedure was followed.
 
 ### Why both a static and a React 404
 
