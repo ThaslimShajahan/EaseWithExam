@@ -2,10 +2,18 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PAGE_SEO, absUrl, SITE_URL } from '../seo';
-import { topLevelRoutes } from '../../../scripts/gen-nginx-routes.mjs';
+import { topLevelRoutes, prerenderedRoutes } from '../../../scripts/gen-nginx-routes.mjs';
 
 const ROOT = resolve(__dirname, '../../..');
 const read = (p) => readFileSync(resolve(ROOT, p), 'utf8');
+
+// Both regex `location` blocks in the conf, in file order: prerendered
+// routes first (try_files $uri $uri/ /index.html), then pure SPA-only
+// routes (try_files $uri /index.html).
+function routeLocationBlocks(conf) {
+  const matches = [...conf.matchAll(/location ~ \^\/\(([^)]+)\)[^{]*\{\s*try_files ([^;]+);/g)];
+  return matches.map((m) => ({ routes: m[1].split('|').sort(), tryFiles: m[2].trim() }));
+}
 
 describe('nginx route config', () => {
   /**
@@ -15,11 +23,37 @@ describe('nginx route config', () => {
    */
   it('is in sync with the routes declared in App.jsx', () => {
     const conf = read('deploy/nginx-easewithexam.conf');
-    const match = conf.match(/location ~ \^\/\(([^)]+)\)/);
-    expect(match, 'conf has no route alternation block').toBeTruthy();
+    const blocks = routeLocationBlocks(conf);
+    expect(blocks.length, 'conf does not have exactly 2 route alternation blocks').toBe(2);
 
-    const inConf = match[1].split('|').sort();
+    const inConf = [...blocks[0].routes, ...blocks[1].routes].sort();
     expect(inConf).toEqual(topLevelRoutes());
+  });
+
+  /**
+   * The regression this guards: 2026-08-15's nginx conf tried `$uri` only for
+   * every app route, including the 5 that ARE real prerendered directories
+   * (dist/about/index.html etc). Without `$uri/`, nginx never resolves that
+   * directory and falls straight to the root index.html — every prerendered
+   * page silently served the HOMEPAGE's title and canonical instead of its
+   * own, for 4 days, undetected because status codes were 200 either way.
+   */
+  it('gives prerendered routes $uri/ before falling back to the SPA shell', () => {
+    const conf = read('deploy/nginx-easewithexam.conf');
+    const blocks = routeLocationBlocks(conf);
+    const prerendered = blocks.find((b) => b.routes.includes('about'));
+    const spaOnly = blocks.find((b) => b.routes.includes('dashboard'));
+
+    expect(prerendered.routes).toEqual(prerenderedRoutes());
+    expect(prerendered.tryFiles).toBe('$uri $uri/ /index.html');
+
+    // Pure client-only routes have no prerendered file — $uri/ would only
+    // ever match the root's own directory, so this block deliberately keeps
+    // the original two-target form.
+    expect(spaOnly.tryFiles).toBe('$uri /index.html');
+    for (const route of prerenderedRoutes()) {
+      expect(spaOnly.routes, `${route} is prerendered but also in the SPA-only block`).not.toContain(route);
+    }
   });
 
   it('does not hoist nested admin routes to top level', () => {
