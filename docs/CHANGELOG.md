@@ -4,6 +4,59 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-18 — AI cost/efficiency pass; ai-proxy call attribution; OpenAI key rotated; permanent deploy history
+
+### AI cost/efficiency pass (duplicate-upload guard, mini-model drafts, retry cache, per_chapter page numbers)
+
+- `AdminContentIntake` now pre-checks `knowledge_base.chapter_key` before either extraction path runs (single-file/URL/Drive queue and the multi-file batch review) — warns with an explicit "Load anyway" override instead of silently re-spending on a chapter that's already loaded. Mirrors `bulk-load-unit-notes.mjs`'s own `alreadyLoadedKeys()`.
+- Manifest drafts (`draftManifestFromContentsPage`) now run on `gpt-4o-mini` — vision extraction and content structuring stay on `gpt-4o`, untouched. The draft still requires human review/approval before anything is gated, so a cheaper model here doesn't lower the bar on what gets approved.
+- New opt-in accidental-duplicate cache (`cachedChatComplete`, session-scoped, 15 min TTL, `temperature:0` only) wired into vision page reads and notes/PYQ structuring batches — deliberately never into plain `chatComplete()`, so a "Regenerate"-style caller still gets a fresh answer.
+- `'per_chapter'` manifests no longer require page numbers on numbered entries (matching there is already `fileOrdinal`-only); the manifest-draft prompt now tells the model to leave every `pageStart`/`pageEnd` null when a contents page prints none, rather than inventing one. Interleaved manifests are unaffected — they still always require page numbers.
+- Verified live: mini-model draft calls log `gpt-4o-mini` in `ai_call_log`, `checkAlreadyLoaded` correctly flags/clears against real fixture rows, a no-page-number contents page drafts with every `pageStart`/`pageEnd` null.
+
+### ai-proxy call attribution
+
+- New `ai_call_log` table (service-role write, admin-only read via `admin_list_ai_call_log`/`admin_ai_usage_summary`) tags every one of the 32 real `ai-proxy` call sites with a feature label — closes the gap where roughly 80% of that month's $84.45 OpenAI spend couldn't be attributed to any feature after the fact.
+- Hit the exact anon-grant mistake `20260815060000` had already documented and named, a fourth time this week: the two new RPCs were granted to `authenticated` only, and Firebase-authenticated PostgREST requests run every request as `anon` — unreachable for every real caller until a follow-up migration fixed it. Caught via a live smoke test before shipping.
+- **The OpenAI API key itself had been invalid/expired since the July audit** (`docs/ACTION_ITEMS_FOR_YOU.md`), blocking AI features. Rotated tonight and verified live via `ai_call_log` — a real (failed, insufficient-quota, unrelated) OpenAI call logged correctly with feature/model/status/error/duration.
+- Deployed and verified end-to-end at the time: migration pushed, `ai-proxy` edge function redeployed, tagged frontend bundle live as `index-DC-IQsmz.js`. **That is still the bundle actually being served as of the 2026-08-19 status check below** — the AI cost/efficiency pass above (duplicate-upload guard, mini-model drafts, retry cache, per_chapter exemption) was written and tested but never transferred to production. See the next entry for the deploy that ships it.
+
+### Permanent deploy history
+
+- New `deploy_log` table + `admin_insert_deploy_log`/`admin_list_deploy_log` RPCs (`SECURITY DEFINER`, gated by `assert_verified_admin`, same anon-grant posture as `ai_call_log`) — replaces "deploy history lives in chat transcripts and `DEPLOY.md`'s own prose" with a queryable, admin-visible record, versioned `YYYY.MM.DD.N`.
+- `/admin/changelog` (`AdminChangelog.jsx`, wired into `AdminOpsHub` as a new "Changelog" tab) — read-only, one entry per deploy, written once as the first step of `docs/DEPLOY.md`'s procedure. No update/delete RPC exists on purpose.
+- Verified locally (real Firebase admin sign-in, real RPC call, not mocked): `admin_list_deploy_log` returns real data (empty, correctly — no deploys logged yet at verification time), the tab renders, zero console errors.
+
+## 2026-08-16 — Multi-file batch upload; manifest-lookup `.maybeSingle()` bug
+
+- Multi-file batch upload for notes: each file's real printed page range is detected deterministically from its own text (`pageRangeMatch.js` — no second AI call, no model-guessed chapter boundaries) and matched against the manifest's page ranges plus the existing filename-ordinal signal. Feeds a mandatory per-row review screen (`MatchReviewScreen`) — every row, including full-agreement matches, needs an explicit Confirm before Process touches it; ambiguous, conflicting, or unreadable files get no pre-selection and must be picked manually.
+- Fixed a latent bug the end-to-end run surfaced: the manifest-lookup query had no status filter, so a book with both a live approved manifest and a newer in-progress draft returned more than one row, which `.maybeSingle()` treats as an error — silently resolving to "no manifest" and blocking uploads against a manifest that was still perfectly approved. Now filters to draft/approved, prefers approved when both exist.
+- Verified end-to-end against a seeded, approved 3-chapter manifest and three real fixture PDFs: a clean content+filename match, a content-only match, and a genuinely ambiguous file with no readable page numbers (correctly excluded from auto-selection, required a manual pick). Full suite (548 tests) and production build pass.
+
+## 2026-08-15 — Chapter manifest pipeline hardening; background job runner Tier 2; Refund Policy page
+
+### Manifest pipeline
+
+- `fileOrdinal` now defaults to `printedNumber`/`ordinal` at draft time instead of hardcoding null — was silently breaking Poorvi and CBSE Class 8 Mathematics, fixed each time by hand-editing the approved row. `admin_approve_chapter_manifest` now refuses to approve any manifest with a null `fileOrdinal` on a numbered entry, naming which ones.
+- New `chapter_manifests.file_structure` column (`'combined' | 'per_chapter'`) splits the page-range sanity check, which turned out to be combined-book-only logic applied universally: a per_chapter file's own page 1 isn't guaranteed to be the chapter's logical page 1, so the check is skipped entirely for those and `fileOrdinal` matching is the only signal. `inferFileStructure()` suggests a value from the entries' own `fileOrdinal` distribution; the admin screen shows it as a live hint and never auto-saves it.
+- Merge entries tool added to the Chapter Manifests draft editor — combines 2+ adjacent draft rows when text-only contents-page extraction can't reliably tell whether two lines are one entry wrongly split or two real ones. Refuses to merge non-adjacent rows rather than silently absorbing whatever sits between them.
+- `bulk-load-unit-notes.mjs`'s file filter fixed: required the literal substring "unit" (a leftover from Poorvi-only naming), so a normal numbered-chapter book matched zero files — found live trying to enqueue CBSE Class 9 English. Replaced with the real `fileOrdinalFrom()` parse, the same signal upload-time matching already uses.
+- Tier 2 of the background job runner: `content_jobs` gains a `'queued'` status, atomic claim (`for update skip locked`), and stale-`'running'` reclaim; `bulk-load-unit-notes.mjs` gains `--enqueue`/`--work` CLI modes; new admin Status tab (`AdminContentJobs.jsx`) with search, stats-as-filter, and a Requeue action on failed jobs.
+- Admin-override picker added for files that can't auto-match a manifest entry — always a picker over the manifest's closed set of entries, never free text. Every override is logged (filename, chosen entry, reason, actor, timestamp).
+- Coerced a model-returned `pageEnd` of `0` to null — page numbers are 1-indexed and can never legitimately be `0`.
+- Two more anon-grant bugs, same root cause as always (Firebase-authenticated PostgREST requests run as `anon`, not `authenticated`): `admin_upsert_chapter_manifest` (broke every manifest save, found live testing the merge tool) and the 18 other `admin_*` functions the audit script (`scripts/audit-admin-rpc-grants.mjs`) still flagged after an earlier one-time sweep. Both fixed and verified live (anon denied with a real security message, real admin session succeeds).
+
+### Public site
+
+- Refund Policy page added at `/refund` — was promised on the Pricing page and the paywall modal, and contradicted by Terms of Service. States a 7-day window per charge including renewals and a 5-7 business day processing estimate (industry-standard default pending owner sign-off). Terms of Service now points here instead of contradicting it.
+- nginx 404 fix marked RESOLVED and the real deploy path documented: the SSH procedure in `DEPLOY.md` turned out unusable (the deploy user has no sudo and can't read the vhost file) — CloudPanel's Vhost editor is what actually works, applied and verified live.
+
+### Investigated, no action taken
+
+- Background upload with no terminal step kept open: an in-tab worker doesn't actually solve it (the tab still has to stay open), and a real server-side/daemon worker is a separate project with its own attack surface. `--enqueue`/`--work` (above) is the usable path for now; logged as a future, unscoped project.
+
+---
+
 ## 2026-08-15 — Fixed the trailing-slash redirect that broke 4 of 5 public pages' canonical URLs
 
 Found via Search Console reporting "Page with redirect" for a public page. Root cause, confirmed live before fixing: `scripts/prerender.mjs` writes each non-root route to a real directory (`dist/about/index.html`), and a static server 301s any bare request for a URI that resolves to an actual directory, adding a trailing slash — independent of which nginx location block matches, so this was never dependent on which nginx config variant was live. `sitemap.xml`, `PAGE_SEO`'s canonical URLs, and prerender's own self-check all declared the *no-slash* form as canonical, so Google's crawler requested exactly the URL that redirects, landing on a page whose own baked-in canonical pointed straight back at the URL that had just redirected it there. `/` was never affected — it prerenders straight to `dist/index.html`, no subdirectory involved.
