@@ -33,7 +33,10 @@ Return JSON: { "entries": [ { "ordinal", "title", "unit", "pageStart", "pageEnd"
   or "fix" spelling.
 - pageStart / pageEnd: the printed page range for that chapter, from the
   contents page itself if it prints ranges, otherwise pageStart only and infer
-  pageEnd from the next entry's pageStart minus 1 (last chapter: null).
+  pageEnd from the next entry's pageStart minus 1 (last chapter: null). If the
+  page prints NO page numbers at all for ANY entry, set pageStart and pageEnd
+  to null for EVERY entry — chapter identity here comes from title and
+  ordinal, never invent a number the page does not show.
 - numbered: true for a chapter the contents page gives its own number
   (1, 2, 3...). false ONLY for something explicitly listed but NOT numbered in
   the sequence — an unnumbered poem inside a numbered prose section is the
@@ -75,8 +78,17 @@ export async function draftManifestFromContentsPage(arrayBuffer, ctx = {}) {
   const ex = await extractPagesWithVision(arrayBuffer, { subject, examType }, { extractFigures: false });
   const marked = ex.pages.map((t, i) => `[[PAGE ${i + 1}]]\n${t}`).join('\n\n');
 
+  // gpt-4o-mini, not gpt-4o: this call transcribes a short contents page into
+  // a small JSON list — the same kind of bounded, low-reasoning transcription
+  // task the content-review pass (AdminContentReview.jsx) already runs on
+  // mini. It produces a DRAFT that a human always reviews and explicitly
+  // approves before it gates anything (see this file's header) — a cheaper
+  // model here cannot silently degrade content quality, only the draft a
+  // human is about to check line-by-line anyway. Vision extraction above and
+  // the actual content-structuring pass (contentExtraction.js) stay on
+  // gpt-4o, untouched.
   const resp = await chatComplete({
-    model:           'gpt-4o',
+    model:           'gpt-4o-mini',
     max_tokens:      MANIFEST_MAX_TOKENS,
     temperature:     0,
     response_format: { type: 'json_object' },
@@ -167,7 +179,7 @@ export function requireApprovedManifest(manifestRow) {
   if (manifestRow.status !== 'approved') {
     throw new Error(`Manifest for this book is '${manifestRow.status}', not 'approved' — an admin must review and approve it before content can load.`);
   }
-  const { ok, errors } = validateManifest(manifestRow.entries);
+  const { ok, errors } = validateManifest(manifestRow.entries, manifestRow.file_structure);
   if (!ok) {
     // An approved manifest should never fail this — it means the immutability
     // guarantee in admin_upsert_chapter_manifest was bypassed somehow. Fail

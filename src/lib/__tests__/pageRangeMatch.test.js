@@ -125,4 +125,49 @@ describe('matchFileToManifest', () => {
     });
     expect(r.confidence).toBe('none');
   });
+
+  // Item 7 — per_chapter books whose contents page prints no page numbers at
+  // all: every entry's pageStart/pageEnd is null (see manifestExtraction.js
+  // and validateManifest's per_chapter relaxation). Matching must still work
+  // from fileOrdinal alone, with zero dependency on page numbers anywhere.
+  describe('per_chapter manifest with no page numbers anywhere', () => {
+    const noPageEntries = [
+      { ordinal: 1, title: 'Rational Numbers', numbered: true, pageStart: null, pageEnd: null, fileOrdinal: 1 },
+      { ordinal: 2, title: 'Linear Equations', numbered: true, pageStart: null, pageEnd: null, fileOrdinal: 2 },
+    ];
+
+    it('matches by filename ordinal alone when no printed page numbers were ever detected', () => {
+      const r = matchFileToManifest({
+        detectedRange: { firstPage: null, lastPage: null },
+        filename: '2 Linear Equations.pdf',
+        entries: noPageEntries,
+      });
+      expect(r.confidence).toBe('filename');
+      expect(r.suggested).toEqual([noPageEntries[1]]);
+    });
+
+    // A stray digit run on the page (a footnote, a year) must not be treated
+    // as a page-range match against an entry that has no real range to
+    // compare against — overlapFraction returns 0 for a null pageStart/
+    // pageEnd, so this can only ever fall through to the filename signal.
+    it('a spurious detected range never produces a false content-match against null page ranges', () => {
+      const r = matchFileToManifest({
+        detectedRange: { firstPage: 5, lastPage: 6 },
+        filename: '1 Rational Numbers.pdf',
+        entries: noPageEntries,
+      });
+      expect(r.confidence).toBe('filename');
+      expect(r.suggested).toEqual([noPageEntries[0]]);
+    });
+
+    it('falls through to "none" — never throws — when the filename also has no parseable ordinal', () => {
+      const r = matchFileToManifest({
+        detectedRange: { firstPage: null, lastPage: null },
+        filename: 'IMG_scan_final.pdf',
+        entries: noPageEntries,
+      });
+      expect(r.confidence).toBe('none');
+      expect(r.suggested).toEqual([]);
+    });
+  });
 });

@@ -11,7 +11,7 @@
  * match_knowledge_base as WHERE-clause filters.
  */
 
-import { chatComplete } from './aiProxy';
+import { cachedChatComplete } from './aiProxy';
 import { splitIntoBatches } from './pdfAnalyzer';
 
 
@@ -371,7 +371,9 @@ question fits none of them at all, use "Other".\n`
   for (let b = 0; b < batches.length; b++) {
     onProgress(batches.length > 1 ? `AI extracting questions… (part ${b + 1}/${batches.length})` : 'AI extracting questions…');
 
-    const resp = await chatComplete({
+    // cachedChatComplete — a retried/re-confirmed upload of the same paper
+    // resends an identical batch; see aiProxy.js's header for the scope.
+    const resp = await cachedChatComplete({
       model:           'gpt-4o',
       max_tokens:      PYQ_MAX_TOKENS,
       temperature:     0,
@@ -513,7 +515,9 @@ export async function runNotesExtraction({ rawText, pages, examType, subject, on
     // existing lesson instead of inventing a section-shaped one of its own.
     const seenTitles = mergedLessons.map((l) => l.title).filter(Boolean);
 
-    const resp = await chatComplete({
+    // cachedChatComplete — a retried/re-confirmed upload of the same file
+    // resends an identical batch; see aiProxy.js's header for the scope.
+    const resp = await cachedChatComplete({
       model:           'gpt-4o',
       max_tokens:      NOTES_MAX_TOKENS,
       temperature:     0,

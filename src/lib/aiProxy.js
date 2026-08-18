@@ -304,6 +304,77 @@ export async function chatComplete(params, {
   return runWithRetry(attempt, { signal, timeoutMs, maxAttempts, label: 'AI request' });
 }
 
+/* ── Recent-call cache (accidental-duplicate guard) ──────────────────────
+ *
+ * Exists for the ACCIDENTAL retry only: a content_jobs worker re-running a
+ * job whose write half failed after its AI half already succeeded, an admin
+ * re-confirming the same row after a transient error in the multi-file
+ * review screen, or a stray double-click on Process before the button
+ * disabled itself. All three re-send the EXACT SAME request body this
+ * session already got a successful answer for — paying OpenAI twice for an
+ * identical response teaches nothing new.
+ *
+ * Deliberately NOT wired into plain chatComplete(), and deliberately NOT a
+ * general response cache: most callers pass temperature > 0 specifically so
+ * a repeat call returns something DIFFERENT (a "Regenerate" practice paper,
+ * a fresh daily challenge, a podcast script) — caching those would silently
+ * turn "give me a new one" into "show me the same one again", a correctness
+ * bug wearing an optimisation's clothes. cachedChatComplete() is a separate,
+ * opt-in export that refuses to cache anything but temperature: 0 calls, and
+ * only the deterministic extraction call sites that actually see accidental
+ * duplicates (vision page reads, notes/PYQ structuring batches) use it.
+ *
+ * In-memory and per-tab, cleared on reload — a session-scoped safety net,
+ * never a durable store that could serve a stale answer across sessions or
+ * for a genuinely re-edited source file.
+ */
+const RECENT_CALL_TTL_MS = 15 * 60 * 1000;
+const RECENT_CALL_MAX_ENTRIES = 300;
+const recentCalls = new Map(); // sha256(params) -> { value, at }
+
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function pruneRecentCalls() {
+  const now = Date.now();
+  for (const [k, v] of recentCalls) if (now - v.at > RECENT_CALL_TTL_MS) recentCalls.delete(k);
+  while (recentCalls.size > RECENT_CALL_MAX_ENTRIES) recentCalls.delete(recentCalls.keys().next().value);
+}
+
+/** Test-only: wipes the cache so tests (and a fresh upload of genuinely
+ *  different content under a coincidentally-reused mock) don't leak state
+ *  across runs. */
+export function _clearRecentCallCache() { recentCalls.clear(); }
+
+/**
+ * Drop-in replacement for chatComplete() that skips the network entirely
+ * when this EXACT request body (model, messages, and every param — a
+ * byte-for-byte duplicate) already produced a successful response within the
+ * last 15 minutes. A cache hit never reaches ai-proxy, so it never writes an
+ * ai_call_log row — correct, since no real API call was made.
+ *
+ * Only ever caches temperature: 0, non-streaming calls; anything else is
+ * passed straight through to chatComplete() uncached, so a caller cannot opt
+ * into unsafe caching by accident.
+ */
+export async function cachedChatComplete(params, opts = {}) {
+  if (params?.temperature !== 0 || params?.stream) return chatComplete(params, opts);
+
+  pruneRecentCalls();
+  const key = await sha256Hex(JSON.stringify(params));
+  const hit = recentCalls.get(key);
+  if (hit) {
+    if (opts.signal?.aborted) throw opts.signal.reason ?? new DOMException('Aborted', 'AbortError');
+    return hit.value;
+  }
+
+  const resp = await chatComplete(params, opts);
+  recentCalls.set(key, { value: resp, at: Date.now() });
+  return resp;
+}
+
 /**
  * Streaming drop-in replacement for openai.chat.completions.create({ ...params, stream: true }).
  * Returns an async iterable yielding the same chunk shape as the OpenAI SDK

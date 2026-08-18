@@ -140,7 +140,7 @@ export default function AdminChapterManifest() {
 
   useEffect(() => { load(); }, [load]);
 
-  const validation = useMemo(() => validateManifest(entries), [entries]);
+  const validation = useMemo(() => validateManifest(entries, fileStructure), [entries, fileStructure]);
   const isApproved = row?.status === 'approved';
   // Live suggestion only — never overwrites fileStructure on its own past the
   // initial draft. null means "not enough signal yet" (some numbered entries
@@ -433,7 +433,9 @@ export default function AdminChapterManifest() {
                   <th className="text-left px-3 py-2 w-14">Ord</th>
                   <th className="text-left px-3 py-2">Title</th>
                   <th className="text-left px-3 py-2 w-56">Unit (grouping heading)</th>
-                  <th className="text-left px-3 py-2 w-20">Pages</th>
+                  <th className="text-left px-3 py-2 w-20" title={fileStructure === 'per_chapter' ? 'Optional for per_chapter books — File # alone is the match signal. Leave blank if the contents page prints no page numbers.' : undefined}>
+                    Pages{fileStructure === 'per_chapter' ? ' (optional)' : ''}
+                  </th>
                   <th className="text-left px-3 py-2 w-20"></th>
                   <th className="text-left px-3 py-2 w-20" title="The number printed next to this chapter in the book">Printed #</th>
                   <th className="text-left px-3 py-2 w-20" title="The chapter number in the FILENAME of the PDF that contains this chapter. Several chapters in one unit file share the same File #.">File #</th>

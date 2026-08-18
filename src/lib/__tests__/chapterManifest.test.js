@@ -127,6 +127,46 @@ describe('validateManifest — bad manifests never reach the approval screen', (
   });
 });
 
+/* Item 7 — per_chapter matching must not depend on page numbers at all. */
+describe('validateManifest — per_chapter books need no page numbers', () => {
+  const perChapterNoPages = [
+    { ordinal: 1, title: 'Rational Numbers', pageStart: null, pageEnd: null, numbered: true, printedNumber: 1, fileOrdinal: 1 },
+    { ordinal: 2, title: 'Linear Equations', pageStart: null, pageEnd: null, numbered: true, printedNumber: 2, fileOrdinal: 2 },
+  ];
+
+  it('accepts numbered entries with no page numbers at all when fileStructure is per_chapter', () => {
+    expect(validateManifest(perChapterNoPages, 'per_chapter')).toEqual({ ok: true, errors: [] });
+  });
+
+  it('still rejects the SAME manifest when fileStructure is combined (default/strict)', () => {
+    expect(validateManifest(perChapterNoPages, 'combined').ok).toBe(false);
+    // Omitted fileStructure keeps existing strict behaviour for old callers.
+    expect(validateManifest(perChapterNoPages).ok).toBe(false);
+  });
+
+  it('still catches a real typo — a half-filled range — even when per_chapter', () => {
+    const halfFilled = [{ ...perChapterNoPages[0], pageStart: 10, pageEnd: null }];
+    const r = validateManifest(halfFilled, 'per_chapter');
+    expect(r.ok).toBe(false);
+    expect(r.errors.join(' ')).toMatch(/both be set/);
+  });
+
+  it('still catches a backwards range when per_chapter and pages ARE given', () => {
+    const backwards = [{ ...perChapterNoPages[0], pageStart: 20, pageEnd: 5 }];
+    expect(validateManifest(backwards, 'per_chapter').errors.join(' ')).toMatch(/pageEnd 5 is before pageStart 20/);
+  });
+
+  it('interleaved entries still require page numbers even in a per_chapter manifest', () => {
+    const withInterleaved = [
+      ...perChapterNoPages,
+      { ordinal: 3, title: 'A Poem', numbered: false, pageStart: null, pageEnd: null },
+    ];
+    const r = validateManifest(withInterleaved, 'per_chapter');
+    expect(r.ok).toBe(false);
+    expect(r.errors.join(' ')).toMatch(/pageStart and pageEnd must be integers/);
+  });
+});
+
 describe('banded books — the case that would silently reject correct content', () => {
   it('accepts Writing Skills, where file ordinal 11 backs printed chapter 1', () => {
     const [d] = decideAssignments({

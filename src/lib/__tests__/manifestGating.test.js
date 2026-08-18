@@ -14,10 +14,10 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../aiProxy', () => ({ chatComplete: vi.fn(), AI_REQUEST_TIMEOUT_MS: 1000 }));
+vi.mock('../aiProxy', () => ({ cachedChatComplete: vi.fn(), AI_REQUEST_TIMEOUT_MS: 1000 }));
 vi.mock('../pdfVision', () => ({ extractPagesWithVision: vi.fn(), MAX_VISION_PAGES: 10 }));
 
-import { chatComplete } from '../aiProxy';
+import { cachedChatComplete } from '../aiProxy';
 import { validateManifest, fileOrdinalFrom, candidatesForFile } from '../chapterManifest';
 import { requireApprovedManifest } from '../manifestExtraction';
 import { extractNotesByManifest } from '../contentExtraction';
@@ -102,7 +102,7 @@ describe('requireApprovedManifest — the gate saveNoteChunks now calls first', 
 /* ── extractNotesByManifest: the split ───────────────────────────────── */
 describe('extractNotesByManifest — the manifest decides the split, not the model', () => {
   it('PERMIT: 3 manifest entries produce exactly 3 chapters, with the MANIFEST titles', async () => {
-    chatComplete.mockResolvedValue(modelReply(oneLesson()));
+    cachedChatComplete.mockResolvedValue(modelReply(oneLesson()));
 
     const { lessons, unit } = await extractNotesByManifest({
       pages: pagesFor(48), entries: UNIT1, examType: 'CBSE Class 8', subject: 'English',
@@ -120,7 +120,7 @@ describe('extractNotesByManifest — the manifest decides the split, not the mod
   });
 
   it('PERMIT: page ranges and ordinals come from the manifest, overriding model output', async () => {
-    chatComplete.mockResolvedValue(modelReply(oneLesson()));   // claims pages 99-99
+    cachedChatComplete.mockResolvedValue(modelReply(oneLesson()));   // claims pages 99-99
     const { lessons } = await extractNotesByManifest({
       pages: pagesFor(48), entries: UNIT1, examType: 'CBSE Class 8', subject: 'English',
     });
@@ -130,14 +130,14 @@ describe('extractNotesByManifest — the manifest decides the split, not the mod
   });
 
   it('PERMIT: each chapter is extracted from ONLY its own pages', async () => {
-    chatComplete.mockResolvedValue(modelReply(oneLesson()));
+    cachedChatComplete.mockResolvedValue(modelReply(oneLesson()));
     await extractNotesByManifest({
       pages: pagesFor(48), entries: UNIT1, examType: 'CBSE Class 8', subject: 'English',
     });
     // One model call per chapter, each seeing a different slice — this is what
     // makes cross-chapter merging impossible rather than merely unlikely.
-    expect(chatComplete).toHaveBeenCalledTimes(3);
-    const sent = chatComplete.mock.calls.map((c) => c[0].messages[1].content);
+    expect(cachedChatComplete).toHaveBeenCalledTimes(3);
+    const sent = cachedChatComplete.mock.calls.map((c) => c[0].messages[1].content);
     expect(sent[0]).toContain('page 1 body text');
     expect(sent[0]).not.toContain('page 17 body text');
     expect(sent[1]).toContain('page 17 body text');
@@ -145,24 +145,24 @@ describe('extractNotesByManifest — the manifest decides the split, not the mod
   });
 
   it('DENY: a manifest whose pages fall outside the file is refused, not clamped', async () => {
-    chatComplete.mockResolvedValue(modelReply(oneLesson()));
+    cachedChatComplete.mockResolvedValue(modelReply(oneLesson()));
     // 20-page file, but the manifest claims content up to page 47.
     await expect(extractNotesByManifest({
       pages: pagesFor(20), entries: UNIT1, examType: 'CBSE Class 8', subject: 'English',
     })).rejects.toThrow(/outside this 20-page file/);
     // Refused during the FIRST out-of-range chapter, so no later chapter is
     // half-extracted on the way to failing.
-    expect(chatComplete.mock.calls.length).toBeLessThan(3);
+    expect(cachedChatComplete.mock.calls.length).toBeLessThan(3);
   });
 
   it('DENY: no entries and no pages are both refused before any model call', async () => {
     await expect(extractNotesByManifest({ pages: pagesFor(10), entries: [] })).rejects.toThrow(/at least one manifest entry/);
     await expect(extractNotesByManifest({ pages: [], entries: UNIT1 })).rejects.toThrow(/requires the `pages` array/);
-    expect(chatComplete).not.toHaveBeenCalled();
+    expect(cachedChatComplete).not.toHaveBeenCalled();
   });
 
   it('DENY: a chapter whose slice yields no chunks fails rather than writing an empty chapter', async () => {
-    chatComplete.mockResolvedValue(modelReply([{ title: 'x', chunks: [] }]));
+    cachedChatComplete.mockResolvedValue(modelReply([{ title: 'x', chunks: [] }]));
     await expect(extractNotesByManifest({
       pages: pagesFor(48), entries: UNIT1, examType: 'CBSE Class 8', subject: 'English',
     // Refused either by runNotesExtraction's own empty check or by the
@@ -187,7 +187,7 @@ const MATHS_CH2 = [
 
 describe('extractNotesByManifest — fileStructure: per_chapter skips the page-range check', () => {
   it('PERMIT: the real Power Play case — book-wide page range does not fit the 46-page file, but per_chapter extracts anyway', async () => {
-    chatComplete.mockResolvedValue(modelReply(oneLesson()));
+    cachedChatComplete.mockResolvedValue(modelReply(oneLesson()));
     const { lessons, warnings } = await extractNotesByManifest({
       pages: pagesFor(46), entries: MATHS_CH2, examType: 'CBSE Class 8', subject: 'Mathematics',
       fileStructure: 'per_chapter',
@@ -195,13 +195,13 @@ describe('extractNotesByManifest — fileStructure: per_chapter skips the page-r
     expect(lessons).toHaveLength(1);
     expect(lessons[0].title).toBe('Power Play');
     // Whole file consumed, not a slice bounded by the (irrelevant) pageStart/pageEnd.
-    expect(chatComplete).toHaveBeenCalledTimes(1);
-    expect(chatComplete.mock.calls[0][0].messages[1].content).toContain('page 46 body text');
+    expect(cachedChatComplete).toHaveBeenCalledTimes(1);
+    expect(cachedChatComplete.mock.calls[0][0].messages[1].content).toContain('page 46 body text');
     expect(warnings).toEqual([]);
   });
 
   it('DENY (combined, unchanged): the exact real incident reproduced — two entries sharing one fileOrdinal (a mistaken combined-style read of a per-chapter book) still gets caught by the page-range check', async () => {
-    chatComplete.mockResolvedValue(modelReply(oneLesson()));
+    cachedChatComplete.mockResolvedValue(modelReply(oneLesson()));
     // What was ACTUALLY live for a few minutes during this incident: chapter
     // 1 and chapter 2 both pointing at fileOrdinal 2, so candidatesForFile
     // returns both and offset comes from chapter 1's pageStart (1), not
@@ -222,7 +222,7 @@ describe('extractNotesByManifest — fileStructure: per_chapter skips the page-r
   });
 
   it('FLAG, DO NOT BLOCK: an implausibly short per_chapter file is warned, not refused', async () => {
-    chatComplete.mockResolvedValue(modelReply(oneLesson()));
+    cachedChatComplete.mockResolvedValue(modelReply(oneLesson()));
     const { lessons, warnings } = await extractNotesByManifest({
       pages: pagesFor(1), entries: MATHS_CH2, examType: 'CBSE Class 8', subject: 'Mathematics',
       fileStructure: 'per_chapter',
@@ -233,7 +233,7 @@ describe('extractNotesByManifest — fileStructure: per_chapter skips the page-r
   });
 
   it('FLAG, DO NOT BLOCK: an implausibly long per_chapter file is warned, not refused', async () => {
-    chatComplete.mockResolvedValue(modelReply(oneLesson()));
+    cachedChatComplete.mockResolvedValue(modelReply(oneLesson()));
     const { warnings } = await extractNotesByManifest({
       pages: pagesFor(400), entries: MATHS_CH2, examType: 'CBSE Class 8', subject: 'Mathematics',
       fileStructure: 'per_chapter',
@@ -243,7 +243,7 @@ describe('extractNotesByManifest — fileStructure: per_chapter skips the page-r
   });
 
   it('no warning for a normal-length per_chapter file', async () => {
-    chatComplete.mockResolvedValue(modelReply(oneLesson()));
+    cachedChatComplete.mockResolvedValue(modelReply(oneLesson()));
     const { warnings } = await extractNotesByManifest({
       pages: pagesFor(29), entries: MATHS_CH2, examType: 'CBSE Class 8', subject: 'Mathematics',
       fileStructure: 'per_chapter',
@@ -252,7 +252,7 @@ describe('extractNotesByManifest — fileStructure: per_chapter skips the page-r
   });
 
   it('DENY: a per_chapter file matching more than one entry is a manifest inconsistency, refused rather than silently duplicated', async () => {
-    chatComplete.mockResolvedValue(modelReply(oneLesson()));
+    cachedChatComplete.mockResolvedValue(modelReply(oneLesson()));
     const twoEntriesSameFile = [
       { ordinal: 1, title: 'A Square and A Cube', pageStart: 1,  pageEnd: 18, numbered: true, printedNumber: 1, fileOrdinal: 2 },
       { ordinal: 2, title: 'Power Play',          pageStart: 19, pageEnd: 47, numbered: true, printedNumber: 2, fileOrdinal: 2 },
@@ -261,7 +261,7 @@ describe('extractNotesByManifest — fileStructure: per_chapter skips the page-r
       pages: pagesFor(46), entries: twoEntriesSameFile, examType: 'CBSE Class 8', subject: 'Mathematics',
       fileStructure: 'per_chapter',
     })).rejects.toThrow(/matched 2 manifest entries.*per_chapter/s);
-    expect(chatComplete).not.toHaveBeenCalled();
+    expect(cachedChatComplete).not.toHaveBeenCalled();
   });
 });
 

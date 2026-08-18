@@ -25,7 +25,7 @@
  * rather than failing somewhere confusing downstream.
  */
 
-import { chatComplete, backoffMs, sleep } from './aiProxy';
+import { cachedChatComplete, backoffMs, sleep } from './aiProxy';
 import { loadPdfDocument, getPdfjs } from './pdfAnalyzer';
 import { supabase } from './supabase';
 
@@ -335,7 +335,13 @@ export async function visionExtractPage(
 /** One attempt. `fatal` marks a failure the caller must not repeat. */
 async function visionAttempt(dataUri, textLayer, ctx, signal, empty) {
   try {
-    const resp = await chatComplete({
+    // cachedChatComplete, not chatComplete — the same page image re-sent
+    // within this session (a document reprocessed after a partial failure, a
+    // content_jobs retry, an admin's "Load anyway" override re-running
+    // extraction) gets the cached read instead of a second billed call. See
+    // aiProxy.js's own header on why this is safe here (temperature: 0) and
+    // not wired in everywhere.
+    const resp = await cachedChatComplete({
       model: 'gpt-4o',
       max_tokens: 4000,
       temperature: 0,

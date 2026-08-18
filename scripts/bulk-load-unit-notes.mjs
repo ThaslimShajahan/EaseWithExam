@@ -209,7 +209,7 @@ async function loadManifest(exam, subject, book) {
     if (error) return { error: error.message };
     if (!data)  return { error: 'no manifest found for this exam/subject/book' };
     if (data.status !== 'approved') return { error: `manifest is '${data.status}', not approved` };
-    const v = validateManifest(data.entries);
+    const v = validateManifest(data.entries, data.file_structure);
     if (!v.ok) return { error: `approved manifest failed validation: ${v.errors.join('; ')}` };
     return { entries: data.entries, keyPrefix: data.key_prefix ?? 'c', fileStructure: data.file_structure ?? 'combined' };
   }, { exam, subject, book });

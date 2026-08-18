@@ -5,20 +5,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // per retry test for no added coverage. Returning 0 keeps the call-count
 // assertions honest while the suite stays fast.
 vi.mock('../aiProxy', () => ({
-  chatComplete: vi.fn(),
+  cachedChatComplete: vi.fn(),
   backoffMs:    vi.fn(() => 0),
   sleep:        vi.fn(() => Promise.resolve()),
 }));
 vi.mock('../pdfAnalyzer', () => ({ loadPdfDocument: vi.fn() }));
 vi.mock('../supabase', () => ({ supabase: { storage: { from: vi.fn() } } }));
 
-import { chatComplete } from '../aiProxy';
+import { cachedChatComplete } from '../aiProxy';
 import {
   needsVision, isUsableBbox, visionExtractPage,
   MIN_TEXT_CHARS, MAX_VISION_PAGES,
 } from '../pdfVision';
 
-beforeEach(() => { chatComplete.mockReset(); });
+beforeEach(() => { cachedChatComplete.mockReset(); });
 
 describe('needsVision — the gate that decides whether a page costs an AI call', () => {
   it.each([
@@ -78,7 +78,7 @@ describe('isUsableBbox — vision models are unreliable at coordinates', () => {
 });
 
 describe('visionExtractPage', () => {
-  const ok = (payload) => chatComplete.mockResolvedValue({
+  const ok = (payload) => cachedChatComplete.mockResolvedValue({
     choices: [{ message: { content: JSON.stringify(payload) } }],
   });
 
@@ -98,7 +98,7 @@ describe('visionExtractPage', () => {
     ok({ markdown: 'x', equations: [], figures: [] });
     await visionExtractPage('data:image/jpeg;base64,AAA', '', { pageNo: 3 });
 
-    const [params] = chatComplete.mock.calls[0];
+    const [params] = cachedChatComplete.mock.calls[0];
     expect(params.model).toBe('gpt-4o');
     const parts = params.messages.at(-1).content;
     expect(Array.isArray(parts)).toBe(true);
@@ -111,7 +111,7 @@ describe('visionExtractPage', () => {
   it('passes the existing text layer through as a disambiguation hint', async () => {
     ok({ markdown: 'x', equations: [], figures: [] });
     await visionExtractPage('data:image/jpeg;base64,AAA', 'partial layer text', { pageNo: 1 });
-    const text = chatComplete.mock.calls[0][0].messages.at(-1).content.find((p) => p.type === 'text').text;
+    const text = cachedChatComplete.mock.calls[0][0].messages.at(-1).content.find((p) => p.type === 'text').text;
     expect(text).toContain('partial layer text');
   });
 
@@ -123,7 +123,7 @@ describe('visionExtractPage', () => {
     ['empty choices',  { choices: [] },                                      /empty response/],
     ['no content',     { choices: [{ message: {} }] },                       /empty response/],
   ])('degrades to a FAILED result on %s, carrying the reason', async (_label, response, reason) => {
-    chatComplete.mockResolvedValue(response);
+    cachedChatComplete.mockResolvedValue(response);
     // attempts:1 keeps this focused on the degradation, not the retry.
     const r = await visionExtractPage('data:image/jpeg;base64,AAA', '', {}, { attempts: 1 });
     expect(r.markdown).toBe('');
@@ -133,40 +133,40 @@ describe('visionExtractPage', () => {
 
   /* A real upload lost page 9 of a Class X maths paper to "model returned
    * unparseable JSON" on the first and only attempt. The transport retry in
-   * chatComplete never saw it — a 200 with a bad body is not a transport
+   * cachedChatComplete never saw it — a 200 with a bad body is not a transport
    * failure — so the page was dropped for something a second call would very
    * likely have fixed. */
   it('retries an unparseable body and keeps the recovered page', async () => {
-    chatComplete
+    cachedChatComplete
       .mockResolvedValueOnce({ choices: [{ message: { content: '{ not json' } }] })
       .mockResolvedValueOnce({ choices: [{ message: { content: JSON.stringify({ markdown: 'recovered page', equations: [], figures: [] }) } }] });
 
     const r = await visionExtractPage('data:image/jpeg;base64,AAA', '', {});
-    expect(chatComplete).toHaveBeenCalledTimes(2);
+    expect(cachedChatComplete).toHaveBeenCalledTimes(2);
     expect(r.ok).toBe(true);
     expect(r.markdown).toBe('recovered page');
   });
 
   it('gives up after the retry and says how many attempts it made', async () => {
-    chatComplete.mockResolvedValue({ choices: [{ message: { content: 'still not json' } }] });
+    cachedChatComplete.mockResolvedValue({ choices: [{ message: { content: 'still not json' } }] });
     const r = await visionExtractPage('data:image/jpeg;base64,AAA', '', {});
-    expect(chatComplete).toHaveBeenCalledTimes(2);
+    expect(cachedChatComplete).toHaveBeenCalledTimes(2);
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/unparseable JSON \(after 2 attempts\)/);
   });
 
-  /* chatComplete has already spent its own 3 attempts on a transport failure.
+  /* cachedChatComplete has already spent its own 3 attempts on a transport failure.
    * Retrying here too would turn one dead page into 6 calls. */
   it('does NOT retry a transport failure, which aiProxy already retried', async () => {
-    chatComplete.mockRejectedValue(new Error('AI request timed out after 90s'));
+    cachedChatComplete.mockRejectedValue(new Error('AI request timed out after 90s'));
     const r = await visionExtractPage('data:image/jpeg;base64,AAA', '', {});
-    expect(chatComplete).toHaveBeenCalledTimes(1);
+    expect(cachedChatComplete).toHaveBeenCalledTimes(1);
     expect(r.ok).toBe(false);
     expect(r.error).toBe('AI request timed out after 90s');
   });
 
   it('reports the underlying error when the call itself throws', async () => {
-    chatComplete.mockRejectedValue(new Error('AI request timed out after 90s'));
+    cachedChatComplete.mockRejectedValue(new Error('AI request timed out after 90s'));
     const r = await visionExtractPage('data:image/jpeg;base64,AAA', '', {});
     expect(r.markdown).toBe('');
     expect(r.ok).toBe(false);
@@ -187,7 +187,7 @@ describe('visionExtractPage', () => {
   it('rethrows AbortError instead of swallowing it', async () => {
     const err = new Error('aborted');
     err.name = 'AbortError';
-    chatComplete.mockRejectedValue(err);
+    cachedChatComplete.mockRejectedValue(err);
     await expect(visionExtractPage('data:image/jpeg;base64,AAA', '', {})).rejects.toThrow('aborted');
   });
 

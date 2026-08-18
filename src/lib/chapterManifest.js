@@ -48,8 +48,18 @@ const isInt = (v) => Number.isInteger(v);
  *
  * Returns { ok, errors: [...] } rather than throwing: an admin needs every
  * problem at once, not the first one.
+ *
+ * `fileStructure` ('combined' | 'per_chapter' | null/omitted) relaxes the
+ * page-range requirement for NUMBERED entries in a 'per_chapter' book —
+ * candidatesForFile()'s match for those is fileOrdinal alone (see
+ * 20260815030000: "a file's own page 1 is not guaranteed to be the chapter's
+ * logical page 1"), so requiring page numbers there rejects a perfectly
+ * usable manifest over a number nothing downstream ever reads. Omitted
+ * (existing callers that don't pass it) keeps the original strict behaviour.
+ * INTERLEAVED entries (numbered: false) still always require page numbers
+ * regardless — their identity IS a page position, in either file structure.
  */
-export function validateManifest(entries) {
+export function validateManifest(entries, fileStructure = null) {
   const errors = [];
   if (!Array.isArray(entries)) return { ok: false, errors: ['entries must be an array'] };
   if (entries.length === 0) return { ok: false, errors: ['manifest is empty'] };
@@ -61,7 +71,16 @@ export function validateManifest(entries) {
     const at = `entry ${i}${e?.title ? ` ("${e.title}")` : ''}`;
     if (!isInt(e?.ordinal) || e.ordinal < 1) errors.push(`${at}: ordinal must be a positive integer`);
     if (!String(e?.title ?? '').trim()) errors.push(`${at}: title is required`);
-    if (!isInt(e?.pageStart) || !isInt(e?.pageEnd)) errors.push(`${at}: pageStart and pageEnd must be integers`);
+
+    const pagesOptionalHere = fileStructure === 'per_chapter' && e?.numbered !== false;
+    if (pagesOptionalHere) {
+      // Still internally consistent when given: a half-filled range or a
+      // backwards one is a real typo even if page numbers aren't required.
+      if (e?.pageStart != null || e?.pageEnd != null) {
+        if (!isInt(e?.pageStart) || !isInt(e?.pageEnd)) errors.push(`${at}: pageStart and pageEnd must both be set (or both left blank) in a per_chapter manifest`);
+        else if (e.pageEnd < e.pageStart) errors.push(`${at}: pageEnd ${e.pageEnd} is before pageStart ${e.pageStart}`);
+      }
+    } else if (!isInt(e?.pageStart) || !isInt(e?.pageEnd)) errors.push(`${at}: pageStart and pageEnd must be integers`);
     else if (e.pageEnd < e.pageStart) errors.push(`${at}: pageEnd ${e.pageEnd} is before pageStart ${e.pageStart}`);
 
     // `unit` is the book's own grouping heading for this entry ("Unit 1: Wit

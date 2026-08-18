@@ -18,7 +18,7 @@ import {
 } from '../lib/contentExtraction';
 import { fileOrdinalFrom, candidatesForFile } from '../lib/chapterManifest';
 import { detectPrintedPageRange, matchFileToManifest } from '../lib/pageRangeMatch';
-import { assignChapters } from '../lib/chapterIdentity';
+import { assignChapters, chapterKeyFor } from '../lib/chapterIdentity';
 import { requireApprovedManifest } from '../lib/manifestExtraction';
 import { getSubjectsForExam, BOARDS, CLASS_LEVELS, EXAM_TYPE_GROUPS } from '../lib/categories';
 import { getChapters } from '../lib/syllabus';
@@ -353,6 +353,75 @@ export async function saveNoteChunks({
   };
 }
 
+/* ── Pre-upload duplicate check (notes only) ───────────────────────
+ *
+ * Same signal scripts/bulk-load-unit-notes.mjs's own alreadyLoadedKeys()
+ * checks, run directly in-browser instead of through page.evaluate: does
+ * knowledge_base already have chunks for the manifest entry/entries this
+ * FILENAME resolves to? No AI call, no vision, no fetched bytes — just the
+ * filename's ordinal against the approved manifest and one cheap select —
+ * so this can run before extractPagesWithVision, not after paying for it.
+ *
+ * Assumes the default 'c' key prefix. saveNoteChunks/assignChapters on this
+ * screen never thread the manifest's own (admin-editable) key_prefix through
+ * to chapterKeyFor either — every real save from this screen writes under
+ * the 'c' default regardless of what the manifest editor's Key Prefix field
+ * says — so matching that same default here is what makes this check agree
+ * with what a save would actually write, not a separate assumption of its
+ * own. (A manifest saved under a non-default prefix is a pre-existing gap
+ * outside this change's scope — flagged, not fixed, here.)
+ */
+export async function checkAlreadyLoaded(entries, filename, classLevel, book) {
+  const fileOrdinal = fileOrdinalFrom(filename);
+  const covered = candidatesForFile(entries, fileOrdinal, null);
+  if (!covered.length) return { titles: [], keys: [], loadedKeys: [] };
+  const keys = covered.map((e) => chapterKeyFor({ classLevel, book, ordinal: e.ordinal }));
+  const { data } = await supabase.from('knowledge_base').select('chapter_key').in('chapter_key', keys).limit(500);
+  return { titles: covered.map((e) => e.title), keys, loadedKeys: [...new Set((data ?? []).map((r) => r.chapter_key))] };
+}
+
+// Blocking prompt for the single-file/URL/Drive queue (handleProcess) — same
+// interrupt-and-wait pattern as ManifestEntryPicker below. Default action is
+// Skip (no API call); Load anyway is an explicit, separate button, never
+// pre-selected.
+function DuplicateLoadPrompt({ prompt, onSkip, onLoadAnyway }) {
+  if (!prompt) return null;
+  const { filename, titles, loadedCount, totalCount } = prompt;
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 8, scale: 0.98 }}
+        className="bg-slate-900 border border-white/10 rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl"
+      >
+        <div className="px-5 py-4 border-b border-white/10 flex items-start gap-3">
+          <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-white">This chapter already has content loaded</p>
+            <p className="text-xs text-slate-400 mt-1 break-words">
+              <span className="font-mono text-slate-300">&quot;{filename}&quot;</span> matches{' '}
+              {titles.length ? titles.map((t) => `"${t}"`).join(', ') : 'a chapter'} — {loadedCount} of {totalCount} chapter key(s)
+              already have chunks in knowledge_base. Re-processing will add duplicates and cost real API spend again.
+            </p>
+          </div>
+        </div>
+        <div className="px-5 py-3.5 flex items-center justify-end gap-2">
+          <button onClick={onSkip}
+            className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors">
+            Skip — don&apos;t call the API
+          </button>
+          <button onClick={onLoadAnyway}
+            className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white transition-colors">
+            Load anyway
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 /* ── Diagram image enrichment (PYQ only) ─────────────────────────── */
 
 async function uploadImageForPYQ(file, rowId) {
@@ -558,9 +627,11 @@ const CONFIDENCE = {
  * invents one. Nothing in this component ever calls a save path; onProcess is
  * the one function that does, and it only runs on click.
  */
-function MatchReviewScreen({ rows, manifestEntries, onChoose, onConfirm, onUnconfirm, onConfirmAll, onCancel, onProcess }) {
+function MatchReviewScreen({ rows, manifestEntries, onChoose, onConfirm, onUnconfirm, onConfirmAll, onCancel, onProcess, onLoadAnyway }) {
   const numbered = manifestEntries.filter((e) => e.numbered !== false);
-  const usable = rows.filter((r) => !r.error);
+  // Excludes needsLoadAnywayConfirm rows — those need a duplicate decision,
+  // not a chapter pick, and must not be counted toward "need a manual pick".
+  const usable = rows.filter((r) => !r.error && !r.needsLoadAnywayConfirm);
   const confirmedCount = usable.filter((r) => r.confirmed).length;
   const readyToConfirmCount = usable.filter((r) => !r.confirmed && r.chosenOrdinal != null).length;
   const needsPickCount = usable.filter((r) => r.chosenOrdinal == null).length;
@@ -587,6 +658,31 @@ function MatchReviewScreen({ rows, manifestEntries, onChoose, onConfirm, onUncon
                     <p className="text-sm font-medium text-slate-300 truncate">{r.item.name}</p>
                     <p className="text-xs text-red-400">{r.error}</p>
                   </div>
+                </div>
+              );
+            }
+            // Duplicate detected from the filename alone, before extraction
+            // ever ran — see checkAlreadyLoaded. No AI call has been made for
+            // this row yet; "Load anyway" is what actually triggers it.
+            if (r.needsLoadAnywayConfirm) {
+              const dup = r.alreadyLoaded;
+              return (
+                <div key={i} className="flex items-start gap-3 px-4 py-3 bg-amber-900/10">
+                  <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-slate-200 truncate">{r.item.name}</p>
+                    <p className="text-xs text-amber-300/90 mt-0.5">
+                      {dup.titles.length ? dup.titles.map((t) => `"${t}"`).join(', ') : 'This chapter'} already has {dup.loadedKeys.length} of {dup.keys.length} chapter key(s)
+                      loaded in knowledge_base. Re-processing will add duplicates and cost real API spend again.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => onLoadAnyway(i)}
+                    disabled={r.loadingAnyway}
+                    className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white transition-colors flex items-center gap-1.5"
+                  >
+                    {r.loadingAnyway ? <><Loader2 size={12} className="animate-spin" /> Reading…</> : 'Load anyway'}
+                  </button>
                 </div>
               );
             }
@@ -780,6 +876,24 @@ export default function AdminContentIntake() {
     setManifestPrompt(null);
   }
 
+  // Duplicate-upload override — blocks the CURRENT file only, same
+  // resolver-per-prompt pattern as the manifest-entry picker above. Resolves
+  // to `true` (Load anyway) or `false` (Skip, the default action — no API
+  // call is made for this file).
+  const [dupPrompt, setDupPrompt] = useState(null); // { filename, titles, loadedCount, totalCount } | null
+  const dupPromptResolveRef = useRef(null);
+  function promptDuplicateLoad(filename, dup) {
+    return new Promise((resolve) => {
+      dupPromptResolveRef.current = resolve;
+      setDupPrompt({ filename, titles: dup.titles, loadedCount: dup.loadedKeys.length, totalCount: dup.keys.length });
+    });
+  }
+  function resolveDupPrompt(loadAnyway) {
+    dupPromptResolveRef.current?.(loadAnyway);
+    dupPromptResolveRef.current = null;
+    setDupPrompt(null);
+  }
+
   // Step 3 — items to process, regardless of source
   const [inputTab,  setInputTab]  = useState('file'); // file | url | folder
   const [items,     setItems]     = useState([]);     // [{ source, file?, url?, id?, name, path?, chapter, selected }]
@@ -902,6 +1016,21 @@ export default function AdminContentIntake() {
     const rows = [];
     for (const it of selected) {
       try {
+        // Duplicate check FIRST, from the filename alone — no bytes fetched,
+        // no extractPagesWithVision call, no API spend — so a re-review of an
+        // already-loaded chapter costs nothing by default. See
+        // checkAlreadyLoaded's own header for why 'c' is the right prefix to
+        // check against.
+        const dup = await checkAlreadyLoaded(approvedManifest, it.name, classLevel, book || null);
+        if (dup.loadedKeys.length) {
+          rows.push({
+            item: it, alreadyLoaded: dup, needsLoadAnywayConfirm: true, loadingAnyway: false,
+            pages: null, figures: null, equationsByPage: null, visionPageCount: 0, failedPages: [],
+            detectedRange: null, suggestion: null, chosenOrdinal: null, confirmed: false, error: null,
+          });
+          continue;
+        }
+
         const buf = await getBytes(it);
         const { pages, figures, equationsByPage, visionPageCount, failedPages } = await extractPagesWithVision(
           buf, { subject, examType: dbExamType, chapter: it.chapter || chapterHint }, { forceVision },
@@ -915,7 +1044,7 @@ export default function AdminContentIntake() {
         const suggestion = matchFileToManifest({ detectedRange, filename: it.name, entries: approvedManifest });
         rows.push({
           item: it, pages, figures, equationsByPage, visionPageCount, failedPages,
-          detectedRange, suggestion,
+          detectedRange, suggestion, alreadyLoaded: null, needsLoadAnywayConfirm: false,
           // Pre-selected ONLY when the suggestion resolved to exactly one
           // candidate — 'multiple' and 'conflict' and 'none' all leave this
           // null, forcing an explicit pick. `confirmed` starts false even
@@ -929,6 +1058,40 @@ export default function AdminContentIntake() {
     }
     setMatchRows(rows);
     setMatchPhase('review');
+  }
+
+  /* Explicit override for a row checkAlreadyLoaded flagged — runs the SAME
+   * extraction + detection handleMatchFiles skipped for this row, now that
+   * the admin has deliberately chosen to re-process it. */
+  async function loadAnywayForRow(i) {
+    const row = matchRows[i];
+    if (!row) return;
+    const it = row.item;
+    setMatchRows((rs) => rs.map((r, n) => n === i ? { ...r, loadingAnyway: true } : r));
+    try {
+      const buf = await getBytes(it);
+      const { pages, figures, equationsByPage, visionPageCount, failedPages } = await extractPagesWithVision(
+        buf, { subject, examType: dbExamType, chapter: it.chapter || chapterHint }, { forceVision },
+      );
+      const rawText = pages.join('\n\n').trim();
+      if (!rawText || rawText.length < 100) {
+        setMatchRows((rs) => rs.map((r, n) => n === i
+          ? { ...r, error: 'No extractable text found in this file.', needsLoadAnywayConfirm: false, loadingAnyway: false }
+          : r));
+        return;
+      }
+      const detectedRange = detectPrintedPageRange(pages);
+      const suggestion = matchFileToManifest({ detectedRange, filename: it.name, entries: approvedManifest });
+      setMatchRows((rs) => rs.map((r, n) => n === i ? {
+        ...r, pages, figures, equationsByPage, visionPageCount, failedPages, detectedRange, suggestion,
+        chosenOrdinal: suggestion.suggested.length === 1 ? suggestion.suggested[0].ordinal : null,
+        confirmed: false, error: null, needsLoadAnywayConfirm: false, loadingAnyway: false,
+      } : r));
+    } catch (e) {
+      setMatchRows((rs) => rs.map((r, n) => n === i
+        ? { ...r, error: e.message, needsLoadAnywayConfirm: false, loadingAnyway: false }
+        : r));
+    }
   }
 
   function chooseOrdinalForRow(i, ordinal) {
@@ -1051,6 +1214,23 @@ export default function AdminContentIntake() {
 
       setStepMsg({ status: 'processing', message: 'Fetching…' });
       try {
+        // Duplicate check first — filename-only, no bytes fetched yet, no API
+        // call. Notes only: PYQ uploads have no manifest chapter_key to check
+        // against. See checkAlreadyLoaded's header for the key-prefix note.
+        if (contentType === 'notes' && approvedManifest) {
+          const dup = await checkAlreadyLoaded(approvedManifest, it.name, classLevel, book || null);
+          if (dup.loadedKeys.length > 0) {
+            const loadAnyway = await promptDuplicateLoad(it.name, dup);
+            if (!loadAnyway) {
+              setStepMsg({
+                status: 'skipped',
+                message: `Already loaded — ${dup.titles.join(', ') || 'this chapter'} has ${dup.loadedKeys.length} of ${dup.keys.length} chapter key(s) in knowledge_base. Skipped, no API call made.`,
+              });
+              continue;
+            }
+          }
+        }
+
         const buf = await getBytes(it);
         setStepMsg({ message: 'Extracting text…' });
 
@@ -1243,6 +1423,7 @@ export default function AdminContentIntake() {
   const partialCount   = batchResults.filter((r) => r.status === 'partial').length;
   const errorCount     = batchResults.filter((r) => r.status === 'error').length;
   const cancelledCount = batchResults.filter((r) => r.status === 'cancelled').length;
+  const skippedCount   = batchResults.filter((r) => r.status === 'skipped').length;
   const allSavedRows   = batchResults.flatMap((r) => r.savedRows ?? []);
   const canProceedInput = items.some((it) => it.selected);
 
@@ -1548,6 +1729,7 @@ export default function AdminContentIntake() {
               onConfirmAll={confirmAllRows}
               onCancel={cancelMatchReview}
               onProcess={handleProcessConfirmed}
+              onLoadAnyway={loadAnywayForRow}
             />
           )}
         </motion.div>
@@ -1564,15 +1746,16 @@ export default function AdminContentIntake() {
                 {r.status === 'done' && <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />}
                 {r.status === 'partial' && <AlertTriangle size={14} className="text-amber-400 shrink-0" />}
                 {r.status === 'cancelled' && <MinusCircle size={14} className="text-slate-500 shrink-0" />}
+                {r.status === 'skipped' && <MinusCircle size={14} className="text-amber-500 shrink-0" />}
                 {r.status === 'error' && <AlertTriangle size={14} className="text-red-400 shrink-0" />}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-slate-200 truncate">{r.name}</p>
-                  {/* Not truncated for partial/error: the whole point of the
-                      failed-page note is the reason text at the end of it. */}
+                  {/* Not truncated for partial/error/skipped: the whole point
+                      of the note is the reason text at the end of it. */}
                   <p className={[
                     'text-xs mt-0.5',
-                    r.status === 'error' ? 'text-red-400' : r.status === 'partial' ? 'text-amber-300' : 'text-slate-500',
-                    (r.status === 'partial' || r.status === 'error') ? 'break-words' : 'truncate',
+                    r.status === 'error' ? 'text-red-400' : r.status === 'partial' ? 'text-amber-300' : r.status === 'skipped' ? 'text-amber-400/90' : 'text-slate-500',
+                    (r.status === 'partial' || r.status === 'error' || r.status === 'skipped') ? 'break-words' : 'truncate',
                   ].join(' ')}>{r.message}</p>
                 </div>
               </div>
@@ -1595,13 +1778,14 @@ export default function AdminContentIntake() {
           )}
 
           {!batchRunning && batchResults.length > 0 && (
-            <div className={`flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold ${errorCount > 0 || partialCount > 0 ? 'bg-amber-900/20 border border-amber-700/20 text-amber-300' : cancelledCount > 0 ? 'bg-slate-800/60 border border-white/10 text-slate-300' : 'bg-emerald-900/20 border border-emerald-700/20 text-emerald-300'}`}>
-              {errorCount > 0 || partialCount > 0 ? <AlertTriangle size={16} className="shrink-0" /> : cancelledCount > 0 ? <MinusCircle size={16} className="shrink-0" /> : <CheckCircle2 size={16} className="shrink-0" />}
+            <div className={`flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold ${errorCount > 0 || partialCount > 0 ? 'bg-amber-900/20 border border-amber-700/20 text-amber-300' : cancelledCount > 0 || skippedCount > 0 ? 'bg-slate-800/60 border border-white/10 text-slate-300' : 'bg-emerald-900/20 border border-emerald-700/20 text-emerald-300'}`}>
+              {errorCount > 0 || partialCount > 0 ? <AlertTriangle size={16} className="shrink-0" /> : cancelledCount > 0 || skippedCount > 0 ? <MinusCircle size={16} className="shrink-0" /> : <CheckCircle2 size={16} className="shrink-0" />}
               {[
                 savedCount > 0 && `${savedCount} saved`,
                 partialCount > 0 && `${partialCount} saved with unread pages`,
                 errorCount > 0 && `${errorCount} failed`,
                 cancelledCount > 0 && `${cancelledCount} cancelled`,
+                skippedCount > 0 && `${skippedCount} skipped (already loaded)`,
               ].filter(Boolean).join(' · ') || 'Nothing processed.'}
             </div>
           )}
@@ -1638,6 +1822,13 @@ export default function AdminContentIntake() {
             prompt={manifestPrompt}
             onSelect={(entry) => resolveManifestPrompt(entry)}
             onCancel={() => resolveManifestPrompt(null)}
+          />
+        )}
+        {dupPrompt && (
+          <DuplicateLoadPrompt
+            prompt={dupPrompt}
+            onSkip={() => resolveDupPrompt(false)}
+            onLoadAnyway={() => resolveDupPrompt(true)}
           />
         )}
       </AnimatePresence>
