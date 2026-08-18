@@ -4,6 +4,16 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-19 — Cleared 8 stale content_jobs rows (CBSE Class 9 English)
+
+The 8 `content_jobs` rows from the Aug 15 18:15 CLI bulk-loader enqueue (`run_id ab926cde-c0c3-4204-8b12-88c17282a85f`, CBSE Class 9 English, one row per chapter file) had sat `status: 'queued'` ever since — the run was interrupted by that day's outage before `--work` claimed a single one. Owner decided to switch this book to the manual Content Intake upload path instead of re-running the CLI loader, so the stale queue rows were cleared rather than left to confuse the Status tab.
+
+Verified before deleting, not assumed: all 8 rows were still `queued`/`claimed_by: null`/`chapters_written: []` (never claimed, so nothing partially written), and `knowledge_base` had zero rows for `exam_type = 'CBSE Class 9', subject = 'English'` — confirmed the query itself was valid by checking the same exam_type against Science (real rows) and the same subject against Class 8 (real rows), so the zero result for the Class 9 + English combination was genuine, not a filter miss.
+
+Deleted via direct SQL (no admin RPC exists for `content_jobs` deletes — enqueue/claim/requeue/record are the only ones, by design; the project owner ran it in the Supabase SQL Editor, not this session, since only the anon key is available here). Re-verified after via `admin_list_content_jobs`: table is now empty (0 rows total, not just 0 queued — nothing else had ever been enqueued).
+
+The CBSE Class 9 English manifest (`id 77108c6a-5561-487a-a1aa-f88807f01125`, `status: approved`) is untouched — `content_jobs` has no relationship to `chapter_manifests` at all, just a work queue keyed by filename/exam_type/subject strings. It stays approved and ready for the manual upload.
+
 ## 2026-08-19 — Student/parent support chat (Help Center + Contact), disabled by default
 
 Redber AI chat (bot `ewe-support-vo3wl`) wired up as a "Chat with us" entry on `/help` (student, authenticated) and `/contact` (public — parents and prospective students evaluating EWE pre-signup are often the ones with the most pricing/offer questions). Both link to one new `/support` page rather than a duplicate implementation.
