@@ -488,6 +488,57 @@ const NOTES_BATCH_CHARS = 8000;
  */
 const NOTES_MAX_TOKENS = 3000;
 
+/**
+ * Ceiling on how many times one batch may be automatically halved after
+ * hitting the output cap, below.
+ *
+ * WHY ADAPTIVE SPLITTING EXISTS AT ALL
+ *
+ * NOTES_BATCH_CHARS/NOTES_MAX_TOKENS above are a sensible DEFAULT, sized from
+ * two pilot chapters — but "sensible default" is not the same claim as "safe
+ * for every chapter in the corpus", and a real upload (CBSE Class 12 Maths
+ * Part 1, "Relations and Functions", batch 5/6) proved it isn't: a
+ * worked-example-heavy page pushed one batch's output past 3,000 tokens and
+ * the whole file failed, exactly the density-dependent failure the PYQ
+ * batching already went through three tunings to learn from (see
+ * PYQ_BATCH_CHARS's header — CBSE, then NEET, then NEET Biology specifically,
+ * each denser than the last). Tuning NOTES_BATCH_CHARS down to whatever the
+ * densest chapter anyone has HAPPENED TO MEASURE needs is the same mistake
+ * repeated a fourth time: it fixes today's dense chapter and leaves the next
+ * one, denser still, to fail the same way.
+ *
+ * So density is handled structurally instead: a batch that truncates is proof
+ * its SOURCE TEXT was too much for one call, and halving that source text
+ * (at a page boundary, so no [[PAGE N]] marker is ever split) roughly halves
+ * the expected output too — the same lever NOTES_BATCH_CHARS already is, just
+ * applied automatically, per-batch, only when needed, instead of once,
+ * globally, in advance. A short/normal chapter never truncates and never
+ * pays for this — same call count as today. A chapter denser than anything
+ * seen yet just automatically uses more, smaller calls instead of failing.
+ *
+ * 4 halvings shrinks an 8,000-char batch to ~500 chars — well below one
+ * NCERT page — so in practice the recursion bottoms out at "one page, on its
+ * own" long before the depth cap is reached. Hitting the cap therefore means
+ * a single PAGE, not a batch, still exceeds the output cap on its own: a
+ * genuinely unusual page (or NOTES_MAX_TOKENS is set far too low), not an
+ * ordinary dense chapter — exactly the "surface a real error" case rather
+ * than something splitting can fix.
+ */
+const NOTES_SPLIT_MAX_DEPTH = 4;
+
+/**
+ * Halves `text` at a page boundary (never mid [[PAGE N]] marker) — reuses
+ * splitIntoBatches' own boundary rule rather than a second one that could
+ * disagree with it. Returns null when `text` is already a single page
+ * (splitIntoBatches has nothing to cut it at), which is the signal to the
+ * caller that this batch cannot be shrunk any further.
+ */
+function splitBatchInHalf(text) {
+  const halfLen = Math.max(1, Math.ceil(text.length / 2));
+  const halves = splitIntoBatches(text, halfLen);
+  return halves.length >= 2 ? halves : null;
+}
+
 export async function runNotesExtraction({ rawText, pages, examType, subject, onProgress }) {
   const guide = promptGuideFor(subject);
 
@@ -504,12 +555,18 @@ export async function runNotesExtraction({ rawText, pages, examType, subject, on
     );
   }
 
-  const batches = splitIntoBatches(rawText, NOTES_BATCH_CHARS);
+  // { text, depth } queue rather than a fixed array: a batch that truncates
+  // gets replaced in-place by its two halves (depth + 1), processed next —
+  // see NOTES_SPLIT_MAX_DEPTH's header. A file that never truncates walks
+  // this queue exactly like the old fixed `batches` array; queue.length only
+  // grows when a split actually happens.
+  const queue = splitIntoBatches(rawText, NOTES_BATCH_CHARS).map((text) => ({ text, depth: 0 }));
   const mergedLessons = []; // preserves first-seen order across batches
   let unit = null;
 
-  for (let b = 0; b < batches.length; b++) {
-    onProgress(batches.length > 1 ? `AI structuring study notes… (part ${b + 1}/${batches.length})` : 'AI structuring study notes…');
+  for (let qi = 0; qi < queue.length; qi++) {
+    const { text: batchText, depth } = queue[qi];
+    onProgress(queue.length > 1 ? `AI structuring study notes… (part ${qi + 1}/${queue.length})` : 'AI structuring study notes…');
 
     // Titles already established, so a batch landing mid-chapter continues the
     // existing lesson instead of inventing a section-shaped one of its own.
@@ -529,7 +586,7 @@ export async function runNotesExtraction({ rawText, pages, examType, subject, on
         },
         {
           role: 'user',
-          content: `This is ${examType} ${subject} content, possibly spanning one unit with multiple lessons/chapters (like a textbook "Contents" page), or just a single chapter — read the actual content and structure it correctly either way.${batches.length > 1 ? ` (excerpt ${b + 1} of ${batches.length} of a larger unit)` : ''}
+          content: `This is ${examType} ${subject} content, possibly spanning one unit with multiple lessons/chapters (like a textbook "Contents" page), or just a single chapter — read the actual content and structure it correctly either way.${queue.length > 1 ? ` (excerpt ${qi + 1} of ${queue.length} of a larger unit)` : ''}
 
 Each page in CONTENT below is prefixed with a literal [[PAGE N]] marker.
 ${seenTitles.length ? `
@@ -606,7 +663,7 @@ DEPTH its "content" demonstrates — match that. Its "content_type" and
 listed above, and follow the technique rule above.
 `}
 CONTENT:
-${batches[b]}`,
+${batchText}`,
         },
       ],
     }, { feature: 'notes-extraction' });
@@ -615,19 +672,37 @@ ${batches[b]}`,
     // fail with a position offset that says nothing about the cause. Naming it
     // here is the difference between "max_tokens is too low" and a mystery.
     const finish = resp.choices[0].finish_reason;
+
+    // Split-and-retry: 'length' proves THIS batch's source text produced too
+    // much output, not that the file can't be structured — so shrink the
+    // source and try again rather than failing the whole file. See
+    // NOTES_SPLIT_MAX_DEPTH's header for why halving the source (not the
+    // prompt wording) is the lever that actually works.
     if (finish === 'length') {
-      throw new Error(
-        `Structuring response hit the ${NOTES_MAX_TOKENS}-token output cap on batch ${b + 1}/${batches.length} — raise NOTES_MAX_TOKENS or lower NOTES_BATCH_CHARS.`,
-      );
+      if (depth >= NOTES_SPLIT_MAX_DEPTH) {
+        throw new Error(
+          `Structuring response hit the ${NOTES_MAX_TOKENS}-token output cap on a ${batchText.length}-char excerpt even after ${depth} automatic splits — this source is unusually dense throughout, not just in one spot. Raise NOTES_MAX_TOKENS.`,
+        );
+      }
+      const halves = splitBatchInHalf(batchText);
+      if (!halves) {
+        throw new Error(
+          `Structuring response hit the ${NOTES_MAX_TOKENS}-token output cap on a single ${batchText.length}-char page that can't be split any smaller — this one page is unusually dense, not a batching problem. Raise NOTES_MAX_TOKENS.`,
+        );
+      }
+      queue.splice(qi + 1, 0, ...halves.map((text) => ({ text, depth: depth + 1 })));
+      continue;
     }
     /* Every other non-'stop' reason cuts the JSON off just as effectively, and
      * the guard above named only one of them. Two Class 11 literature files
      * failed with "Unterminated string in JSON" ending at 1,688 and 2,371
      * chars — roughly 500 tokens against a 3,000 cap, so 'length' was never
-     * going to fire and the bare parse error was all that surfaced. */
+     * going to fire and the bare parse error was all that surfaced. Not
+     * split-and-retried like 'length' above: content_filter and friends are
+     * not density failures, and a smaller excerpt would not fix one. */
     if (finish && finish !== 'stop') {
       throw new Error(
-        `Structuring response ended with finish_reason='${finish}' on batch ${b + 1}/${batches.length} — the JSON is incomplete.`,
+        `Structuring response ended with finish_reason='${finish}' on batch ${qi + 1}/${queue.length} — the JSON is incomplete.`,
       );
     }
 
@@ -640,12 +715,30 @@ ${batches[b]}`,
        * that for two files meant calibrating V8's error messages by hand to
        * learn the response had simply stopped early. Carrying the finish
        * reason, the length actually received and the tail makes the next
-       * occurrence state its own cause. */
-      throw new Error(
-        `Structuring response did not parse as JSON on batch ${b + 1}/${batches.length}: ${e.message}. `
-        + `finish_reason=${finish ?? 'null'}, received ${rawJson?.length ?? 0} chars, `
-        + `ends: ${JSON.stringify(String(rawJson ?? '').slice(-100))}`,
-      );
+       * occurrence state its own cause.
+       *
+       * Split-and-retried the same as finish_reason==='length' just above:
+       * this IS that same failure (a response cut off before the JSON
+       * closed) on the calls where OpenAI didn't label it 'length' — the two
+       * Class 11 literature files this comment already documents. Shrinking
+       * the source fixes both causes, not just the one with the honest
+       * label. */
+      if (depth >= NOTES_SPLIT_MAX_DEPTH) {
+        throw new Error(
+          `Structuring response did not parse as JSON on batch ${qi + 1}/${queue.length} even after ${depth} automatic splits: ${e.message}. `
+          + `finish_reason=${finish ?? 'null'}, received ${rawJson?.length ?? 0} chars, `
+          + `ends: ${JSON.stringify(String(rawJson ?? '').slice(-100))}`,
+        );
+      }
+      const halves = splitBatchInHalf(batchText);
+      if (!halves) {
+        throw new Error(
+          `Structuring response did not parse as JSON on a single ${batchText.length}-char page that can't be split any smaller: ${e.message}. `
+          + `finish_reason=${finish ?? 'null'}, received ${rawJson?.length ?? 0} chars.`,
+        );
+      }
+      queue.splice(qi + 1, 0, ...halves.map((text) => ({ text, depth: depth + 1 })));
+      continue;
     }
     unit = unit || data.unit || null;
 
