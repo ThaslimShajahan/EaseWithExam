@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../aiProxy', () => ({ cachedChatComplete: vi.fn(), AI_REQUEST_TIMEOUT_MS: 1000 }));
+vi.mock('../aiProxy', () => ({ cachedChatComplete: vi.fn(), AI_REQUEST_TIMEOUT_MS: 1000, ADMIN_UPLOAD_TIMEOUT_MS: 1000 }));
 vi.mock('../pdfVision', () => ({ extractPagesWithVision: vi.fn(), MAX_VISION_PAGES: 10 }));
 
 import { cachedChatComplete } from '../aiProxy';

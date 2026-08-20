@@ -8,6 +8,7 @@ vi.mock('../aiProxy', () => ({
   cachedChatComplete: vi.fn(),
   backoffMs:    vi.fn(() => 0),
   sleep:        vi.fn(() => Promise.resolve()),
+  ADMIN_UPLOAD_TIMEOUT_MS: 1000,
 }));
 vi.mock('../pdfAnalyzer', () => ({ loadPdfDocument: vi.fn() }));
 vi.mock('../supabase', () => ({ supabase: { storage: { from: vi.fn() } } }));
@@ -106,6 +107,14 @@ describe('visionExtractPage', () => {
     // "low" discards exactly what this is for — small diagram labels and exponents.
     expect(img.image_url.detail).toBe('high');
     expect(img.image_url.url).toBe('data:image/jpeg;base64,AAA');
+  });
+
+  it('uses the admin-upload timeout, not the tighter student-facing default (2026-08-20)', async () => {
+    ok({ markdown: 'x', equations: [], figures: [] });
+    await visionExtractPage('data:image/jpeg;base64,AAA', '', { pageNo: 3 });
+
+    const [, opts] = cachedChatComplete.mock.calls[0];
+    expect(opts.timeoutMs).toBe(1000); // mocked ADMIN_UPLOAD_TIMEOUT_MS above
   });
 
   it('passes the existing text layer through as a disambiguation hint', async () => {

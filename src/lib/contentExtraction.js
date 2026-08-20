@@ -11,7 +11,7 @@
  * match_knowledge_base as WHERE-clause filters.
  */
 
-import { cachedChatComplete } from './aiProxy';
+import { cachedChatComplete, ADMIN_UPLOAD_TIMEOUT_MS } from './aiProxy';
 import { splitIntoBatches } from './pdfAnalyzer';
 
 
@@ -430,7 +430,7 @@ RAW TEXT:
 ${batches[b]}`,
         },
       ],
-    }, { feature: 'pyq-extraction' });
+    }, { feature: 'pyq-extraction', timeoutMs: ADMIN_UPLOAD_TIMEOUT_MS });
 
     // Truncation matters more here than in notes: a cut-off response doesn't
     // just shorten a chunk, it silently drops questions off the end of a paper
@@ -666,7 +666,7 @@ CONTENT:
 ${batchText}`,
         },
       ],
-    }, { feature: 'notes-extraction' });
+    }, { feature: 'notes-extraction', timeoutMs: ADMIN_UPLOAD_TIMEOUT_MS });
 
     // A truncated response is a cut-off JSON string, so JSON.parse below would
     // fail with a position offset that says nothing about the cause. Naming it

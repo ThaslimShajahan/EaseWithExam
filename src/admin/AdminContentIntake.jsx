@@ -370,13 +370,28 @@ export async function saveNoteChunks({
  * with what a save would actually write, not a separate assumption of its
  * own. (A manifest saved under a non-default prefix is a pre-existing gap
  * outside this change's scope — flagged, not fixed, here.)
+ *
+ * MUST be scoped by (examType, subject), same as the real uniqueness the key
+ * carries: chapterKeyFor() deliberately leaves subject out of the key string
+ * (see chapterIdentity.js:36 — "book stays out of the UNIQUE index (exam_type,
+ * subject, chapter_key)"), so 'c11_ch01' is only meaningful WITHIN one
+ * (exam_type, subject) pair. Two unrelated single-book Class 11 subjects that
+ * both leave book unset (e.g. Accountancy ch.1 and Biology ch.1) produce the
+ * IDENTICAL string. Querying knowledge_base by chapter_key alone — across
+ * every subject and exam_type — reported CBSE Class 11 Biology's "The Living
+ * World" as already loaded because CBSE Class 11 Accountancy's "Introduction
+ * to Accounting" happens to share key c11_ch01 and had real rows. Confirmed
+ * live against knowledge_base 2026-08-20. Filtering by exam_type+subject here
+ * makes this check agree with the DB's own uniqueness guarantee instead of a
+ * looser one of its own.
  */
-export async function checkAlreadyLoaded(entries, filename, classLevel, book) {
+export async function checkAlreadyLoaded(entries, filename, classLevel, book, examType, subject) {
   const fileOrdinal = fileOrdinalFrom(filename);
   const covered = candidatesForFile(entries, fileOrdinal, null);
   if (!covered.length) return { titles: [], keys: [], loadedKeys: [] };
   const keys = covered.map((e) => chapterKeyFor({ classLevel, book, ordinal: e.ordinal }));
-  const { data } = await supabase.from('knowledge_base').select('chapter_key').in('chapter_key', keys).limit(500);
+  const { data } = await supabase.from('knowledge_base').select('chapter_key')
+    .eq('exam_type', examType).eq('subject', subject).in('chapter_key', keys).limit(500);
   return { titles: covered.map((e) => e.title), keys, loadedKeys: [...new Set((data ?? []).map((r) => r.chapter_key))] };
 }
 
@@ -991,10 +1006,42 @@ export default function AdminContentIntake() {
     }
   }
 
+  // A File object from <input type=file> is a live browser handle, not a
+  // stored copy — if it sits selected for several minutes (e.g. across an
+  // attempt that timed out retrying) the browser can invalidate it, and
+  // reading it then throws the raw DOMException
+  // "A requested file or directory could not be found at the time an
+  // operation was processed." A retry that reuses the SAME item (nothing
+  // upstream forces a fresh file pick — see the deselect-on-success-only
+  // note in handleProcess) hits this on the very next read. Surfacing the
+  // browser's cryptic message as-is left an admin with a real, unsaved
+  // upload and no idea the fix was simply "remove this file and re-add it".
   async function getBytes(item) {
-    if (item.source === 'file') return item.file.arrayBuffer();
+    if (item.source === 'file') {
+      try {
+        return await item.file.arrayBuffer();
+      } catch (e) {
+        const err = new Error(
+          `"${item.name}" can't be read anymore — its browser file selection expired (this happens after it's `
+          + `sat selected for several minutes, e.g. across a timed-out attempt). Remove it from the list below `
+          + `and re-select the file from disk, then try again. (browser said: ${e.message})`,
+        );
+        err.staleFile = true;
+        throw err;
+      }
+    }
     if (item.source === 'url')  return fetchPdfBuffer(resolveFetchUrl(item.url));
     return fetchDriveFileBytes(item.id, driveToken);
+  }
+
+  // Retrying in place after a staleFile error would just hit the same dead
+  // handle again — deselect it (same signal as the success path) so nothing
+  // reprocesses it silently, and mark it so the file list can tell the admin
+  // to remove and re-add rather than leaving them to guess why Process keeps
+  // no-op'ing on this row.
+  function markItemStale(it) {
+    setItems((its) => its.map((x) => (x.source === it.source && x.name === it.name && x.id === it.id)
+      ? { ...x, selected: false, staleFile: true } : x));
   }
 
   function handleCancel() {
@@ -1021,7 +1068,7 @@ export default function AdminContentIntake() {
         // already-loaded chapter costs nothing by default. See
         // checkAlreadyLoaded's own header for why 'c' is the right prefix to
         // check against.
-        const dup = await checkAlreadyLoaded(approvedManifest, it.name, classLevel, book || null);
+        const dup = await checkAlreadyLoaded(approvedManifest, it.name, classLevel, book || null, dbExamType, subject);
         if (dup.loadedKeys.length) {
           rows.push({
             item: it, alreadyLoaded: dup, needsLoadAnywayConfirm: true, loadingAnyway: false,
@@ -1053,6 +1100,7 @@ export default function AdminContentIntake() {
           confirmed: false, error: null,
         });
       } catch (e) {
+        if (e.staleFile) markItemStale(it);
         rows.push({ item: it, error: e.message });
       }
     }
@@ -1088,6 +1136,7 @@ export default function AdminContentIntake() {
         confirmed: false, error: null, needsLoadAnywayConfirm: false, loadingAnyway: false,
       } : r));
     } catch (e) {
+      if (e.staleFile) markItemStale(it);
       setMatchRows((rs) => rs.map((r, n) => n === i
         ? { ...r, error: e.message, needsLoadAnywayConfirm: false, loadingAnyway: false }
         : r));
@@ -1178,6 +1227,7 @@ export default function AdminContentIntake() {
         if (e?.name === 'AbortError' || ctrl.signal.aborted) {
           setStepMsg({ status: 'cancelled', message: 'Cancelled — nothing was saved for this file' });
         } else {
+          if (e.staleFile) markItemStale(it);
           setStepMsg({ status: 'error', message: e.message });
         }
       }
@@ -1218,7 +1268,7 @@ export default function AdminContentIntake() {
         // call. Notes only: PYQ uploads have no manifest chapter_key to check
         // against. See checkAlreadyLoaded's header for the key-prefix note.
         if (contentType === 'notes' && approvedManifest) {
-          const dup = await checkAlreadyLoaded(approvedManifest, it.name, classLevel, book || null);
+          const dup = await checkAlreadyLoaded(approvedManifest, it.name, classLevel, book || null, dbExamType, subject);
           if (dup.loadedKeys.length > 0) {
             const loadAnyway = await promptDuplicateLoad(it.name, dup);
             if (!loadAnyway) {
@@ -1406,6 +1456,7 @@ export default function AdminContentIntake() {
         if (e?.name === 'AbortError' || ctrl.signal.aborted) {
           setStepMsg({ status: 'cancelled', message: 'Cancelled — nothing was saved for this file' });
         } else {
+          if (e.staleFile) markItemStale(it);
           setStepMsg({ status: 'error', message: e.message });
         }
       }
@@ -1650,6 +1701,9 @@ export default function AdminContentIntake() {
                       <input value={it.chapter} onChange={(e) => updateItemChapter(i, e.target.value)}
                         className="w-full text-sm font-medium text-slate-200 bg-transparent border-b border-transparent hover:border-white/10 focus:border-primary-500 focus:outline-none" />
                       <p className="text-[10px] text-slate-500 truncate">{it.path ? `${it.path} · ` : ''}{it.name}</p>
+                      {it.staleFile && (
+                        <p className="text-[10px] text-amber-400 mt-0.5">Expired — remove and re-select this file from disk before retrying.</p>
+                      )}
                     </div>
                     <button onClick={() => removeItem(i)} className="p-1 rounded-lg text-slate-600 hover:text-red-400 shrink-0"><X size={13} /></button>
                   </div>

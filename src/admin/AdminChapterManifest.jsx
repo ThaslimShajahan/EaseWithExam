@@ -290,6 +290,8 @@ export default function AdminChapterManifest() {
           Study Notes uploads are <b className="text-slate-300">blocked</b> until one exists: the manifest decides
           where each chapter starts and ends, so the AI only structures content <i>within</i> a chapter instead of
           guessing the boundaries. Every manifest requires manual approval — there is no automatic approval.
+          Loading a book published in multiple parts (Part 1/2/3)? Each part is a separate manifest with its own
+          <code className="text-slate-300"> book</code> value — see <code className="text-slate-300">docs/MULTI_PART_TEXTBOOK_WORKFLOW.md</code>.
         </p>
       </div>
 

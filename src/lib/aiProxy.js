@@ -49,6 +49,33 @@ const ANON_KEY  = import.meta.env.VITE_SUPABASE_ANON_KEY;
  *  request costs one page of latency instead of an afternoon. */
 export const AI_REQUEST_TIMEOUT_MS = 90_000;
 
+/** Per-attempt ceiling for the admin content-UPLOAD pipeline specifically
+ *  (notes-extraction, pyq-extraction, manifest-draft, vision-page-extract) —
+ *  NOT the default above, which every student-facing call (doubt chat,
+ *  practice generation, flashcards, ...) still uses. A student waiting on an
+ *  answer needs the tight 90s default; an admin upload does not, and 90s was
+ *  provably too tight for it: PYQ_MAX_TOKENS reserves 6,000 output tokens
+ *  (contentExtraction.js), and at degraded-but-working throughput that alone
+ *  can legitimately run well past 90s with nothing actually broken — exactly
+ *  the 2026-08-20 false-timeout incident (CBSE Class 11 Biology, "The Living
+ *  World"), where a slow-but-working extraction was retried into a hard
+ *  failure it would never have hit with more per-attempt headroom.
+ *
+ *  140s, not higher: in production every call goes through the Supabase Edge
+ *  Function, which has its own hard 150s request-idle timeout — a response
+ *  not sent within 150s gets killed platform-side with a 504 regardless of
+ *  what we set here. 140s stays safely under that so OUR deadline fires
+ *  first with a real "timed out after 140s" message, instead of racing an
+ *  opaque platform 504. Going higher would just lose that race more often,
+ *  not buy real headroom.
+ *
+ *  maxAttempts is left at the default 3 — worst case before a genuine
+ *  failure (network truly down, API genuinely erroring) is reported:
+ *  140+140+140+~3.5s backoff ≈ 423s (~7 min), long enough to cover a
+ *  legitimately dense chapter's slowest single call without waiting
+ *  indefinitely on something actually broken. */
+export const ADMIN_UPLOAD_TIMEOUT_MS = 140_000;
+
 /** Initial attempt + 2 retries. */
 export const AI_MAX_ATTEMPTS = 3;
 

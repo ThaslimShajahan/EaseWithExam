@@ -24,7 +24,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../aiProxy', () => ({ cachedChatComplete: vi.fn(), AI_REQUEST_TIMEOUT_MS: 1000 }));
+vi.mock('../aiProxy', () => ({ cachedChatComplete: vi.fn(), AI_REQUEST_TIMEOUT_MS: 1000, ADMIN_UPLOAD_TIMEOUT_MS: 1000 }));
 
 import { cachedChatComplete } from '../aiProxy';
 import { runNotesExtraction } from '../contentExtraction';
@@ -57,6 +57,13 @@ describe('runNotesExtraction — no regression on an ordinary (non-truncating) u
     expect(cachedChatComplete).toHaveBeenCalledTimes(1);
     expect(lessons).toHaveLength(1);
     expect(lessons[0].title).toBe('Ordinary Chapter');
+  });
+
+  it('uses the admin-upload timeout, not the tighter student-facing default (2026-08-20)', async () => {
+    cachedChatComplete.mockResolvedValueOnce(stop(lesson('Ordinary Chapter')));
+    await runNotesExtraction({ rawText: rawTextFor(3), examType: 'CBSE Class 11', subject: 'History', onProgress: () => {} });
+    const [, opts] = cachedChatComplete.mock.calls[0];
+    expect(opts.timeoutMs).toBe(1000); // mocked ADMIN_UPLOAD_TIMEOUT_MS above
   });
 });
 

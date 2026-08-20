@@ -25,7 +25,7 @@
  * rather than failing somewhere confusing downstream.
  */
 
-import { cachedChatComplete, backoffMs, sleep } from './aiProxy';
+import { cachedChatComplete, backoffMs, sleep, ADMIN_UPLOAD_TIMEOUT_MS } from './aiProxy';
 import { loadPdfDocument, getPdfjs } from './pdfAnalyzer';
 import { supabase } from './supabase';
 
@@ -358,7 +358,7 @@ async function visionAttempt(dataUri, textLayer, ctx, signal, empty) {
           ],
         },
       ],
-    }, { signal, feature: 'vision-page-extract' });
+    }, { signal, feature: 'vision-page-extract', timeoutMs: ADMIN_UPLOAD_TIMEOUT_MS });
 
     const raw = resp?.choices?.[0]?.message?.content;
     if (!raw) {

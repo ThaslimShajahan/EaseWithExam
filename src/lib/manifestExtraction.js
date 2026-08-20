@@ -15,7 +15,7 @@
  */
 
 import { extractPagesWithVision } from './pdfVision';
-import { chatComplete } from './aiProxy';
+import { chatComplete, ADMIN_UPLOAD_TIMEOUT_MS } from './aiProxy';
 import { validateManifest } from './chapterManifest';
 
 const MANIFEST_MAX_TOKENS = 4000; // a contents page is short; this is not the 3000-token wall NOTES_MAX_TOKENS hit
@@ -96,7 +96,7 @@ export async function draftManifestFromContentsPage(arrayBuffer, ctx = {}) {
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: `${examType ?? ''} ${subject ?? ''}${book ? ` — ${book}` : ''}\n\nCONTENT:\n${marked}` },
     ],
-  }, { feature: 'manifest-draft' });
+  }, { feature: 'manifest-draft', timeoutMs: ADMIN_UPLOAD_TIMEOUT_MS });
 
   const finish = resp.choices[0].finish_reason;
   if (finish && finish !== 'stop') {

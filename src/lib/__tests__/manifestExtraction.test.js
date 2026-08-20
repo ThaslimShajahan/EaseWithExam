@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../aiProxy', () => ({ chatComplete: vi.fn(), AI_REQUEST_TIMEOUT_MS: 1000 }));
+vi.mock('../aiProxy', () => ({ chatComplete: vi.fn(), AI_REQUEST_TIMEOUT_MS: 1000, ADMIN_UPLOAD_TIMEOUT_MS: 1000 }));
 vi.mock('../pdfVision', () => ({ extractPagesWithVision: vi.fn(), MAX_VISION_PAGES: 10 }));
 
 import { chatComplete } from '../aiProxy';
@@ -37,6 +37,9 @@ describe('draftManifestFromContentsPage — fileOrdinal defaults, never null for
     const { entries } = await draftManifestFromContentsPage(new ArrayBuffer(0), { examType: 'CBSE Class 8', subject: 'Mathematics' });
 
     expect(entries.map((e) => e.fileOrdinal)).toEqual([1, 2, 3]);
+    // 2026-08-20: this call must use the admin-upload timeout, not the tighter
+    // student-facing default — see aiProxy.js's ADMIN_UPLOAD_TIMEOUT_MS header.
+    expect(chatComplete).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ timeoutMs: 1000 }));
     // The exact real failure this fixes: this used to always be [null, null, null].
     expect(entries.every((e) => e.fileOrdinal != null)).toBe(true);
     // A fresh draft of a predictably-named book is now immediately inferable

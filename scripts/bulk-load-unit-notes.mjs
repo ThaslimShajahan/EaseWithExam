@@ -270,18 +270,28 @@ async function processOneFile({ url, filename, exam, subject, classLevel, book, 
 }
 
 /* Already-loaded chapter_keys for one file, from the manifest's own idempotency
- * signal (same check mode 1 always ran up front, now per-file for mode 3). */
-async function alreadyLoadedKeys({ entries, fileOrdinal, prefix, classLevel, book }) {
-  return page.evaluate(async ({ entries, fileOrdinal, prefix, classLevel, book }) => {
+ * signal (same check mode 1 always ran up front, now per-file for mode 3).
+ *
+ * Scoped by (examType, subject) — chapter_key alone is NOT globally unique;
+ * chapterKeyFor() deliberately leaves subject out of the key string (the real
+ * uniqueness lives in the DB's (exam_type, subject, chapter_key) index, see
+ * chapterIdentity.js:36), so 'c11_ch01' collides across every unrelated
+ * single-book subject at the same class level. Confirmed live: CBSE Class 11
+ * Accountancy ch.1 and CBSE Class 11 Biology ch.1 both resolve to 'c11_ch01'.
+ * Without this filter, a file for one subject can be reported "already
+ * loaded" because a DIFFERENT subject's chapter happens to share the key. */
+async function alreadyLoadedKeys({ entries, fileOrdinal, prefix, classLevel, book, examType, subject }) {
+  return page.evaluate(async ({ entries, fileOrdinal, prefix, classLevel, book, examType, subject }) => {
     const { candidatesForFile } = await import('/src/lib/chapterManifest.js');
     const { chapterKeyFor } = await import('/src/lib/chapterIdentity.js');
     const { supabase } = await import('/src/lib/supabase.js');
     const covered = candidatesForFile(entries, fileOrdinal, null);
     const keys = covered.map((e) => chapterKeyFor({ prefix, classLevel, book, ordinal: e.ordinal }));
     if (!keys.length) return { titles: [], keys: [], loadedKeys: [] };
-    const { data } = await supabase.from('knowledge_base').select('chapter_key').in('chapter_key', keys).limit(500);
+    const { data } = await supabase.from('knowledge_base').select('chapter_key')
+      .eq('exam_type', examType).eq('subject', subject).in('chapter_key', keys).limit(500);
     return { titles: covered.map((e) => e.title), keys, loadedKeys: [...new Set((data ?? []).map((r) => r.chapter_key))] };
-  }, { entries, fileOrdinal, prefix, classLevel, book });
+  }, { entries, fileOrdinal, prefix, classLevel, book, examType, subject });
 }
 
 async function recordJob(fields) {
@@ -354,6 +364,7 @@ if (WORK) {
     const check = await alreadyLoadedKeys({
       entries: manifest.entries, fileOrdinal: null /* let candidatesForFile derive from filename inside */,
       prefix: manifest.keyPrefix, classLevel, book: job.book,
+      examType: job.exam_type, subject: job.subject,
     });
 
     if (check.loadedKeys.length && !RELOAD) {
@@ -453,7 +464,7 @@ async function expectedFor(filename) {
     const { fileOrdinalFrom } = await import('/src/lib/chapterManifest.js');
     return fileOrdinalFrom(filename);
   }, filename);
-  return { ord, ...(await alreadyLoadedKeys({ entries: manifest0.entries, fileOrdinal: ord, prefix: manifest0.keyPrefix, classLevel: CLASS_LVL, book: BOOK })) };
+  return { ord, ...(await alreadyLoadedKeys({ entries: manifest0.entries, fileOrdinal: ord, prefix: manifest0.keyPrefix, classLevel: CLASS_LVL, book: BOOK, examType: EXAM, subject: SUBJECT })) };
 }
 
 const queue = [];
