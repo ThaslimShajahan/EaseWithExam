@@ -4,6 +4,42 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-20 — Deployed: dedup scoping fix, stale-file-handle fix, admin-upload timeout extension (deploy 2026.08.20.1, commit `7ef8de3`)
+
+All three of tonight's fixes shipped together — related (the timeout extension reduces how often a slow-but-working extraction ever reaches the retry exhaustion that leaves a stale file handle behind) and the dedup bug was actively blocking real uploads. Fresh pre-flight run immediately before packaging, not reused from earlier in the session: 576/576 tests, `build:seo` clean, bundle `index-BqMaMGdn.js`, prerender sanity confirmed (body is real content not an empty root div, `/about`'s own canonical present).
+
+Standard 8-step procedure. Backup taken first (`webroot-2026-08-20-102256.tar.gz`). `scp` exit 0, md5 matched on both ends (`0379036...`) before extracting. Extract hit the documented benign `tar` exit 2 (Gotcha 1 — directory chmod/utime denied on `.`/`assets`/`landing`, not a real failure); confirmed genuine via the disk check, not the exit code: `index.html` named the new hash and the file existed. Permissions fixed (0 unreadable files after). Live `index.html` confirmed serving `index-BqMaMGdn.js` before touching the content checks.
+
+Content-checked past status codes, per Gotcha 4 — a 200 alone proved nothing during the 4-day soft-404 incident. All 5 prerendered routes show their own title and canonical, never the homepage's:
+
+| route | title | canonical |
+|---|---|---|
+| /about/ | "About EaseWithExam — AI Exam Prep Built for Indian Students" | `/about/` |
+| /contact/ | "Contact EaseWithExam — Support for NEET, JEE & Board Prep" | `/contact/` |
+| /privacy/ | "Privacy & Cookie Policy \| EaseWithExam" | `/privacy/` |
+| /terms/ | "Terms of Service \| EaseWithExam" | `/terms/` |
+| /refund/ | "Refund Policy \| EaseWithExam" | `/refund/` |
+
+`/support` checked too, but it is **not** one of the 5 — it isn't in `PAGE_SEO`, so `prerenderedRoutes()` never generates a directory or its own baked-in title/canonical for it; it's SPA-only by design, same as `/dashboard`. Correct behavior there is 200 serving the current bundle's `index.html` shell with the homepage's static `<title>` (React updates it client-side after JS runs, invisible to `curl`) — confirmed exactly that, plus confirmed a genuinely nonexistent route (`/no-such-page-xyz`) still 404s, so the route alternation itself is intact and this isn't the "everything 200s" regression. Cleanup done (`rm -f ~/ewe-dist.tar.gz` both ends).
+
+**`deploy_log` entry not yet written** — `admin_insert_deploy_log` requires a real verified admin uid (`assert_verified_admin`), which this session doesn't have and won't fabricate or guess (checked: `admins` is correctly unreadable via the anon key, confirming the RLS posture is doing its job). Prepared and handed to the owner to run from an authenticated admin session:
+
+```
+admin_insert_deploy_log(
+  p_caller: '<owner admin uid>',
+  p_version: '2026.08.20.1',
+  p_summary: 'Fixed content-upload dedup false positive (chapter_key collision across subjects), stale-file-handle error on Load anyway, and extended the admin-upload AI timeout',
+  p_changes: [
+    {"type":"fixed","text":"checkAlreadyLoaded()/alreadyLoadedKeys() now scope the knowledge_base dedup query by (exam_type, subject), not chapter_key alone — chapter_key collides across unrelated single-book subjects at the same class level (proven: CBSE Class 11 Accountancy and Biology both resolve to c11_ch01)"},
+    {"type":"fixed","text":"getBytes() catches a stale browser File-handle read failure on retry/Load anyway, surfaces an actionable message, and marks the item for re-selection instead of silently reusing a dead handle"},
+    {"type":"changed","text":"Added ADMIN_UPLOAD_TIMEOUT_MS (140s), scoped to the 4 admin-upload AI call sites (notes/pyq/manifest/vision extraction) only — student-facing calls keep the 90s default"},
+    {"type":"added","text":"docs/MULTI_PART_TEXTBOOK_WORKFLOW.md, linked from the Chapter Manifests screen"}
+  ],
+  p_git_commit_hash: '7ef8de3',
+  p_bundle_hash: 'index-BqMaMGdn.js'
+)
+```
+
 ## 2026-08-20 — Extended AI timeout for the admin upload pipeline only (140s vs the 90s student-facing default)
 
 Follow-up to tonight's dedup false-positive investigation: traced the real timeout mechanism before touching anything, per the owner's explicit request to confirm the approach first. Two stacked ceilings, not one — `AI_REQUEST_TIMEOUT_MS=90_000` × `AI_MAX_ATTEMPTS=3` in `aiProxy.js` (worst case before failure ≈ 273s, matching the "~5 min" symptom exactly), and underneath that, in production, Supabase's Edge Function platform enforces its own **hard 150s request-idle timeout** — a response not sent within 150s gets killed with a 504 regardless of our own client-side deadline. Confirmed via Supabase's docs, not assumed.
