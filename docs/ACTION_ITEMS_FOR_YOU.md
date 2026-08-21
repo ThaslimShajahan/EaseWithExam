@@ -6,6 +6,30 @@ shipped in a degraded state. The narrative of what changed and why lives in
 
 ---
 
+## 🔴 OPEN, URGENT — Live Supabase schema has drifted from `supabase/migrations/` (2026-08-21)
+
+**Found while investigating the new-signup auth-error incident.** Queried the linked production DB directly and confirmed `get_own_user`'s live definition already has a `parent_student_links` ownership check that does not exist in any committed migration. Whatever "tonight's production reset / RLS lockdown" work was — mentioned by the owner, not found in `git log` or `supabase/migrations/` — was applied straight to Supabase (SQL editor / dashboard), not through this repo.
+
+**Why this is urgent, not just untidy:** `supabase db push` from this repo could silently revert that live change the next time migrations are pushed, since git has no record of it. There may be other undocumented live changes beyond `get_own_user` — only checked that one function so far.
+
+**Needed from the owner:** the exact SQL run tonight against production (from wherever it was run — another session, the Supabase SQL editor history, etc.), so it can be turned into a real migration file under `supabase/migrations/` and the drift closed for good.
+
+---
+
+## 🔧 OPEN, NOT URGENT — "Load anyway" success message doesn't say it overrode a dedup warning (2026-08-20)
+
+**Real incident that exposed this:** CBSE Class 11 Biology "Biomolecules" got dedup-warned ("already has 1 of 1 chapter key(s) loaded"), the admin clicked "Load anyway", and the success message afterward read identically to a first-time save — `"22 chunks saved across 1 lesson ... 15 page(s) read by vision · 1 page(s) FAILED to read"` — no different from the original save's message. Confirmed via direct `knowledge_base` query: this was a **real** second save (44 total rows, two batches 54 minutes apart, past the 15-min accidental-duplicate cache window) — the warning was a true positive (Biology's own chapter really was already loaded), and "Load anyway" did exactly what its own warning text says it will do. Not a bug in the dedup logic — the fix scoped earlier tonight only removes *false* positives (cross-subject `chapter_key` collisions), and shouldn't and doesn't suppress a true one.
+
+**The actual gap:** nothing in the UI, before or after the click, distinguishes "this warning might be the collision bug" from "this is genuinely your own prior content, and you're about to duplicate it." An admin who has seen one false-positive warning that session has no way to tell the next warning is real just by looking at the post-save result.
+
+**Proposed fix, not yet built:** the post-override save result should explicitly flag that it overrode a dedup warning and how much pre-existing content there was, e.g. `"⚠ this OVERRODE an existing dedup warning — N row(s) already existed for this chapter before this save"`. Likely landing spot: `handleProcess`'s and `handleProcessConfirmed`'s success `setStepMsg` in `AdminContentIntake.jsx` (`src/admin/AdminContentIntake.jsx`), conditioned on whether a `dup`/`alreadyLoaded` check preceded that particular row's save. Build in the next session if not sooner — owner confirmed not urgent.
+
+**Follow-up, closed out same night:** the 22 duplicate rows from the 11:29 UTC override save were deleted via `admin_delete_knowledge_chunks`, re-verified live — `knowledge_base` is back to the correct 22 rows from the original 10:35 UTC save. Traced the "1 page(s) FAILED to read" (both runs) via `admin_list_ai_call_log`: all 45 `vision-page-extract` calls logged in the window returned `200`/no error, and the retained batch's call count (15) matches "15 read by vision" with no extra logged attempt for a 16th page — pointing at a client-side PDF rasterization failure (`renderPageToCanvas` throwing before any AI call is made), not a vision/API quality problem. Per the code, a rasterization failure keeps the page's original (pre-vision) text layer rather than dropping it, so the affected page's content is **likely degraded, not missing**, on 1 of the chapter's 16 pages. The exact page number/reason was never persisted server-side (only existed in the live browser message that run) and isn't worth a re-run to recover on its own.
+
+**Status: low priority, on the owner.** Owner will manually open the source PDF (chapter 9, printed pages 104–119), spot-check the last page against Content Map's "Biomolecules" entry, and only come back to re-run vision for that single page if it actually looks thin/broken. If it looks fine, this closes with no further action.
+
+---
+
 ## 💡 FUTURE, NOT SCOPED — a real no-terminal background upload (2026-08-15)
 
 **Deliberately not built tonight.** Tier 2 (content_jobs queue + Status tab, same

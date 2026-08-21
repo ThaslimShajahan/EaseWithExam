@@ -4,6 +4,46 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-22 — Deployed: new-signup auth-error-screen fix (deploy 2026.08.22.1, commit `19343ae`)
+
+Real incident tonight: a friend's genuinely first-time signup (both Google and phone tried) hit "Something went wrong — Could not load your account" and stayed stuck. Investigated by minting a real Firebase ID token for a brand-new, never-before-seen uid via the service account and calling the live `upsert_own_user`/`get_user_subscription` RPCs directly — both returned clean 200s, so the RLS/RPC layer itself wasn't reproducibly broken at the time of testing. While tracing the retry path, found a real bug regardless: `retryProfile()` (`AuthContext.jsx`) called `get_own_user` — a plain read — which is a no-op for a brand-new user whose very first `upsert_own_user` never created a row (`get_own_user` returns `null` for a missing row, not an error). Clicking "Try Again" would silently clear `profileError` and drop the user into onboarding with no backing row, rather than ever actually creating the account.
+
+Fixed: `retryProfile()` now re-runs the same upsert the initial sign-in uses (`upsertProfileFor()`, factored out so both paths can't drift apart), after forcing a fresh ID token (`getIdToken(true)`). The initial `onAuthStateChanged` handler also gets one automatic retry — fresh token, 1s delay — before `AuthErrorScreen` shows at all, so a transient blip on a first-time signup now self-heals instead of stranding the user. The duplicate-email conflict path (`23505`) is deliberately NOT retried — that's a deterministic conflict, not a blip.
+
+**Also surfaced, not yet resolved:** the live database already has RPC logic (`get_own_user`'s parent-link check) that doesn't exist in any committed migration — confirmed via direct query against the linked production DB. Whatever "tonight's production reset / RLS lockdown" work was, it was applied straight to Supabase, not through this repo, so `supabase/migrations/` has drifted from what's actually live. Needs the exact SQL recovered from wherever it was run and turned into a real migration file — flagged in `docs/ACTION_ITEMS_FOR_YOU.md`.
+
+Standard 8-step procedure. 576/576 tests, `build:seo` clean, bundle `index-DjRun-P_.js`, prerender sanity confirmed. Backup taken first (`webroot-2026-08-21-213650.tar.gz`). `scp` exit 0, md5 matched on both ends (`b23858a7...`) before extracting. Extract hit the documented benign `tar` exit 2 (Gotcha 1); confirmed genuine via the disk check: `index.html` named the new hash and the file existed. Permissions fixed (0 unreadable files after). Live `index.html` confirmed serving `index-DjRun-P_.js`.
+
+Content-checked past status codes (Gotcha 4) — all 5 prerendered routes show their own title and canonical:
+
+| route | title | canonical |
+|---|---|---|
+| /about/ | "About EaseWithExam — AI Exam Prep Built for Indian Students" | `/about/` |
+| /contact/ | "Contact EaseWithExam — Support for NEET, JEE & Board Prep" | `/contact/` |
+| /privacy/ | "Privacy & Cookie Policy \| EaseWithExam" | `/privacy/` |
+| /terms/ | "Terms of Service \| EaseWithExam" | `/terms/` |
+| /refund/ | "Refund Policy \| EaseWithExam" | `/refund/` |
+
+Cleanup done (`rm -f ~/ewe-dist.tar.gz` both ends).
+
+**`deploy_log` entry not yet written** — same reason as the 2026.08.20.1 deploy: `admin_insert_deploy_log` requires a real verified admin uid, which this session doesn't have and won't fabricate. Prepared for the owner to run from an authenticated admin session:
+
+```
+admin_insert_deploy_log(
+  p_caller: '<owner admin uid>',
+  p_version: '2026.08.22.1',
+  p_summary: 'Fixed the new-signup AuthErrorScreen: retry now actually creates the account instead of a no-op read, plus one automatic retry before the error screen ever shows',
+  p_changes: [
+    {"type":"fixed","text":"retryProfile() now calls upsert_own_user (via the shared upsertProfileFor()) instead of a plain get_own_user read, which was a no-op for a brand-new user with no row yet"},
+    {"type":"fixed","text":"onAuthStateChanged's initial profile write gets one automatic retry (forced-fresh ID token, 1s delay) before AuthErrorScreen is shown, for the deterministic-conflict-free error paths only"}
+  ],
+  p_git_commit_hash: '19343ae',
+  p_bundle_hash: 'index-DjRun-P_.js'
+)
+```
+
+---
+
 ## 2026-08-20 — Deployed: dedup scoping fix, stale-file-handle fix, admin-upload timeout extension (deploy 2026.08.20.1, commit `7ef8de3`)
 
 All three of tonight's fixes shipped together — related (the timeout extension reduces how often a slow-but-working extraction ever reaches the retry exhaustion that leaves a stale file handle behind) and the dedup bug was actively blocking real uploads. Fresh pre-flight run immediately before packaging, not reused from earlier in the session: 576/576 tests, `build:seo` clean, bundle `index-BqMaMGdn.js`, prerender sanity confirmed (body is real content not an empty root div, `/about`'s own canonical present).
