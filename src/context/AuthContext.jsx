@@ -62,14 +62,30 @@ export function AuthProvider({ children }) {
     return 'google';
   };
 
-  // Re-runs the same profile fetch onAuthStateChanged does on mount — exposed
-  // so the retry screen can recover from a transient failure (network blip,
-  // RLS/RPC misconfig) without forcing a full sign-out/sign-in round trip.
+  // The single write shape used both on initial sign-in and on retry — see
+  // callers below. Kept as one function so the two paths can't drift apart.
+  const upsertProfileFor = (user) =>
+    upsertUser(user.uid, {
+      auth_method:  deriveAuthMethod(user),
+      display_name: user.displayName || null,
+      email:        user.email       || null,
+      phone_number: user.phoneNumber || null,
+      photo_url:    user.photoURL    || null,
+    });
+
+  // Re-runs the SAME upsert onAuthStateChanged does on mount, not a plain
+  // read — a brand-new sign-in whose very first upsert_own_user call failed
+  // has NO row yet, so a plain getUser() here would just re-read nothing
+  // (get_own_user returns null for a missing row, not an error) and silently
+  // clear profileError without ever actually creating the account. Forces a
+  // fresh ID token first: this is the retry path for exactly the case where
+  // the first attempt's token/RPC round-trip hit a transient blip.
   const retryProfile = async () => {
     if (!currentUser) return;
     setLoading(true);
     try {
-      const profile = await getUser(currentUser.uid);
+      await currentUser.getIdToken(true);
+      const profile = await upsertProfileFor(currentUser);
       setUserProfile(profile);
       setProfileError(null);
       await loadSubscription(currentUser.uid);
@@ -148,13 +164,7 @@ export function AuthProvider({ children }) {
           // not just first sign-in — upsert_own_user coalesces against the
           // existing row for every field, so it never clobbers
           // onboarding_completed/target_exam/syllabus/class_level.
-          const profile = await upsertUser(user.uid, {
-            auth_method:  deriveAuthMethod(user),
-            display_name: user.displayName || null,
-            email:        user.email       || null,
-            phone_number: user.phoneNumber || null,
-            photo_url:    user.photoURL    || null,
-          });
+          const profile = await upsertProfileFor(user);
           setUserProfile(profile);
           setProfileError(null);
           await loadSubscription(user.uid);
@@ -166,14 +176,31 @@ export function AuthProvider({ children }) {
           // (sql/0056) rejects the write rather than silently attaching it
           // to two accounts. Surface a clear message and drop this brand-new,
           // otherwise-profile-less Firebase identity instead of leaving the
-          // user stuck signed in with no Supabase row behind them.
+          // user stuck signed in with no Supabase row behind them. Not
+          // retried below — this is a deterministic conflict, not a blip.
           if (err.code === '23505' || /duplicate key.*email/i.test(err.message || '')) {
             console.error('Profile fetch error: email already in use by another account', err);
             setProfileError(new Error('An account already exists with this email. Please sign in with your original method instead.'));
             await user.delete().catch(() => firebaseSignOut(auth));
           } else {
-            console.error('Profile fetch error:', err);
-            setProfileError(err);
+            // One transient-tolerant retry before surfacing AuthErrorScreen —
+            // real incident (2026-08-21): a first-time signup's very first
+            // upsert_own_user call is the one most exposed to a cold
+            // network/token blip, and it has no existing row to fall back on
+            // if it fails. Forces a fresh ID token (not just whatever was
+            // cached from sign-in) before retrying once.
+            console.error('Profile fetch error, retrying once:', err);
+            try {
+              await user.getIdToken(true);
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+              const profile = await upsertProfileFor(user);
+              setUserProfile(profile);
+              setProfileError(null);
+              await loadSubscription(user.uid);
+            } catch (retryErr) {
+              console.error('Profile fetch error (auto-retry failed):', retryErr);
+              setProfileError(retryErr);
+            }
           }
         }
       } else {
