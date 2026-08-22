@@ -6,6 +6,7 @@ import {
   RefreshCw, FileText, X,
 } from 'lucide-react';
 import { supabase, publishPYQPaper } from '../lib/supabase';
+import MathText from '../components/ui/MathText';
 function getCallerUid() {
   try {
     const key = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
@@ -366,7 +367,7 @@ function PYQBank() {
                             <span className="text-[9px] text-slate-600">{q.year}</span>
                           )}
                         </div>
-                        <p className="text-sm text-slate-200 leading-snug line-clamp-2">{q.question_text}</p>
+                        <p className="text-sm text-slate-200 leading-snug line-clamp-2"><MathText text={q.question_text} /></p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <button
@@ -388,7 +389,7 @@ function PYQBank() {
                         >
                           <div className="px-4 pb-4 space-y-3 border-t border-white/5 pt-3">
                             {/* Full question */}
-                            <p className="text-sm text-white leading-relaxed">{q.question_text}</p>
+                            <p className="text-sm text-white leading-relaxed whitespace-pre-wrap"><MathText text={q.question_text} /></p>
 
                             {/* Options */}
                             {Array.isArray(q.options) && q.options.length > 0 && (
@@ -698,7 +699,7 @@ function KnowledgeBaseViewer() {
                   {deleting === chunk.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
                 </button>
               </div>
-              <p className="text-xs text-slate-300 leading-relaxed line-clamp-4">{chunk.content}</p>
+              <p className="text-xs text-slate-300 leading-relaxed line-clamp-4"><MathText text={chunk.content} /></p>
             </div>
           ))}
         </div>

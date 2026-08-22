@@ -5,6 +5,7 @@ import {
   Filter, BookOpen, X, Sparkles, Brain,
 } from 'lucide-react';
 import { supabase, adminSaveKnowledgeChunks } from '../lib/supabase';
+import MathText from '../components/ui/MathText';
 import { chatComplete } from '../lib/aiProxy';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { examTypeToTag } from '../lib/categories';
@@ -350,7 +351,7 @@ Return: { "score": 8, "verdict": "approve" | "review", "reason": "one line" }`,
                           KB
                         </span>
                       )}
-                      <p className="text-sm text-white line-clamp-2 leading-snug">{item.question_text}</p>
+                      <p className="text-sm text-white line-clamp-2 leading-snug"><MathText text={item.question_text} /></p>
                     </div>
                     <p className="text-[10px] text-slate-500">
                       {item.subject} · {item.exam_type}
@@ -402,7 +403,7 @@ Return: { "score": 8, "verdict": "approve" | "review", "reason": "one line" }`,
                             AI: {score.score}/10 — {score.reason}
                           </p>
                         )}
-                        <p className="text-sm text-slate-200 leading-relaxed whitespace-pre-wrap">{item.question_text}</p>
+                        <p className="text-sm text-slate-200 leading-relaxed whitespace-pre-wrap"><MathText text={item.question_text} /></p>
                         {item.options?.length > 0 && (
                           <div className="grid grid-cols-2 gap-1.5 mt-2">
                             {item.options.map((opt, i) => (

@@ -6,6 +6,7 @@ import {
   List, Layers, ChevronDown,
 } from 'lucide-react';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
+import MathText from '../components/ui/MathText';
 import { supabase } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { chatComplete } from '../lib/aiProxy';
@@ -392,7 +393,7 @@ function NoteRow({ note, centres, showPages, onTogglePublish, onEdit, onDelete }
               {[...new Set(note.tags)].map(t => <span key={t} className="flex items-center gap-1 text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded-full border border-white/5"><Tag size={7} />{t}</span>)}
             </div>
           )}
-          {note.content && <p className="mt-1 px-1 text-xs text-slate-400 line-clamp-2 leading-relaxed">{note.content}</p>}
+          {note.content && <p className="mt-1 px-1 text-xs text-slate-400 line-clamp-2 leading-relaxed"><MathText text={note.content} /></p>}
         </div>
 
         <div className="flex items-center gap-1 shrink-0">

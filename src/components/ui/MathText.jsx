@@ -44,11 +44,14 @@ function parseSegments(text) {
   const segments = [];
   const src = normalizeLatex(String(text));
   // Require $...$ content to look like math — a LaTeX indicator (\cmd, ^, _, {, }),
-  // a digit directly touching a letter (3x, x2 — algebraic shorthand), or an "="
+  // a digit directly touching a letter (3x, x2 — algebraic shorthand), an "="
   // sign (F = ma, v = u + at — pure-letter physics/algebra equations with no
-  // digits at all, still not real currency in any plausible prose) — so plain
-  // currency like "$500 and $600" is never mistaken for math delimiters.
-  const re  = /\\\([\s\S]+?\\\)|\$(?=[^$\n]*(?:\\[a-zA-Z]|[_^{}=]|\d[a-zA-Z]|[a-zA-Z]\d))[^$\n]+?\$/g;
+  // digits at all, still not real currency in any plausible prose), or a
+  // square bracket (interval/set notation, e.g. $[-1, 1]$ — brackets never
+  // appear in a plausible currency phrase, so this adds no false-positive
+  // risk) — so plain currency like "$500 and $600" is never mistaken for
+  // math delimiters.
+  const re  = /\\\([\s\S]+?\\\)|\$(?=[^$\n]*(?:\\[a-zA-Z]|[_^{}=[\]]|\d[a-zA-Z]|[a-zA-Z]\d))[^$\n]+?\$/g;
   let last = 0, m;
   while ((m = re.exec(src)) !== null) {
     if (m.index > last) segments.push({ type: 'text', value: src.slice(last, m.index) });

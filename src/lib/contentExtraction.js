@@ -582,7 +582,7 @@ export async function runNotesExtraction({ rawText, pages, examType, subject, on
       messages: [
         {
           role: 'system',
-          content: 'You structure textbook/study material PDFs into their real table-of-contents shape (unit, individual lessons/chapters, and the page range each one actually spans) and break each lesson into searchable knowledge chunks. Return only valid JSON. Use the page numbers as they actually appear printed in the PDF — do not invent them. This may be one part of a larger unit split across multiple calls — only extract lessons/chunks whose content appears in THIS excerpt; if a lesson clearly continues from where it left off, reuse the SAME title so it can be merged back together.\n\nYou are TRANSCRIBING AND ORGANISING, not summarising. The chunks are the only record of this material that survives — anything you leave out is lost. A short answer is a failure, not a virtue.',
+          content: 'You structure textbook/study material PDFs into their real table-of-contents shape (unit, individual lessons/chapters, and the page range each one actually spans) and break each lesson into searchable knowledge chunks. Return only valid JSON. Use the page numbers as they actually appear printed in the PDF — do not invent them. This may be one part of a larger unit split across multiple calls — only extract lessons/chunks whose content appears in THIS excerpt; if a lesson clearly continues from where it left off, reuse the SAME title so it can be merged back together.\n\nYou are TRANSCRIBING AND ORGANISING, not summarising. The chunks are the only record of this material that survives — anything you leave out is lost. A short answer is a failure, not a virtue.\n\nMATH FORMATTING IS MANDATORY: every mathematical expression inside a chunk\'s "content" — equations, formulas, function notation, set notation, intervals, Greek letters, even a single symbol — must be written as LaTeX wrapped in $...$ (inline) or $$...$$ (block). NEVER write math as plain prose or bare Unicode/ASCII (never "sin -1 x", "cos : R -> [-1, 1]", "{(a, b): a - b = 10}", "pi/2", "x^2" as literal text). There is no such thing as math simple enough to leave unformatted — if it is a mathematical expression, it gets $ delimiters, with no exceptions.',
         },
         {
           role: 'user',
@@ -627,13 +627,32 @@ ${guide.techniqueRule}
 - confidence: 0.0-1.0, how confident you are in the content_type label. Use a
   low value when the chunk is genuinely mixed rather than forcing a guess.
 - latex: array of every equation, formula or mathematical expression that
-  appears in this chunk's source text, written as LaTeX (no delimiters), e.g.
-  ["a^2 + b^2 = c^2", "\\\\sqrt{729} = 27"]. Harvest these from the TEXT you are
-  reading — plain-text maths such as "12 x 12 = 144", "5^3 = 125" or a table of
-  squares all count. Use [] only when the chunk genuinely contains no maths.
+  appears in this chunk, written as bare LaTeX with NO $ delimiters — this
+  array is metadata only, e.g. ["a^2 + b^2 = c^2", "\\\\sqrt{729} = 27"]. A
+  plain-text source such as "12 x 12 = 144" or a table of squares still
+  counts — translate it to LaTeX here. Use [] only when the chunk genuinely
+  contains no maths. This array does NOT satisfy the math-formatting
+  requirement below — the same expressions must ALSO appear inline in
+  "content" itself, properly $-delimited.
 
 These labels are metadata ABOUT the chunk. They never replace or shorten the
 chunk's "content", which must still be the full 100–300 word passage.
+
+MATH IN "content" MUST BE LATEX, NEVER PLAIN TEXT — not even a "simple" one.
+This is the single most common failure, so here are the exact conversions
+required, covering the cases seen going wrong in production:
+- Inverse trig functions: write "$\\\\sin^{-1}x$", "$\\\\cos^{-1}x$" —
+  never "sin -1 x" or "sin^-1 x" as literal characters.
+- Function domain/codomain notation: write "$\\\\cos : \\\\mathbb{R} \\\\to [-1, 1]$"
+  — never "cos : R -> [-1, 1]".
+- Set-builder notation: write "$\\\\{(a, b) : a - b = 10\\\\}$" — never the bare
+  "{(a, b): a - b = 10}".
+- Intervals: write "$[-1, 1]$" — never a bare "[-1, 1]" sitting in prose.
+- Greek letters and fractions: write "$\\\\pi/2$" — never "pi/2" or a literal
+  "π/2" character.
+A chunk with math left in plain text anywhere in "content" is a failure
+regardless of how good the "latex" array metadata looks — check every
+sentence of "content" for stray unformatted math before returning it.
 
 Return JSON (the "content" below shows the expected LENGTH and DEPTH — match it):
 {
@@ -645,7 +664,7 @@ Return JSON (the "content" below shows the expected LENGTH and DEPTH — match i
       "marker_start": 1, "marker_end": 7,
       "chunks": [ {
         "heading": "Finding a square root by prime factorisation",
-        "content": "A square root of a number is the value that, multiplied by itself, gives that number. Because 12 x 12 = 144, the square root of 144 is 12. For larger numbers the prime factorisation method is quicker than guessing. Take 1296. Divide repeatedly by the smallest prime that goes in: 1296 = 2 x 648 = 2 x 2 x 324 = 2 x 2 x 2 x 162 = 2 x 2 x 2 x 2 x 81, and 81 = 3 x 3 x 3 x 3. So 1296 = 2^4 x 3^4. Every prime now appears an even number of times, which is exactly what makes a number a perfect square. Pair the factors up — two 2s in each pair, two 3s in each pair — and take one factor from each pair: 2 x 2 x 3 x 3 = 36. Checking, 36 x 36 = 1296. If any prime is left unpaired, the number is not a perfect square, and that leftover factor tells you the smallest number you would have to multiply or divide by to make it one. For example 200 = 2^3 x 5^2 has a spare 2, so 200 x 2 = 400 is a perfect square with square root 20.",
+        "content": "A square root of a number is the value that, multiplied by itself, gives that number. Because $12 \\\\times 12 = 144$, the square root of 144 is 12. For larger numbers the prime factorisation method is quicker than guessing. Take 1296. Divide repeatedly by the smallest prime that goes in: $1296 = 2 \\\\times 648 = 2 \\\\times 2 \\\\times 324 = 2 \\\\times 2 \\\\times 2 \\\\times 162 = 2 \\\\times 2 \\\\times 2 \\\\times 2 \\\\times 81$, and $81 = 3 \\\\times 3 \\\\times 3 \\\\times 3$. So $1296 = 2^4 \\\\times 3^4$. Every prime now appears an even number of times, which is exactly what makes a number a perfect square. Pair the factors up — two 2s in each pair, two 3s in each pair — and take one factor from each pair: $2 \\\\times 2 \\\\times 3 \\\\times 3 = 36$. Checking, $36 \\\\times 36 = 1296$. If any prime is left unpaired, the number is not a perfect square, and that leftover factor tells you the smallest number you would have to multiply or divide by to make it one. For example $200 = 2^3 \\\\times 5^2$ has a spare 2, so $200 \\\\times 2 = 400$ is a perfect square with square root 20.",
         "keywords": ["square root","prime factorisation","perfect square","factor pairs"],
         "content_type": "derivation",
         "technique": ["prime_factorisation","square_root_calculation"],
