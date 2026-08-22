@@ -4,6 +4,22 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-22 (session, commit `d2edc3d`) — LaTeX formatting fix: prompt, rendering, backfill infrastructure
+
+Existing `knowledge_base`/`study_notes` content had math written as plain text or bare Unicode (`sin -1 x`, `cos : R -> [-1, 1]`, `pi/2`) instead of LaTeX, and even where `$...$` markup was present, three admin views (Content Library's PYQ/KB list, Content Review queue, Study Notes list) rendered it as raw text instead of typeset math.
+
+Three parts, in dependency order:
+
+1. **Prompt fix** (`contentExtraction.js`): the structuring prompt now mandates LaTeX (`$...$`/`$$...$$`) for every mathematical expression inside a chunk's `content`, not just in the separate `latex` metadata array — with explicit before/after conversions for the failure patterns actually seen in production (inverse trig, domain/codomain notation, set-builder notation, intervals, Greek letters). Fixes new extractions going forward; does nothing for content already in the DB.
+2. **Rendering fix** (`MathText.jsx` + 3 admin views): wired the existing `MathText` component into `AdminContentLibrary.jsx`, `AdminContentReview.jsx`, `AdminStudyNotes.jsx` so `$...$` markup actually renders as math instead of showing literal dollar signs. `MathText`'s math-detector regex also gained bracket recognition (`[-1, 1]`) so interval/set notation isn't skipped as plain prose.
+3. **Backfill infrastructure** (existing content): `admin_update_knowledge_chunk_content` RPC added (`supabase/migrations/20260822010000_...sql`, applied live) — `knowledge_base` had insert/delete/clear-all but no update-by-id path, needed to correct a chunk's `content` in place without changing its row id (`content_figures.source_id` references it, no formal FK). `scripts/latexify-content.mjs --preview` (dry-run, zero writes) validated the rewrite prompt + word-overlap safety gate against 5 sample rows first (4/5 clean, 1/5 flagged at 99.5% overlap — manually verified as a correct rewrite, which is why the real gate threshold is `overlap ≥ 0.97`). `scripts/latexify-apply.mjs` then does the real, resumable, per-row apply: rewrite via `gpt-4o-mini`, gate-check, and only on a pass, write it — `study_notes` rows are written via `admin_upsert_study_note` with `p_is_published: false` (existing published rows are pulled back to draft for owner review, never left published with unreviewed content), `knowledge_base` rows via the new RPC (content column only). A row that fails the gate, or errors, is left completely untouched and logged, never auto-corrected or retried silently.
+
+**Backfill run status (this session):** `study_notes` apply ran partway (42/89 eligible rows: 40 applied → now `is_published=false` pending review, 1 flagged for manual review at 95.9% overlap, 1 transient fetch failure) before the process died mid-run with no final summary — resuming and finishing this, then starting `knowledge_base`'s first-ever run, is in progress as a follow-up to this commit.
+
+Also produced `docs/schema-live-2026-08-22.md` — live-pulled (not migration-reconstructed) schema + real sample rows for `study_notes`, `knowledge_base`, `pyq_questions`, `content_figures`, `chapter_manifests`, for reference while designing the backfill and rewrite gate.
+
+---
+
 ## 2026-08-22 — Deployed: new-signup auth-error-screen fix (deploy 2026.08.22.1, commit `19343ae`)
 
 Real incident tonight: a friend's genuinely first-time signup (both Google and phone tried) hit "Something went wrong — Could not load your account" and stayed stuck. Investigated by minting a real Firebase ID token for a brand-new, never-before-seen uid via the service account and calling the live `upsert_own_user`/`get_user_subscription` RPCs directly — both returned clean 200s, so the RLS/RPC layer itself wasn't reproducibly broken at the time of testing. While tracing the retry path, found a real bug regardless: `retryProfile()` (`AuthContext.jsx`) called `get_own_user` — a plain read — which is a no-op for a brand-new user whose very first `upsert_own_user` never created a row (`get_own_user` returns `null` for a missing row, not an error). Clicking "Try Again" would silently clear `profileError` and drop the user into onboarding with no backing row, rather than ever actually creating the account.
