@@ -436,7 +436,7 @@ export default function FlashcardsPage() {
         <button onClick={() => {
           if (mode !== 'list') { setMode(mode === 'study' ? 'chapter' : 'list'); }
           else navigate('/syllabus');
-        }} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition-colors">
+        }} className="p-3.5 -m-2 rounded-lg hover:bg-slate-100 text-slate-500 transition-colors">
           <ArrowLeft size={18} />
         </button>
         <div className="flex-1">

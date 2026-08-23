@@ -40,7 +40,7 @@ export default function HubTabBar({ tabs, active, onChange, layoutId = 'hub-tab-
                 key={key}
                 onClick={() => onChange(key)}
                 className={[
-                  'relative flex items-center gap-1.5 px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors rounded-xl shrink-0',
+                  'relative flex items-center gap-1.5 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors rounded-xl shrink-0',
                   isActive ? 'text-primary-700' : 'text-slate-500 hover:text-slate-700',
                 ].join(' ')}
               >

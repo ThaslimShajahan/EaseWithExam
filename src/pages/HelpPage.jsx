@@ -185,7 +185,7 @@ function FeatureCard({ feature }) {
       </div>
       <button
         onClick={() => navigate(feature.route)}
-        className="flex items-center gap-1.5 text-xs font-bold text-primary-600 hover:text-primary-700 transition-colors"
+        className="flex items-center gap-1.5 text-xs font-bold text-primary-600 hover:text-primary-700 transition-colors p-2.5 -m-2.5"
       >
         {feature.cta} <ArrowRight size={13} />
       </button>
@@ -323,7 +323,7 @@ export default function HelpPage() {
             <div className="flex gap-1 overflow-x-auto scrollbar-hide">
               {CATEGORIES.map(cat => (
                 <button key={cat} onClick={() => setCatTab(cat)}
-                  className={['px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap shrink-0 transition-colors',
+                  className={['px-3 py-3.5 rounded-full text-xs font-semibold whitespace-nowrap shrink-0 transition-colors',
                     catTab === cat
                       ? 'bg-slate-900 text-white'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'].join(' ')}>
@@ -443,19 +443,19 @@ export default function HelpPage() {
           {support_widget_enabled === 'true' && (
             <button
               onClick={() => navigate('/support')}
-              className="flex items-center gap-1 text-xs font-bold text-primary-600 hover:text-primary-700 transition-colors"
+              className="flex items-center gap-1 text-xs font-bold text-primary-600 hover:text-primary-700 transition-colors p-2.5 -m-2.5"
             >
               Chat with us <MessageCircle size={11} />
             </button>
           )}
           <a href="mailto:support@easewithexam.in"
-            className="flex items-center gap-1 text-xs font-bold text-primary-600 hover:text-primary-700 transition-colors">
+            className="flex items-center gap-1 text-xs font-bold text-primary-600 hover:text-primary-700 transition-colors p-2.5 -m-2.5">
             Email <ExternalLink size={11} />
           </a>
           {/* Parity with the public /contact page's phone entry — a signed-in
               student had no phone option here before, only email + (now) chat. */}
           <a href="tel:+916238910451"
-            className="flex items-center gap-1 text-xs font-bold text-primary-600 hover:text-primary-700 transition-colors">
+            className="flex items-center gap-1 text-xs font-bold text-primary-600 hover:text-primary-700 transition-colors p-2.5 -m-2.5">
             Call <ExternalLink size={11} />
           </a>
         </div>

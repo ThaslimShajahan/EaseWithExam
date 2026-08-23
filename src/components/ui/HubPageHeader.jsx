@@ -17,7 +17,7 @@ export default function HubPageHeader({ icon: Icon, title, subtitle, iconColor =
       {showBack && (
         <button
           onClick={() => navigate(-1)}
-          className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition-colors shrink-0"
+          className="p-3.5 -m-2 rounded-lg hover:bg-slate-100 text-slate-500 transition-colors shrink-0"
           aria-label="Back"
         >
           <ArrowLeft size={18} />

@@ -35,7 +35,7 @@ export default function EmptyState({ icon: Icon, title, body, action, size = 'md
       {action && (
         <button
           onClick={action.onClick}
-          className="mt-1 px-4 py-2 rounded-control bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
+          className="mt-1 px-4 py-3.5 rounded-control bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
         >
           {action.label}
         </button>

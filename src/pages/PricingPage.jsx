@@ -180,7 +180,7 @@ function PlanCard({ planId, plan: planProp, highlight, onSelect, loading, isCurr
         // a separate bug (Button.jsx's disabled:opacity-* alpha-blending
         // against this card's gradient background) fixed at the component
         // level so it holds here and everywhere else Button is used.
-        className={highlight && !isOwned ? '!bg-white !text-primary-700 hover:!bg-primary-50 !border-white' : ''}
+        className={`!h-11 ${highlight && !isOwned ? '!bg-white !text-primary-700 hover:!bg-primary-50 !border-white' : ''}`}
       >
         {isOwned
           ? 'Current Plan ✓'
@@ -291,7 +291,7 @@ export default function PricingPage() {
         {/* Back */}
         <button
           onClick={() => navigate(-1)}
-          className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 mb-8 transition-colors"
+          className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 mb-8 transition-colors p-3.5 -m-3.5"
         >
           <ArrowLeft size={14} /> Back
         </button>
@@ -364,6 +364,7 @@ export default function PricingPage() {
               loading={activePlan === 'verification_1rs'}
               onClick={() => handleSelect('verification_1rs')}
               disabled={paymentsClosed}
+              className="!h-11"
             >
               Run Verification Purchase
             </Button>

@@ -61,7 +61,7 @@ function Chip({ label, selected, onClick, icon }) {
   return (
     <button onClick={onClick}
       className={[
-        'flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all',
+        'flex items-center justify-center gap-1.5 px-4 py-3.5 min-w-[44px] rounded-xl text-xs font-semibold border transition-all',
         selected
           ? 'bg-primary-600 text-white border-primary-600 shadow-sm'
           : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300 hover:text-primary-700',
@@ -1046,7 +1046,7 @@ export default function PracticeGeneratorPage({ embedded = false }) {
                       <button key={id} onClick={() => toggleQType(id)}
                         title={desc}
                         className={[
-                          'flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all',
+                          'flex items-center gap-1.5 px-3 py-3.5 rounded-xl text-xs font-semibold border transition-all',
                           qTypes.includes(id)
                             ? 'bg-primary-600 text-white border-primary-600 shadow-sm'
                             : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300 hover:text-primary-700',

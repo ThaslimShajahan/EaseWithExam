@@ -21,7 +21,7 @@ function Step({ done, label, hint, action, route, navigate }) {
       {!done && route && (
         <button
           onClick={() => navigate(route)}
-          className="flex items-center gap-1 text-[11px] font-bold text-primary-600 hover:text-primary-700 shrink-0 mt-0.5"
+          className="flex items-center gap-1 text-[11px] font-bold text-primary-600 hover:text-primary-700 shrink-0 p-3.5 -m-3.5 mt-0"
         >
           {action ?? 'Start'} <ChevronRight size={12} />
         </button>
@@ -107,7 +107,7 @@ export default function OnboardingChecklist({ sessions = [], gamification = null
           </div>
           <button
             onClick={handleDismiss}
-            className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors"
+            className="p-4 -m-3 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors"
             title={allDone ? 'Dismiss' : 'Dismiss checklist'}
           >
             <X size={14} />

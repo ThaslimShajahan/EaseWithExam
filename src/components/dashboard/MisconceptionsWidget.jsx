@@ -46,7 +46,7 @@ export default function MisconceptionsWidget() {
           <BrainCircuit size={16} className="text-amber-500" />
           <h3 className="font-semibold text-slate-900 text-sm">Common Mistakes</h3>
         </div>
-        <button onClick={load} className="text-slate-300 hover:text-slate-500 transition-colors" aria-label="Refresh">
+        <button onClick={load} className="text-slate-300 hover:text-slate-500 transition-colors p-2.5 -m-2.5" aria-label="Refresh">
           <RefreshCw size={12} />
         </button>
       </div>

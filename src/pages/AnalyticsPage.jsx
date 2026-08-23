@@ -11,7 +11,7 @@ export default function AnalyticsPage() {
         <h2 className="text-xl font-bold text-slate-900">Analytics</h2>
         <button
           onClick={() => setShowReport(true)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary-50 border border-primary-200 text-primary-700 text-xs font-semibold hover:bg-primary-100 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-3.5 rounded-xl bg-primary-50 border border-primary-200 text-primary-700 text-xs font-semibold hover:bg-primary-100 transition-colors"
         >
           <FileBarChart size={13} /> Weekly Report
         </button>

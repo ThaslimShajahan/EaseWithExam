@@ -45,7 +45,7 @@ export default function PlatformChrome() {
       </p>
       <button
         onClick={() => { localStorage.setItem(DISMISS_KEY, '1'); setDismissed(true); }}
-        className="shrink-0 px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-700 text-white text-xs font-bold transition-colors"
+        className="shrink-0 px-4 py-3.5 rounded-xl bg-primary-600 hover:bg-primary-700 text-white text-xs font-bold transition-colors"
       >
         Accept
       </button>

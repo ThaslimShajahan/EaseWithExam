@@ -197,7 +197,7 @@ function ProfileHero({ avatar, name, email, editName, setEditName, nameVal, setN
               <motion.div key="view" className="flex items-center gap-2 justify-center sm:justify-start"
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                 <p className="text-xl font-bold truncate">{nameVal || name || 'Set your name'}</p>
-                <button onClick={() => setEditName(true)} className="text-white/50 hover:text-white transition-colors">
+                <button onClick={() => setEditName(true)} className="p-4 -m-4 text-white/50 hover:text-white transition-colors">
                   <Pencil size={14} />
                 </button>
               </motion.div>
@@ -299,7 +299,7 @@ function ReferralCard() {
           </span>
           <button
             onClick={() => flash('code', referral.code)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+            className={`flex items-center gap-1.5 px-3 py-3.5 rounded-lg text-xs font-semibold transition-all ${
               copied === 'code' ? 'bg-emerald-500 text-white' : 'bg-violet-100 text-violet-700 hover:bg-violet-200'
             }`}
           >

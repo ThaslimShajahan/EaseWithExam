@@ -176,7 +176,7 @@ export default function Dashboard() {
               <Button
                 size="sm"
                 onClick={() => navigate('/test')}
-                className="bg-white/20 border-white/30 text-white hover:bg-white/30 border"
+                className="bg-white/20 border-white/30 text-white hover:bg-white/30 border !h-11"
               >
                 Start Mock Test →
               </Button>
@@ -184,7 +184,7 @@ export default function Dashboard() {
                 <Button
                   size="sm"
                   onClick={() => navigate('/pricing')}
-                  className="bg-amber-400/20 border-amber-300/40 text-amber-100 hover:bg-amber-400/30 border flex items-center gap-1.5"
+                  className="bg-amber-400/20 border-amber-300/40 text-amber-100 hover:bg-amber-400/30 border flex items-center gap-1.5 !h-11"
                 >
                   <Crown size={12} /> Upgrade
                 </Button>
@@ -343,7 +343,7 @@ export default function Dashboard() {
           <p className="text-xs text-slate-400 mt-0.5">All your wrong answers — reviewed at the perfect time via spaced repetition</p>
         </div>
         <button onClick={() => navigate('/notebook')}
-          className="shrink-0 text-xs font-semibold text-primary-600 bg-primary-50 border border-primary-100 px-3 py-2 rounded-control hover:bg-primary-100 transition-colors flex items-center gap-1">
+          className="shrink-0 text-xs font-semibold text-primary-600 bg-primary-50 border border-primary-100 px-3 py-3.5 rounded-control hover:bg-primary-100 transition-colors flex items-center gap-1">
           Open <ChevronRight size={12} />
         </button>
       </div>

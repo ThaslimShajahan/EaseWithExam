@@ -64,7 +64,7 @@ export default function ExamsHubPage() {
                   key={key}
                   onClick={() => setTab(key)}
                   className={[
-                    'flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0',
+                    'flex items-center justify-center gap-1.5 px-3 py-3.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0',
                     tab === key
                       ? 'bg-white text-primary-700 shadow-sm ring-1 ring-slate-200'
                       : 'text-slate-500 hover:text-slate-700',

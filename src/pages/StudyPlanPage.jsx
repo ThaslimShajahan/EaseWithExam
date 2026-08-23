@@ -142,7 +142,7 @@ function GoalForm({ onGenerate, defaultExamType = 'NEET' }) {
                 key={s}
                 onClick={() => toggleSubject(s)}
                 className={[
-                  'flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm border font-medium transition-all',
+                  'flex items-center gap-1.5 px-3 py-3 rounded-xl text-sm border font-medium transition-all',
                   sel
                     ? 'bg-red-100 text-red-800 border-red-300'
                     : 'bg-white text-slate-600 border-slate-200 hover:border-red-300',

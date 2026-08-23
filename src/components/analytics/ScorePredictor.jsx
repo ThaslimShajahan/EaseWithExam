@@ -191,7 +191,7 @@ export default function ScorePredictor() {
               Based on your last 8 mock tests, we'll project your {examConf.label} score range.
             </p>
           </div>
-          <Button variant="primary" size="sm" onClick={() => navigate('/pricing')} icon={<Crown size={14} />}>
+          <Button variant="primary" size="sm" onClick={() => navigate('/pricing')} icon={<Crown size={14} />} className="!h-11">
             Upgrade to unlock
           </Button>
         </div>
