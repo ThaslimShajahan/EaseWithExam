@@ -4,6 +4,35 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-24 — Deployed: SEO audit + mobile tap-target pass (commit `1efc4d7`)
+
+Investigated three reports in one session: the site not appearing in Google search despite Search Console submission, a visually broken Help & Guide page on mobile, and mobile not "feeling like an app" (pinch-zoom, general responsiveness).
+
+**SEO — no code bug found.** robots.txt, meta tags, prerendering, sitemap, and canonical URLs were all already correct (confirmed live, not just from source). The domain is genuinely new (RDAP: registered 2026-07-03, 51 days old) with zero indexed pages — normal new-domain latency, not a technical block. Search Console's "Blocked by robots.txt" and "Page with redirect" entries were both traced to git history: robots.txt disallowed 22 fewer paths for 6 days after initial launch (2026-08-05 → 08-11), and the pre-08-15 trailing-slash canonical bug affected 4 of 5 public pages — both are Google reporting what it saw historically, not live misconfiguration. Owner is using Search Console's Removals tool for the stale entries.
+
+**Pinch-to-zoom — no code bug found.** Viewport meta tag has no `user-scalable=no`/`maximum-scale`, and no `touch-action` restriction exists anywhere in `src/`. Matches a documented, independent case of the same symptom (Chrome-iOS-specific, Safari-fine, same page) — a browser-level quirk, not something this codebase controls.
+
+**Mobile tap targets — real bug, fixed.** Audited all 10 main pages at 375/390/428px with a real authenticated session (Playwright + `devAuth.js`'s minted Firebase token). Found a recurring pattern: icon/text buttons with zero or near-zero padding, so their tap target was just the visible content — well under the 44×44px minimum. Fixed by touching shared components once rather than every call site (`HubTabBar`, `HubPageHeader`, `EmptyState`, `PlatformChrome`'s cookie banner, `PracticeGeneratorPage`'s `Chip` component covering 27+ instances) plus targeted per-page fixes (Help, Profile, Dashboard, Analytics, ScorePredictor, Pricing — pricing page changes are padding-only, no changes to `handleSelect`/loading/payment logic). Left inline text links and toggle switches alone (WCAG-exempt / standard UX convention respectively). Zero new horizontal overflow introduced; full test suite (576/576) unaffected.
+
+Standard 8-step procedure. Backup taken first (`webroot-2026-08-23-231238.tar.gz`). scp exit 0, md5 matched both ends before extracting. Extract hit the documented benign `tar` exit 2 (Gotcha 1); confirmed genuine via the disk check. Permissions fixed (0 unreadable files after). Content-checked all 5 prerendered routes (Gotcha 4) — each serves its own title and canonical, not the homepage's.
+
+**`deploy_log` entry not yet written** — same reason as prior deploys: `admin_insert_deploy_log` needs a real verified admin uid this session doesn't have. Prepared for the owner to run:
+
+```
+admin_insert_deploy_log(
+  p_caller: '<owner admin uid>',
+  p_version: '2026.08.24.1',
+  p_summary: 'Mobile tap-target pass across the app; SEO and pinch-zoom investigated, no code changes needed',
+  p_changes: [
+    {"type":"fixed","text":"Sub-44px tap targets fixed across Help, Profile, Dashboard, Practice, Study Hub, Analytics, and Pricing pages"},
+    {"type":"investigated","text":"SEO indexing and iOS Chrome pinch-zoom reports — both traced to non-code causes (new-domain latency, historical robots.txt/canonical changes, and a Chrome-iOS browser quirk)"}
+  ],
+  p_git_commit_hash: '1efc4d7'
+)
+```
+
+---
+
 ## 2026-08-22 (session, commit `d2edc3d`) — LaTeX formatting fix: prompt, rendering, backfill infrastructure
 
 Existing `knowledge_base`/`study_notes` content had math written as plain text or bare Unicode (`sin -1 x`, `cos : R -> [-1, 1]`, `pi/2`) instead of LaTeX, and even where `$...$` markup was present, three admin views (Content Library's PYQ/KB list, Content Review queue, Study Notes list) rendered it as raw text instead of typeset math.
