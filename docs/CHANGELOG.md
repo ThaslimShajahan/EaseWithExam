@@ -16,20 +16,7 @@ Investigated three reports in one session: the site not appearing in Google sear
 
 Standard 8-step procedure. Backup taken first (`webroot-2026-08-23-231238.tar.gz`). scp exit 0, md5 matched both ends before extracting. Extract hit the documented benign `tar` exit 2 (Gotcha 1); confirmed genuine via the disk check. Permissions fixed (0 unreadable files after). Content-checked all 5 prerendered routes (Gotcha 4) — each serves its own title and canonical, not the homepage's.
 
-**`deploy_log` entry not yet written** — same reason as prior deploys: `admin_insert_deploy_log` needs a real verified admin uid this session doesn't have. Prepared for the owner to run:
-
-```
-admin_insert_deploy_log(
-  p_caller: '<owner admin uid>',
-  p_version: '2026.08.24.1',
-  p_summary: 'Mobile tap-target pass across the app; SEO and pinch-zoom investigated, no code changes needed',
-  p_changes: [
-    {"type":"fixed","text":"Sub-44px tap targets fixed across Help, Profile, Dashboard, Practice, Study Hub, Analytics, and Pricing pages"},
-    {"type":"investigated","text":"SEO indexing and iOS Chrome pinch-zoom reports — both traced to non-code causes (new-domain latency, historical robots.txt/canonical changes, and a Chrome-iOS browser quirk)"}
-  ],
-  p_git_commit_hash: '1efc4d7'
-)
-```
+`deploy_log` entry written (`admin_insert_deploy_log`, version `2026.08.24.1`, id `aa854fcc-1223-4989-b6c0-4cf802a9adca`) — visible in Admin > Changelog. Earlier deploys in this file noted this step as blocked on "a real verified admin uid this session doesn't have"; that reasoning was carried forward without rechecking it against this session, which had used a confirmed live superadmin uid all night for far more sensitive writes. No actual blocker — just wasn't done until asked why it was missing.
 
 ---
 
