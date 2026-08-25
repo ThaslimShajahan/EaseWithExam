@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { auth, adminAuth } from '../firebase/config';
 import { logChange, ENTITY, ACTION } from './changelog';
-import { embedText } from './aiProxy';
+import { embedTexts } from './aiProxy';
 import { examTypesFor } from './examMapping';
 
 const supabaseUrl  = import.meta.env.VITE_SUPABASE_URL;
@@ -460,27 +460,41 @@ export async function insertInBatches(rows, insertFn, {
   return { inserted, error: null, failedSlice: null, failedAt: -1 };
 }
 
-async function _addEmbeddings(rows) {
-  const BATCH = 20;
+// Was: one embedText() call PER row (N round-trips for an N-chunk chapter,
+// 20 at a time via Promise.all). Now: EMBED_BATCH chunks share a single
+// embeddings call via embedTexts() (aiProxy.js), since OpenAI's endpoint
+// accepts an array `input`. 200 is well above any real chapter's chunk count
+// (largest observed so far: keph104.pdf, "Laws of Motion", 51 rows — see the
+// comment on adminSaveKnowledgeChunks below) and nowhere near OpenAI's actual
+// 2048-item cap, so in practice this is 1 call, occasionally 2 — not a tuned
+// value to revisit per-chapter. Kept independent of INSERT_BATCH (20), which
+// exists for an unrelated reason (Postgres statement-timeout headroom on the
+// write, not the embeddings call).
+export const EMBED_BATCH = 200;
+
+export async function _addEmbeddings(rows) {
   const out = rows.map((r) => ({ ...r }));
   let failedCount = 0;
 
-  for (let i = 0; i < out.length; i += BATCH) {
-    const end = Math.min(i + BATCH, out.length);
-    await Promise.all(
-      out.slice(i, end).map(async (row, j) => {
-        let emb = await embedText(row.content, { feature: 'kb-chunk-embed' });
-        if (!emb) {
-          await new Promise((r) => setTimeout(r, 1000));
-          emb = await embedText(row.content, { feature: 'kb-chunk-embed' });
-        }
-        if (emb) {
-          out[i + j].embedding = emb;
-        } else {
-          failedCount++;
-        }
-      }),
-    );
+  for (let i = 0; i < out.length; i += EMBED_BATCH) {
+    const end = Math.min(i + EMBED_BATCH, out.length);
+    const slice = out.slice(i, end);
+    let embs = await embedTexts(slice.map((r) => r.content), { feature: 'kb-chunk-embed' });
+
+    // Retry only what actually came back null, and still as ONE batched call
+    // covering every failure in this slice — a partial failure must not fall
+    // back to the old N-calls-in-a-loop shape this change exists to remove.
+    const missing = embs.reduce((acc, e, j) => { if (!e) acc.push(j); return acc; }, []);
+    if (missing.length) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const retryEmbs = await embedTexts(missing.map((j) => slice[j].content), { feature: 'kb-chunk-embed' });
+      missing.forEach((j, k) => { if (retryEmbs[k]) embs[j] = retryEmbs[k]; });
+    }
+
+    embs.forEach((emb, j) => {
+      if (emb) out[i + j].embedding = emb;
+      else failedCount++;
+    });
   }
   return { rows: out, failedCount };
 }

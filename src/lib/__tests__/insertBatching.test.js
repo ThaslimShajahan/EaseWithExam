@@ -16,7 +16,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../../firebase/config', () => ({ auth: {}, adminAuth: {} }));
 vi.mock('@supabase/supabase-js', () => ({ createClient: () => ({}) }));
-vi.mock('../aiProxy', () => ({ embedText: vi.fn() }));
+vi.mock('../aiProxy', () => ({ embedText: vi.fn(), embedTexts: vi.fn() }));
 vi.mock('../changelog', () => ({ logChange: vi.fn(), ENTITY: {}, ACTION: {} }));
 vi.mock('../examMapping', () => ({ examTypesFor: () => [] }));
 

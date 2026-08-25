@@ -543,3 +543,42 @@ export async function embedText(text, { feature = null, callerUid = null } = {})
     return res.data?.[0]?.embedding ?? null;
   } catch { return null; }
 }
+
+/**
+ * Batched sibling of embedText — one call embeds every string in `texts`
+ * instead of one call per string. OpenAI's embeddings endpoint accepts an
+ * array `input` (documented cap: 2048 items/request) and the ai-proxy edge
+ * function (supabase/functions/ai-proxy/index.ts) forwards the request body
+ * to OpenAI verbatim, so no server-side change is needed for this to work.
+ *
+ * The response's `data[]` is reordered by its own `index` field rather than
+ * trusted to arrive in input order — OpenAI documents that it does, but
+ * defending against that assumption is free here and means a future change
+ * upstream fails safe (wrong slot -> caught by a test) instead of silently
+ * mis-assigning embeddings to the wrong chunk.
+ *
+ * Returns one array, same length as `texts`, with `null` in place of any
+ * embedding that failed — mirrors embedText's null-on-failure contract so
+ * callers built around per-item failure counting don't have to change.
+ */
+export async function embedTexts(texts, { feature = null, callerUid = null } = {}) {
+  if (!texts.length) return [];
+  const out = new Array(texts.length).fill(null);
+  try {
+    if (USE_EDGE) {
+      const res = await fetch(`${PROXY_URL}?route=embeddings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ANON_KEY}` },
+        body: JSON.stringify({ model: 'text-embedding-3-small', input: texts, _feature: feature, _caller_uid: callerUid }),
+      });
+      if (!res.ok) return out;
+      const json = await res.json();
+      for (const d of json?.data ?? []) if (d?.embedding && Number.isInteger(d.index)) out[d.index] = d.embedding;
+      return out;
+    }
+    const openai = await getOpenAI();
+    const res = await openai.embeddings.create({ model: 'text-embedding-3-small', input: texts });
+    for (const d of res.data ?? []) if (d?.embedding && Number.isInteger(d.index)) out[d.index] = d.embedding;
+    return out;
+  } catch { return out; }
+}
