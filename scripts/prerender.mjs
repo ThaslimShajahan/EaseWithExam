@@ -83,8 +83,21 @@ for (const route of ROUTES) {
     return r && r.children.length > 0 && r.innerText.trim().length > 200;
   }, { timeout: 30000 }).catch(() => problems.push(`${route}: root never filled`));
 
-  // seo.js writes title/description/canonical in an effect; give it a beat.
-  await page.waitForTimeout(400);
+  // seo.js writes title/description/canonical in an effect. A fixed
+  // waitForTimeout(400) here raced that effect -- confirmed live 2026-08-25,
+  // reproduced 2 failures in 3 consecutive runs, a different route each time.
+  // index.html's static canonical always defaults to the homepage (see its
+  // own comment), so a route whose useSeo() effect hadn't committed within
+  // the fixed window got its build BLOCKED by the check below, which read
+  // correctly and refused to write the bad file -- so this never shipped a
+  // wrong canonical, but it did make `build:seo` randomly fail. Wait for the
+  // actual condition instead of guessing how long the effect takes.
+  const expected = absUrl(route);
+  await page.waitForFunction(
+    (exp) => document.head.querySelector('link[rel="canonical"]')?.href === exp,
+    expected,
+    { timeout: 5000 },
+  ).catch(() => problems.push(`${route}: canonical never reached ${expected} within 5s`));
 
   const html = await page.content();
   const title = await page.title();
@@ -96,7 +109,6 @@ for (const route of ROUTES) {
   // same absUrl() the running app calls, so this can never drift from what
   // seo.js actually produces (see absUrl's own comment for why it's
   // trailing-slashed).
-  const expected = absUrl(route);
   if (canonical !== expected) problems.push(`${route}: canonical is ${canonical}, expected ${expected}`);
   if (robots && robots.includes('noindex')) problems.push(`${route}: emitted with noindex`);
 
