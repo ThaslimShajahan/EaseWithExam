@@ -4,6 +4,18 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-25 — Deployed: Help page mobile layout fix + a flaky-build fix found along the way (commit `a904773`)
+
+User reported the "Still have questions?" card on Help & Guide rendering with its description text squeezed to one or two words per line on mobile, despite visibly available horizontal space. Confirmed live at 375px with Playwright: the card was 360px tall for two sentences. Root cause: the card's outer `flex items-center gap-4 flex-wrap` had three children — a `shrink-0` icon, a `flex-1 min-w-0` text column, and a `shrink-0` actions group (Chat/Email/Call). With both ends refusing to shrink and nothing forcing the actions row onto its own line, 100% of the squeeze landed on the text column instead of the row wrapping. Fixed by grouping icon+text into their own row and letting the actions row stack below on mobile (`flex-col sm:flex-row`, side-by-side again at `sm:` and up) — card drops to 144px, text wraps naturally. Searched all 33 files containing both `flex-wrap` and `flex-1 min-w-0` for the same 3-child shape; no other instances found — not a shared pattern.
+
+**While deploying it, `npm run build:seo` failed its own safety check 2 times out of 3 consecutive runs** — a different route each time (`/about` once, `/contact` once), both flagged as "canonical is the homepage's, expected the route's own." Traced to `scripts/prerender.mjs`: `seo.js`'s `useSeo()` effect writes the corrected canonical asynchronously after mount, and the script only gave it a fixed 400ms before reading the DOM. `index.html`'s static canonical always defaults to the homepage, so a route whose effect hadn't committed within that window got read with the wrong value. The existing guardrail caught it correctly every time — nothing wrong ever shipped — but the build was randomly failing. Replaced the fixed sleep with `page.waitForFunction()` polling for the actual expected canonical (5s timeout); verified 5 consecutive clean runs after the fix versus 2 failures in 3 before it.
+
+Standard 8-step procedure, run twice (once before the prerender fix, aborted when the safety check failed; once clean after). Backup taken first (`webroot-2026-08-25-064250.tar.gz`). scp exit 0, md5 matched both ends. Extract hit the documented benign `tar` exit 2 (Gotcha 1); confirmed genuine via the disk check. Permissions fixed (0 unreadable files). All 5 prerendered routes content-checked (Gotcha 4) — each serves its own title and canonical. Also directly grepped the deployed `HelpPage-FmG3M_sq.js` chunk on the live server for the new layout classes to confirm the fix (not just the bundle) actually shipped.
+
+`deploy_log` entry written this time without the false start — see 2026-08-24's entry below for why that almost didn't happen again.
+
+---
+
 ## 2026-08-24 — Deployed: SEO audit + mobile tap-target pass (commit `1efc4d7`)
 
 Investigated three reports in one session: the site not appearing in Google search despite Search Console submission, a visually broken Help & Guide page on mobile, and mobile not "feeling like an app" (pinch-zoom, general responsiveness).
