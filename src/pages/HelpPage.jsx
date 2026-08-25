@@ -425,13 +425,23 @@ export default function HelpPage() {
       </div>
 
       {/* ── Support nudge ── */}
-      <div className="bg-gradient-to-br from-slate-50 to-primary-50 rounded-2xl p-5 border border-primary-100 flex items-center gap-4 flex-wrap">
-        <div className="h-12 w-12 rounded-2xl bg-primary-100 flex items-center justify-center shrink-0">
-          <MessageCircle size={22} className="text-primary-600" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="font-semibold text-slate-800 text-sm">Still have questions?</p>
-          <p className="text-xs text-slate-500 mt-0.5">Ask EWE — it knows your progress and can help with study strategy, not just subject doubts.</p>
+      {/* flex-col on mobile: with all three children on one flex-wrap row,
+          the two shrink-0 ends (icon, actions) never gave up their natural
+          width, so 100% of the squeeze landed on the flex-1 text column
+          instead of the row wrapping -- text rendered one word per line even
+          though the card had plenty of horizontal room. Grouping icon+text
+          into their own row means the text only ever competes with the
+          fixed-width icon for space, and the actions row gets a full-width
+          line of its own below sm: (side-by-side again once there's room). */}
+      <div className="bg-gradient-to-br from-slate-50 to-primary-50 rounded-2xl p-5 border border-primary-100 flex flex-col sm:flex-row sm:items-center gap-4">
+        <div className="flex items-center gap-4 flex-1 min-w-0">
+          <div className="h-12 w-12 rounded-2xl bg-primary-100 flex items-center justify-center shrink-0">
+            <MessageCircle size={22} className="text-primary-600" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-slate-800 text-sm">Still have questions?</p>
+            <p className="text-xs text-slate-500 mt-0.5">Ask EWE — it knows your progress and can help with study strategy, not just subject doubts.</p>
+          </div>
         </div>
         <div className="flex items-center gap-3 shrink-0">
           {/* Redber chat, gated behind Admin > Platform > Settings — same
