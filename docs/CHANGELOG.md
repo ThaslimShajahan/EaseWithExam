@@ -4,6 +4,38 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-08-25 — Deployed: batch embeddings for knowledge_base chunks instead of one API call per chunk (commit `77b2b9c`)
+
+Admin reported the interactive single-file content upload (AdminContentIntake.jsx, not the CLI content-jobs queue) feels slow. Investigation (no fix that session) traced the whole pipeline: it runs synchronously in the admin's browser tab, not queued; the dominant cost is two sequential per-page/per-batch AI call chains (vision-page extraction, notes-structuring), each 20-40s+, left untouched as a separate, bigger task; and a smaller, confirmed bug — `adminSaveKnowledgeChunks` -> `_addEmbeddings` (supabase.js) called `embedText()` once PER knowledge_base chunk (N round-trips for an N-chunk chapter, 20-wide concurrent via `Promise.all`), instead of using the embeddings endpoint's array `input` to collapse that into one call.
+
+Fixed the embeddings piece only, scoped deliberately narrow for a same-night ship. New `embedTexts()` (aiProxy.js) sends every chunk's content as one array `input` to the same `?route=embeddings` edge-function path — confirmed the edge function (`supabase/functions/ai-proxy/index.ts`) forwards the request body to OpenAI verbatim, so no server-side change was needed. Response `data[]` is reordered by its own `index` field rather than trusted to arrive in input order. `_addEmbeddings` now calls it once per `EMBED_BATCH=200`-chunk slice (well above the largest chapter on record, 51 rows) instead of once per row; a partial failure retries as one batched call over just the failed items, not a fallback to per-item calls. `INSERT_BATCH` (the unrelated Postgres statement-timeout batching on the write side) is untouched.
+
+28 new tests (`embedTexts.test.js`, `addEmbeddings.test.js`): call-count collapse for a realistic 51-row chapter, order preservation against a deliberately scrambled mocked response, batched-retry-only-covers-failures, and vector-equality between the old per-item shape and the new batched shape against the same mocked API. Full suite: 590/590 passing. A live A/B against the real OpenAI embeddings endpoint was attempted but skipped — the local `.env`'s `VITE_OPENAI_API_KEY` is stale/invalid (confirmed: Supabase secrets are write-only, `supabase secrets list` only returns a one-way hash of `OPENAI_API_KEY`, never retrievable; production's key, set independently via `supabase secrets set`, is unaffected and untouched by this change) — owner decided the mocked coverage was sufficient confidence to ship without it.
+
+Standard 8-step procedure. Backup taken first (`webroot-2026-08-25-121436.tar.gz`). scp exit 0, md5 matched both ends (`a2b0381e488be6e566c6a22f7cb0622f`). Extract hit the documented benign `tar` exit 2 (Gotcha 1); confirmed genuine via the disk check. Permissions fixed (0 unreadable files). All 5 prerendered routes content-checked (Gotcha 4) — each still serves its own title and canonical. Bundle hash `index-CPOAZxD9.js` confirmed live via direct HTTP.
+
+**`deploy_log` entry not yet written** — `admin_insert_deploy_log` requires a real verified admin uid (`assert_verified_admin`), which this shell session doesn't have and won't fabricate. Prepared for the owner to run from an authenticated admin session:
+
+```
+admin_insert_deploy_log(
+  p_caller: '<owner admin uid>',
+  p_version: '2026.08.25.2',
+  p_summary: 'Batched embeddings API calls for knowledge_base chunks (1 call per ~200 chunks instead of 1 per chunk)',
+  p_changes: [
+    {"type":"fixed","text":"_addEmbeddings (supabase.js) now sends chunk content as a batched array input to the embeddings endpoint via new embedTexts() (aiProxy.js), instead of one embedText() call per knowledge_base row — a real chapter now costs 1 embeddings call, not N"},
+    {"type":"changed","text":"Partial embedding failures retry as a single batched call over just the failed chunks, not per-item retries"}
+  ]
+)
+```
+
+**Local dev note left for the owner**: `.env`'s `VITE_OPENAI_API_KEY` is stale (`401 invalid_api_key` against a real request) — only affects local dev-mode direct OpenAI calls, not production (which uses the Supabase-secret key via the edge function). Needs a fresh key from https://platform.openai.com/api-keys pasted into local `.env` when convenient; not urgent.
+
+Note also from tonight's investigation, not acted on: the sequential vision-extraction and notes-structuring AI call chains remain the larger, untouched contributor to upload wait time — flagged as a separate, bigger task for a future session, not this one.
+
+Also noted, out of scope for tonight: local `main` is 22 commits ahead of `origin/main` (unrelated to this change) — not pushed, since pushing wasn't part of what was asked and CI/migration-drift on a large unreviewed batch of commits deserved its own explicit decision rather than riding along here.
+
+---
+
 ## 2026-08-25 — Deployed: Help page mobile layout fix + a flaky-build fix found along the way (commit `a904773`)
 
 User reported the "Still have questions?" card on Help & Guide rendering with its description text squeezed to one or two words per line on mobile, despite visibly available horizontal space. Confirmed live at 375px with Playwright: the card was 360px tall for two sentences. Root cause: the card's outer `flex items-center gap-4 flex-wrap` had three children — a `shrink-0` icon, a `flex-1 min-w-0` text column, and a `shrink-0` actions group (Chat/Email/Call). With both ends refusing to shrink and nothing forcing the actions row onto its own line, 100% of the squeeze landed on the text column instead of the row wrapping. Fixed by grouping icon+text into their own row and letting the actions row stack below on mobile (`flex-col sm:flex-row`, side-by-side again at `sm:` and up) — card drops to 144px, text wraps naturally. Searched all 33 files containing both `flex-wrap` and `flex-1 min-w-0` for the same 3-child shape; no other instances found — not a shared pattern.
