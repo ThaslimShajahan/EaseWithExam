@@ -49,6 +49,19 @@ const isInt = (v) => Number.isInteger(v);
  * Returns { ok, errors: [...] } rather than throwing: an admin needs every
  * problem at once, not the first one.
  *
+ * `isUnit: true` marks a UNIT CONTAINER row — the printed Unit/Theme heading
+ * itself ("Unit II Wings of Hope" pp41-72), as opposed to a real leaf chapter
+ * ("Hope is the Thing with Feathers" pp43-46). Some books print that heading
+ * with its own page range spanning several chapters underneath it; others
+ * only ever use `unit` as a label on the chapters themselves and never emit a
+ * row for the heading at all — both are valid, `isUnit` only exists for
+ * books doing the former. A container's own children are whichever entries
+ * point back at it through the `unit` field they already carry
+ * (`child.unit === container.title`) — see validateManifest for how that
+ * containment is checked and kept from being flagged as a false overlap.
+ * A container never owns a file (no fileOrdinal) and is never itself a
+ * candidate for a file's content — see candidatesForFile.
+ *
  * `fileStructure` ('combined' | 'per_chapter' | null/omitted) relaxes the
  * page-range requirement for NUMBERED entries in a 'per_chapter' book —
  * candidatesForFile()'s match for those is fileOrdinal alone (see
@@ -112,23 +125,71 @@ export function validateManifest(entries, fileStructure = null) {
     }
   });
 
-  // Numbered chapters partition the book, so their page ranges cannot overlap.
-  // Two chapters claiming page 40 means one of them will silently swallow the
-  // other's chunks under positional assignment.
-  const sorted = numbered.filter((e) => isInt(e.pageStart) && isInt(e.pageEnd))
-    .slice().sort((a, b) => a.pageStart - b.pageStart);
+  // Leaf chapters partition the book, so their page ranges cannot overlap EACH
+  // OTHER. Two chapters claiming page 40 means one of them will silently
+  // swallow the other's chunks under positional assignment. `isUnit` entries
+  // are excluded here — they are not chapters at all, see below.
+  const containers = numbered.filter((e) => e?.isUnit === true);
+  const leaves = numbered.filter((e) => e?.isUnit !== true);
+  const hasRange = (e) => isInt(e.pageStart) && isInt(e.pageEnd);
+  const rangesOverlap = (a, b) => a.pageStart <= b.pageEnd && b.pageStart <= a.pageEnd;
+
+  const sorted = leaves.filter(hasRange).slice().sort((a, b) => a.pageStart - b.pageStart);
   for (let i = 1; i < sorted.length; i++) {
     if (sorted[i].pageStart <= sorted[i - 1].pageEnd) {
       errors.push(`page ranges overlap: "${sorted[i - 1].title}" pp${sorted[i - 1].pageStart}-${sorted[i - 1].pageEnd} and "${sorted[i].title}" pp${sorted[i].pageStart}-${sorted[i].pageEnd}`);
     }
   }
 
-  // An interleaved entry with no numbered host is unreachable: nothing will ever
-  // supply a file whose span contains it, so it would sit in the manifest
-  // forever and never receive content.
+  // `isUnit` entries are the printed Unit/Theme HEADING itself ("Unit II
+  // Wings of Hope" pp41-72), not a leaf chapter — some books print that
+  // heading with its own page range, spanning several real chapters
+  // underneath it ("Hope is the Thing with Feathers" pp43-46). Its own
+  // children are whichever leaf entries point BACK at it via the `unit`
+  // field every leaf already carries (child.unit === container.title) — the
+  // same field, no new linkage needed. That containment is the expected,
+  // correct shape and must never be flagged; anything else overlapping a
+  // unit's range (a sibling unit, or a chapter that belongs to a DIFFERENT
+  // unit or none) is still a genuine data error.
+  for (const c of containers) {
+    // Orphan check first, independent of page ranges: a per_chapter manifest
+    // can legitimately carry no page numbers at all (see the fileStructure
+    // note above), so a container with real children but no ranges yet must
+    // not be misread as having none.
+    const children = leaves.filter((e) => e.unit === c.title);
+    if (children.length === 0) {
+      errors.push(`unit "${c.title}": no chapter's "unit" field points back to it — check for a mismatch between the unit heading's title and the chapter rows' Unit column`);
+    }
+    if (!hasRange(c)) continue;
+    for (const child of children) {
+      if (!hasRange(child)) continue;
+      if (child.pageStart < c.pageStart || child.pageEnd > c.pageEnd) {
+        errors.push(`unit "${c.title}" pp${c.pageStart}-${c.pageEnd} does not fully contain its own chapter "${child.title}" pp${child.pageStart}-${child.pageEnd}`);
+      }
+    }
+    for (const leaf of leaves) {
+      if (children.includes(leaf) || !hasRange(leaf)) continue;
+      if (rangesOverlap(c, leaf)) {
+        errors.push(`page ranges overlap: unit "${c.title}" pp${c.pageStart}-${c.pageEnd} and "${leaf.title}" pp${leaf.pageStart}-${leaf.pageEnd}`);
+      }
+    }
+  }
+  for (let i = 0; i < containers.length; i++) {
+    for (let j = i + 1; j < containers.length; j++) {
+      const a = containers[i], b = containers[j];
+      if (hasRange(a) && hasRange(b) && rangesOverlap(a, b)) {
+        errors.push(`page ranges overlap: unit "${a.title}" pp${a.pageStart}-${a.pageEnd} and unit "${b.title}" pp${b.pageStart}-${b.pageEnd}`);
+      }
+    }
+  }
+
+  // An interleaved entry with no leaf-chapter host is unreachable: nothing
+  // will ever supply a file whose span contains it, so it would sit in the
+  // manifest forever and never receive content. A unit container can never
+  // be the host — it spans multiple files, not one.
   for (const e of entries) {
     if (e?.numbered !== false || !isInt(e.pageStart)) continue;
-    const host = numbered.some((n) => isInt(n.pageStart) && e.pageStart >= n.pageStart && e.pageEnd <= n.pageEnd);
+    const host = leaves.some((n) => isInt(n.pageStart) && e.pageStart >= n.pageStart && e.pageEnd <= n.pageEnd);
     if (!host) errors.push(`interleaved "${e.title}" pp${e.pageStart}-${e.pageEnd} sits inside no numbered chapter — nothing will ever load it`);
   }
 
@@ -136,9 +197,11 @@ export function validateManifest(entries, fileStructure = null) {
 }
 
 /** Entries a given file may legitimately claim: its own numbered chapter, plus
- *  any interleaved entries whose pages fall inside the file's span. */
+ *  any interleaved entries whose pages fall inside the file's span. A unit
+ *  container (`isUnit: true`) is never a candidate — it spans several files'
+ *  worth of chapters, not one file's worth of content. */
 export function candidatesForFile(entries, fileOrdinal, filePageRange) {
-  const own = entries.filter((e) => e.numbered !== false && e.fileOrdinal === fileOrdinal);
+  const own = entries.filter((e) => e.numbered !== false && e.isUnit !== true && e.fileOrdinal === fileOrdinal);
   const inside = filePageRange
     ? entries.filter((e) => e.numbered === false
         && e.pageStart >= filePageRange[0] && e.pageEnd <= filePageRange[1])
@@ -166,9 +229,12 @@ export function candidatesForFile(entries, fileOrdinal, filePageRange) {
  * in the File # column) don't have enough signal to infer from — returns
  * null rather than guessing, so the UI can show "not yet inferable" instead
  * of a confident-looking wrong answer.
+ *
+ * Unit containers (`isUnit: true`) are excluded from the count — they never
+ * have a file of their own, so counting them would only dilute the signal.
  */
 export function inferFileStructure(entries) {
-  const numbered = (entries ?? []).filter((e) => e?.numbered !== false);
+  const numbered = (entries ?? []).filter((e) => e?.numbered !== false && e?.isUnit !== true);
   const ordinals = numbered.map((e) => e?.fileOrdinal).filter((v) => v != null);
   if (ordinals.length === 0 || ordinals.length < numbered.length) return null;
 

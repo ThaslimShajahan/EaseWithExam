@@ -195,3 +195,83 @@ describe('banded books — the case that would silently reject correct content',
     expect(candidatesForFile(hornbill, 11, [70, 74]).map((e) => e.title)).toEqual(['Note-making']);
   });
 });
+
+/* ── isUnit — the Unit -> Chapter false-overlap bug ──────────────────────
+ * Kerala State English Class 8 shape: "Unit II Wings of Hope" printed WITH
+ * its own page range (pp41-72), containing real numbered chapters printed
+ * underneath it ("Hope is the Thing with Feathers" pp43-46 and a second
+ * chapter pp50-72). The container's range is SUPPOSED to fully contain its
+ * children -- that containment must never be flagged as an overlap, but a
+ * genuine sibling collision (two real chapters, or two unrelated units)
+ * still must be. */
+describe('validateManifest — isUnit containers (Unit -> Chapter structure)', () => {
+  const wingsOfHope = [
+    { ordinal: 1, title: 'Unit I placeholder', unit: null, pageStart: 1, pageEnd: 40, numbered: true, printedNumber: 1, fileOrdinal: 1 },
+    { ordinal: 2, title: 'Unit II Wings of Hope', unit: null, pageStart: 41, pageEnd: 72, numbered: true, isUnit: true },
+    { ordinal: 3, title: 'Hope is the Thing with Feathers', unit: 'Unit II Wings of Hope', pageStart: 43, pageEnd: 46, numbered: true, printedNumber: 1, fileOrdinal: 2 },
+    { ordinal: 4, title: 'The Path of the Rain', unit: 'Unit II Wings of Hope', pageStart: 50, pageEnd: 72, numbered: true, printedNumber: 2, fileOrdinal: 3 },
+  ];
+
+  it('accepts a unit container fully containing its own children — no false overlap', () => {
+    expect(validateManifest(wingsOfHope)).toEqual({ ok: true, errors: [] });
+  });
+
+  it('still rejects a real overlap between two sibling leaf chapters', () => {
+    const bad = [
+      ...wingsOfHope,
+      { ordinal: 5, title: 'Overlapping Chapter', unit: 'Unit II Wings of Hope', pageStart: 45, pageEnd: 60, numbered: true, printedNumber: 3, fileOrdinal: 4 },
+    ];
+    const errs = validateManifest(bad).errors.join(' ');
+    expect(errs).toMatch(/page ranges overlap/);
+  });
+
+  it('still rejects a leaf chapter that overlaps a unit it does NOT belong to (falls in the gap between the unit\'s own children, so leaf-vs-leaf alone would miss it)', () => {
+    const bad = [
+      ...wingsOfHope,
+      { ordinal: 5, title: 'Misfiled Chapter', unit: null, pageStart: 47, pageEnd: 49, numbered: true, printedNumber: 3, fileOrdinal: 4 },
+    ];
+    const errs = validateManifest(bad).errors.join(' ');
+    expect(errs).toMatch(/page ranges overlap: unit "Unit II Wings of Hope" pp41-72 and "Misfiled Chapter" pp47-49/);
+  });
+
+  it('still rejects two overlapping unit containers', () => {
+    const bad = [
+      { ordinal: 1, title: 'Unit A', pageStart: 1, pageEnd: 50, numbered: true, isUnit: true },
+      { ordinal: 2, title: 'Ch A', unit: 'Unit A', pageStart: 1, pageEnd: 50, numbered: true, printedNumber: 1, fileOrdinal: 1 },
+      { ordinal: 3, title: 'Unit B', pageStart: 40, pageEnd: 90, numbered: true, isUnit: true },
+      { ordinal: 4, title: 'Ch B', unit: 'Unit B', pageStart: 51, pageEnd: 90, numbered: true, printedNumber: 1, fileOrdinal: 2 },
+    ];
+    const errs = validateManifest(bad).errors.join(' ');
+    expect(errs).toMatch(/page ranges overlap: unit "Unit A" pp1-50 and unit "Unit B" pp40-90/);
+  });
+
+  it('flags a container whose range does not actually contain one of its own children', () => {
+    const bad = wingsOfHope.map((e) => (e.ordinal === 4 ? { ...e, pageEnd: 80 } : e)); // child now spills past parent's pp72
+    const errs = validateManifest(bad).errors.join(' ');
+    expect(errs).toMatch(/does not fully contain its own chapter "The Path of the Rain"/);
+  });
+
+  it('flags an orphan container that no chapter points back to (title/unit mismatch)', () => {
+    const bad = wingsOfHope.map((e) => (e.ordinal === 2 ? { ...e, title: 'Unit II: Wings of Hope' } : e)); // punctuation drift from the children's exact string
+    const errs = validateManifest(bad).errors.join(' ');
+    expect(errs).toMatch(/no chapter's "unit" field points back to it/);
+  });
+
+  it('does not require page numbers on children to detect an orphan container in a per_chapter, pages-optional manifest', () => {
+    const noPages = [
+      { ordinal: 1, title: 'Unit II Wings of Hope', pageStart: null, pageEnd: null, numbered: true, isUnit: true },
+      { ordinal: 2, title: 'Hope is the Thing with Feathers', unit: 'Unit II Wings of Hope', pageStart: null, pageEnd: null, numbered: true, printedNumber: 1, fileOrdinal: 1 },
+    ];
+    expect(validateManifest(noPages, 'per_chapter')).toEqual({ ok: true, errors: [] });
+  });
+
+  it('candidatesForFile never offers a unit container as a file match, even if fileOrdinal coincidentally matches', () => {
+    const withStrayFileOrdinal = wingsOfHope.map((e) => (e.isUnit ? { ...e, fileOrdinal: 2 } : e));
+    const c = candidatesForFile(withStrayFileOrdinal, 2, null).map((e) => e.title);
+    expect(c).toEqual(['Hope is the Thing with Feathers']);
+  });
+
+  it('inferFileStructure ignores unit containers (they never have a real file)', () => {
+    expect(inferFileStructure(wingsOfHope)).toBe('per_chapter');
+  });
+});

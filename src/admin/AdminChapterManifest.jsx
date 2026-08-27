@@ -52,7 +52,7 @@ const DEFAULT_PREFIX = 'c';
 
 const blankEntry = (ordinal) => ({
   ordinal, title: '', unit: null, pageStart: null, pageEnd: null,
-  numbered: true, printedNumber: null, fileOrdinal: null, band: null,
+  numbered: true, printedNumber: null, fileOrdinal: null, band: null, isUnit: false,
 });
 
 const numOrNull = (v) => {
@@ -150,7 +150,7 @@ export default function AdminChapterManifest() {
   // shown before Approve is even clicked rather than only after the RPC
   // refuses it. The RPC is still the real gate; this is just faster feedback.
   const missingFileOrdinal = useMemo(
-    () => entries.filter((e) => e?.numbered !== false && e?.fileOrdinal == null),
+    () => entries.filter((e) => e?.numbered !== false && e?.isUnit !== true && e?.fileOrdinal == null),
     [entries],
   );
 
@@ -442,12 +442,13 @@ export default function AdminChapterManifest() {
                   <th className="text-left px-3 py-2 w-20" title="The number printed next to this chapter in the book">Printed #</th>
                   <th className="text-left px-3 py-2 w-20" title="The chapter number in the FILENAME of the PDF that contains this chapter. Several chapters in one unit file share the same File #.">File #</th>
                   <th className="text-left px-3 py-2 w-16">Num?</th>
+                  <th className="text-left px-3 py-2 w-16" title="Check this ONLY for a row that IS the printed Unit/Theme heading itself (e.g. 'Unit II Wings of Hope'), when the book prints that heading with its own page range spanning several chapters. Its children are whichever rows below have this exact text in their own Unit column — leave unchecked for a normal chapter.">Unit row?</th>
                   <th className="w-10" />
                 </tr>
               </thead>
               <tbody>
                 {entries.map((e, i) => (
-                  <tr key={i} className={`border-b border-white/5 last:border-0 ${selected.has(i) ? 'bg-primary-900/10' : ''}`}>
+                  <tr key={i} className={`border-b border-white/5 last:border-0 ${selected.has(i) ? 'bg-primary-900/10' : e.isUnit ? 'bg-slate-800/30' : ''}`}>
                     {!isApproved && (
                       <td className="px-3 py-1.5">
                         <input type="checkbox" checked={selected.has(i)} onChange={() => toggleSelect(i)}
@@ -477,15 +478,20 @@ export default function AdminChapterManifest() {
                     </td>
                     <td className="px-3 py-1.5">
                       <input value={e.printedNumber ?? ''} onChange={(ev) => patch(i, 'printedNumber', numOrNull(ev.target.value))}
-                        disabled={isApproved || e.numbered === false} className={`${inputCls} w-14 disabled:opacity-40`} />
+                        disabled={isApproved || e.numbered === false || e.isUnit === true} className={`${inputCls} w-14 disabled:opacity-40`} />
                     </td>
                     <td className="px-3 py-1.5">
                       <input value={e.fileOrdinal ?? ''} onChange={(ev) => patch(i, 'fileOrdinal', numOrNull(ev.target.value))}
-                        disabled={isApproved || e.numbered === false} className={`${inputCls} w-14 disabled:opacity-40`} />
+                        disabled={isApproved || e.numbered === false || e.isUnit === true} className={`${inputCls} w-14 disabled:opacity-40`} />
                     </td>
                     <td className="px-3 py-1.5 text-center">
-                      <input type="checkbox" checked={e.numbered !== false} disabled={isApproved}
+                      <input type="checkbox" checked={e.numbered !== false} disabled={isApproved || e.isUnit === true}
                         onChange={(ev) => patch(i, 'numbered', ev.target.checked ? true : false)}
+                        className="accent-primary-500" />
+                    </td>
+                    <td className="px-3 py-1.5 text-center">
+                      <input type="checkbox" checked={e.isUnit === true} disabled={isApproved}
+                        onChange={(ev) => patch(i, 'isUnit', ev.target.checked)}
                         className="accent-primary-500" />
                     </td>
                     <td className="px-2 py-1.5">

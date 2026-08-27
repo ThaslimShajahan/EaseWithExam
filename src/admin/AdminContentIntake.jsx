@@ -643,7 +643,10 @@ const CONFIDENCE = {
  * the one function that does, and it only runs on click.
  */
 function MatchReviewScreen({ rows, manifestEntries, onChoose, onConfirm, onUnconfirm, onConfirmAll, onCancel, onProcess, onLoadAnyway }) {
-  const numbered = manifestEntries.filter((e) => e.numbered !== false);
+  // A unit container (isUnit: true) is a printed heading, not a pickable
+  // chapter — a file's content is never "the whole Unit", so it must not
+  // show up as an option here.
+  const numbered = manifestEntries.filter((e) => e.numbered !== false && e.isUnit !== true);
   // Excludes needsLoadAnywayConfirm rows — those need a duplicate decision,
   // not a chapter pick, and must not be counted toward "need a manual pick".
   const usable = rows.filter((r) => !r.error && !r.needsLoadAnywayConfirm);
@@ -1387,7 +1390,7 @@ export default function AdminContentIntake() {
             const reason = fileOrdinal == null
               ? 'no chapter number could be read from its filename'
               : `file ordinal ${fileOrdinal} (parsed from the filename) does not match any manifest entry`;
-            const numberedEntries = approvedManifest.filter((e) => e.numbered !== false);
+            const numberedEntries = approvedManifest.filter((e) => e.numbered !== false && e.isUnit !== true);
             const picked = await promptForManifestEntry(it.name, reason, numberedEntries);
 
             if (!picked) {

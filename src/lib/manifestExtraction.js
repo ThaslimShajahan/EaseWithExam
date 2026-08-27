@@ -24,7 +24,7 @@ const SYSTEM_PROMPT = `You read a textbook's own Contents / Table of Contents pa
 its chapter list EXACTLY as printed. You do not invent, merge, split, reorder or
 rename anything the page does not show.
 
-Return JSON: { "entries": [ { "ordinal", "title", "unit", "pageStart", "pageEnd", "numbered", "printedNumber", "band" } ] }
+Return JSON: { "entries": [ { "ordinal", "title", "unit", "pageStart", "pageEnd", "numbered", "printedNumber", "band", "isUnit" } ] }
 
 - ordinal: your own running count starting at 1, in the order printed. This is
   the chapter's IDENTITY going forward, so it must be stable and sequential —
@@ -55,8 +55,18 @@ Return JSON: { "entries": [ { "ordinal", "title", "unit", "pageStart", "pageEnd"
   if the contents page shows sections (e.g. "reading", "writing"). null if the
   book has no sections. This is a coarse structural bucket, NOT the printed unit
   heading — when the page shows both, they are different fields.
-
-If the page lists supplementary/appendix/answer material with no chapter
+- isUnit: true ONLY if this entry is the printed Unit/Theme HEADING LINE
+  itself, printed WITH ITS OWN page number, and that heading also has real
+  numbered chapters printed underneath it in this same list (e.g. contents
+  page prints "UNIT II WINGS OF HOPE ... 41" as its own line, then below it
+  "9. Hope is the Thing with Feathers ... 43"). In that case: emit the heading
+  as its own entry with isUnit true, pageStart/pageEnd covering its whole
+  span, and printedNumber/fileOrdinal left null (a unit heading has neither).
+  Every chapter under it must repeat the heading's exact title text in ITS
+  OWN unit field, so the two can be tied together downstream. False (the
+  default) for a normal chapter, AND for a unit heading that prints with NO
+  page number of its own — in that far more common case just set the
+  chapters' unit field as usual and do not invent a row for the heading.
 number, DO NOT include it as an entry — that is exactly the front matter this
 process exists to keep out of the chapter list.
 
@@ -127,7 +137,8 @@ function normaliseEntries(entries) {
   if (!Array.isArray(entries)) return [];
   return entries.map((e) => {
     const numbered = e?.numbered !== false;
-    const printedNumber = numbered
+    const isUnit = e?.isUnit === true;
+    const printedNumber = numbered && !isUnit
       ? (Number.isFinite(Number(e?.printedNumber)) ? Math.trunc(Number(e.printedNumber)) : null)
       : null;
     const ordinal = Number.isFinite(Number(e?.ordinal)) ? Math.trunc(Number(e.ordinal)) : null;
@@ -163,8 +174,14 @@ function normaliseEntries(entries) {
       // admin still has to type the real numbers for books like that. What
       // it fixes is the twice-repeated failure mode: a normal, predictably-
       // named book shipping with every File # simply forgotten as null.
-      fileOrdinal:   numbered ? (printedNumber ?? ordinal) : null,
+      //
+      // A unit container never has a file of its own (it spans several
+      // chapters' files), so it gets no fileOrdinal default at all — a
+      // borrowed number here would look like real corroboration data to
+      // downstream code that doesn't know to check isUnit first.
+      fileOrdinal:   numbered && !isUnit ? (printedNumber ?? ordinal) : null,
       band:          e?.band ? String(e.band).trim().toLowerCase() : null,
+      isUnit,
     };
   });
 }

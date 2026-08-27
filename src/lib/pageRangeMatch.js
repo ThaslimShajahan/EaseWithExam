@@ -91,7 +91,11 @@ function overlapFraction(aStart, aEnd, bStart, bEnd) {
  * @returns {{ suggested: object[], confidence: 'confirmed'|'content'|'filename'|'conflict'|'multiple'|'none', reason: string }}
  */
 export function matchFileToManifest({ detectedRange, filename, entries }) {
-  const numbered = (entries ?? []).filter((e) => e.numbered !== false);
+  // Excludes `isUnit` container rows: a unit heading's page range spans
+  // several chapters' worth of files, so it would overlap the SAME detected
+  // range as the one real chapter a file actually contains, turning a clean
+  // single match into a false 'multiple chapters' ambiguity.
+  const numbered = (entries ?? []).filter((e) => e.numbered !== false && e.isUnit !== true);
   const byOverlap = numbered
     .map((e) => ({ entry: e, overlap: overlapFraction(detectedRange?.firstPage, detectedRange?.lastPage, e.pageStart, e.pageEnd) }))
     .filter((c) => c.overlap > 0)
