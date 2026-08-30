@@ -19,7 +19,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   BookOpen, Upload, Loader2, CheckCircle2, AlertTriangle, Plus, Trash2,
-  ShieldCheck, RefreshCw, Info, GitMerge,
+  ShieldCheck, RefreshCw, Info, GitMerge, FilePlus2,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
@@ -77,6 +77,10 @@ export default function AdminChapterManifest() {
   useEffect(() => { setSubject((s) => (subjects.includes(s) ? s : subjects[0] ?? '')); }, [subjects]);
 
   const [row,      setRow]      = useState(null);   // the chapter_manifests row, or null
+  // The approved row Revise was clicked on, kept only for the "no row loaded"
+  // panel's copy — cleared by load() on every fresh fetch. null the rest of
+  // the time, including once the revision has been saved (row is truthy again).
+  const [revisingFrom, setRevisingFrom] = useState(null);
   const [entries,  setEntries]  = useState([]);
   const [prefix,   setPrefix]   = useState(DEFAULT_PREFIX);
   const [sourceFile, setSourceFile] = useState('');
@@ -122,20 +126,33 @@ export default function AdminChapterManifest() {
    * book name the uploader leaves blank will not be found, and under fail-closed
    * that is a refused upload rather than a silently mis-filed one. */
   const load = useCallback(async () => {
-    if (!subject) { setRow(null); setEntries([]); return; }
-    setLoading(true); setMsg(null); clearSelection();
+    if (!subject) { setRow(null); setEntries([]); setRevisingFrom(null); return; }
+    setLoading(true); setMsg(null); clearSelection(); setRevisingFrom(null);
+    // Excludes 'superseded' explicitly, then picks in JS rather than trusting
+    // .maybeSingle() — the exact bug AdminContentIntake's manifestRow lookup
+    // already hit and fixed (see its comment above the equivalent query):
+    // a book mid-revision can briefly have BOTH a live approved row AND a
+    // new not-yet-approved draft for the same key (this screen's own Revise
+    // button creates exactly that pair), and once Approve supersedes the old
+    // row instead of deleting it, an approved+superseded pair sits there
+    // forever after. Either shape is >1 row, which .maybeSingle() treats as
+    // an error. Preferring 'approved' over 'draft' matches AdminContentIntake
+    // so this screen and the upload gate never disagree about which row is
+    // the live one.
     let q = supabase.from('chapter_manifests')
       .select('id, exam_type, subject, book, class_level, key_prefix, source_file, entries, status, approved_by, approved_at, file_structure')
-      .eq('exam_type', dbExamType).eq('subject', subject);
+      .eq('exam_type', dbExamType).eq('subject', subject).in('status', ['draft', 'approved']);
     q = book.trim() ? q.eq('book', book.trim()) : q.is('book', null);
-    const { data, error } = await q.maybeSingle();
+    const { data, error } = await q;
     setLoading(false);
     if (error) { setMsg({ kind: 'err', text: `Load failed: ${error.message}` }); return; }
-    setRow(data ?? null);
-    setEntries(data?.entries ?? []);
-    setPrefix(data?.key_prefix ?? DEFAULT_PREFIX);
-    setSourceFile(data?.source_file ?? '');
-    setFileStructure(data?.file_structure ?? 'per_chapter');
+    const rows = data ?? [];
+    const picked = rows.find((r) => r.status === 'approved') ?? rows.find((r) => r.status === 'draft') ?? null;
+    setRow(picked);
+    setEntries(picked?.entries ?? []);
+    setPrefix(picked?.key_prefix ?? DEFAULT_PREFIX);
+    setSourceFile(picked?.source_file ?? '');
+    setFileStructure(picked?.file_structure ?? 'per_chapter');
   }, [dbExamType, subject, book]);
 
   useEffect(() => { load(); }, [load]);
@@ -187,6 +204,16 @@ export default function AdminChapterManifest() {
   /* ── Row editing ─────────────────────────────────────────────────── */
   const patch = (i, field, value) =>
     setEntries((prev) => prev.map((e, n) => (n === i ? { ...e, [field]: value } : e)));
+
+  // Checking "Unit row?" also forces numbered:true in the same update — a
+  // unit heading is never interleaved, and leaving a stale `numbered: false`
+  // sitting behind the (now-disabled) Num? checkbox is exactly the state
+  // that used to make validateManifest misread a unit heading as an
+  // interleaved entry needing a single chapter to contain it. See
+  // manifestExtraction.js's normaliseEntries for the same rule applied to
+  // drafted (not hand-edited) entries.
+  const toggleIsUnit = (i, checked) =>
+    setEntries((prev) => prev.map((e, n) => (n === i ? { ...e, isUnit: checked, ...(checked ? { numbered: true } : {}) } : e)));
 
   const addRow = () => {
     setEntries((prev) => [...prev, blankEntry(prev.length ? Math.max(...prev.map((e) => e.ordinal || 0)) + 1 : 1)]);
@@ -276,6 +303,29 @@ export default function AdminChapterManifest() {
       `Chapter manifest APPROVED for ${dbExamType} ${subject}${book.trim() ? ` — ${book.trim()}` : ''}`);
     setMsg({ kind: 'ok', text: 'Approved. Study Notes uploads for this book are now gated by it.' });
     load();
+  }
+
+  /* ── Revise an approved manifest ─────────────────────────────────────
+   * admin_upsert_chapter_manifest refuses to update a row whose status isn't
+   * 'draft' — an approved manifest is immutable by design, so fixing a
+   * mistake (a wrong page range, a missing chapter) means creating a NEW
+   * draft, not editing the live row in place. This just drops `row` to null
+   * so the next Save inserts rather than updates; `entries`, `fileStructure`,
+   * `prefix` and `sourceFile` are left exactly as loaded, so the new draft
+   * starts as an exact copy of the approved manifest. Approving it then
+   * auto-supersedes the row being revised (admin_approve_chapter_manifest's
+   * own supersede step) — never deleted, never mutated, just no longer the
+   * one uploads are gated against. */
+  function handleRevise() {
+    if (!isApproved) return;
+    setRevisingFrom(row);
+    setRow(null);
+    clearSelection();
+    setMsg({
+      kind: 'info',
+      text: 'Editing a new draft, copied from the approved manifest. Save, then Approve — the previous '
+          + 'approved manifest is superseded automatically (kept, not deleted) once this one is approved.',
+    });
   }
 
   const inputCls = 'bg-slate-800 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary-500';
@@ -378,16 +428,27 @@ export default function AdminChapterManifest() {
           {isApproved
             ? <ShieldCheck size={14} className="text-emerald-400 mt-0.5 shrink-0" />
             : <AlertTriangle size={14} className="text-amber-400 mt-0.5 shrink-0" />}
-          <p className={`text-xs ${isApproved ? 'text-emerald-300' : 'text-amber-300'}`}>
+          <p className={`text-xs flex-1 ${isApproved ? 'text-emerald-300' : 'text-amber-300'}`}>
             {isApproved
               ? <>Approved{row.approved_at ? ` on ${new Date(row.approved_at).toLocaleString()}` : ''} — this manifest is live and gating uploads for this book.</>
               : <>Status <b>{row.status}</b> — saved but <b>not approved</b>, so Study Notes uploads for this book are still blocked.</>}
           </p>
+          {isApproved && (
+            <button onClick={handleRevise} disabled={saving}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-800/60 hover:bg-emerald-700/60 text-emerald-200 disabled:opacity-40"
+              title="Create a new draft copy of this manifest to fix a mistake or add chapters — the approved row itself is never edited or deleted.">
+              <FilePlus2 size={13} /> Revise
+            </button>
+          )}
         </div>
       ) : !loading && subject ? (
         <div className="flex items-start gap-2 bg-slate-800/40 border border-white/8 rounded-xl p-3">
           <Info size={14} className="text-slate-500 mt-0.5 shrink-0" />
-          <p className="text-xs text-slate-500">No manifest yet for this book. Draft one from its contents page, or add rows by hand.</p>
+          <p className="text-xs text-slate-500">
+            {revisingFrom
+              ? `Editing a new draft to replace the approved manifest for ${dbExamType} ${subject}${book.trim() ? ` — ${book.trim()}` : ''} — not saved yet.`
+              : 'No manifest yet for this book. Draft one from its contents page, or add rows by hand.'}
+          </p>
         </div>
       ) : null}
 
@@ -491,7 +552,7 @@ export default function AdminChapterManifest() {
                     </td>
                     <td className="px-3 py-1.5 text-center">
                       <input type="checkbox" checked={e.isUnit === true} disabled={isApproved}
-                        onChange={(ev) => patch(i, 'isUnit', ev.target.checked)}
+                        onChange={(ev) => toggleIsUnit(i, ev.target.checked)}
                         className="accent-primary-500" />
                     </td>
                     <td className="px-2 py-1.5">
@@ -547,7 +608,7 @@ export default function AdminChapterManifest() {
               <ShieldCheck size={13} /> Approve manifest
             </button>
             {!row && <span className="text-[11px] text-slate-500">Save the draft before it can be approved.</span>}
-            {isApproved && <span className="text-[11px] text-emerald-400/80">Approved manifests are read-only here.</span>}
+            {isApproved && <span className="text-[11px] text-emerald-400/80">Approved manifests are read-only here — use Revise above to create an editable copy.</span>}
           </div>
         </div>
       )}
