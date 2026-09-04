@@ -43,6 +43,7 @@ export const ACTION = {
   PUBLISH:        'publish',
   ARCHIVE:        'archive',
   DELETE_REQUEST: 'delete_request',
+  DELETE:         'delete',
   APPROVE:        'approve',
   REJECT:         'reject',
   RESTORE:        'restore',
@@ -51,6 +52,7 @@ export const ACTION = {
   BULK_DELETE:    'bulk_delete',
   EMBED_FAILED:   'embed_failed',
   WIPE:           'wipe',
+  EXPORT:         'export',
 };
 
 /** Actor role constants — must match the CHECK constraint in migration 0002 */

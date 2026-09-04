@@ -77,6 +77,11 @@ export default function AdminChapterManifest() {
   useEffect(() => { setSubject((s) => (subjects.includes(s) ? s : subjects[0] ?? '')); }, [subjects]);
 
   const [row,      setRow]      = useState(null);   // the chapter_manifests row, or null
+  // Every 'superseded' row for the current (exam, subject, book) key — kept
+  // separate from `row` because there can be several (each prior Revise+Approve
+  // leaves one behind) and none of them is "the" live manifest, just history
+  // that's now only reachable here for genuine one-off deletion.
+  const [supersededRows, setSupersededRows] = useState([]);
   // The approved row Revise was clicked on, kept only for the "no row loaded"
   // panel's copy — cleared by load() on every fresh fetch. null the rest of
   // the time, including once the revision has been saved (row is truthy again).
@@ -94,6 +99,17 @@ export default function AdminChapterManifest() {
   const [drafting, setDrafting] = useState(false);
   const [saving,   setSaving]   = useState(false);
   const [msg,      setMsg]      = useState(null);   // { kind: 'ok'|'err'|'info', text }
+
+  // Delete confirm panel — `delTarget` is whichever manifest row (the live
+  // `row`, or one of `supersededRows`) is being considered for deletion. A
+  // single shared panel rather than one per row, since only one can be open
+  // at a time and the confirm flow is identical regardless of which row.
+  const [delTarget,      setDelTarget]      = useState(null);
+  const [delChecking,    setDelChecking]    = useState(false);
+  const [delCounts,      setDelCounts]      = useState(null); // { kb, sn, kbErr, snErr }
+  const [delTyped,       setDelTyped]       = useState('');
+  const [delAckApproved, setDelAckApproved] = useState(false);
+  const [deleting,       setDeleting]       = useState(false);
 
   // Merge — for the case text-only extraction genuinely cannot resolve on its
   // own: whether two adjacent contents-page lines are two separate entries or
@@ -126,22 +142,22 @@ export default function AdminChapterManifest() {
    * book name the uploader leaves blank will not be found, and under fail-closed
    * that is a refused upload rather than a silently mis-filed one. */
   const load = useCallback(async () => {
-    if (!subject) { setRow(null); setEntries([]); setRevisingFrom(null); return; }
+    if (!subject) { setRow(null); setEntries([]); setRevisingFrom(null); setSupersededRows([]); return; }
     setLoading(true); setMsg(null); clearSelection(); setRevisingFrom(null);
-    // Excludes 'superseded' explicitly, then picks in JS rather than trusting
-    // .maybeSingle() — the exact bug AdminContentIntake's manifestRow lookup
-    // already hit and fixed (see its comment above the equivalent query):
-    // a book mid-revision can briefly have BOTH a live approved row AND a
-    // new not-yet-approved draft for the same key (this screen's own Revise
-    // button creates exactly that pair), and once Approve supersedes the old
-    // row instead of deleting it, an approved+superseded pair sits there
-    // forever after. Either shape is >1 row, which .maybeSingle() treats as
-    // an error. Preferring 'approved' over 'draft' matches AdminContentIntake
-    // so this screen and the upload gate never disagree about which row is
-    // the live one.
+    // Now includes 'superseded' too (Delete needs to reach those rows), but
+    // picks the live row in JS rather than trusting .maybeSingle() — the
+    // exact bug AdminContentIntake's manifestRow lookup already hit and
+    // fixed (see its comment above the equivalent query): a book mid-revision
+    // can briefly have BOTH a live approved row AND a new not-yet-approved
+    // draft for the same key (this screen's own Revise button creates
+    // exactly that pair), and once Approve supersedes the old row instead of
+    // deleting it, an approved+superseded pair sits there forever after.
+    // That's >1 row, which .maybeSingle() treats as an error. Preferring
+    // 'approved' over 'draft' matches AdminContentIntake so this screen and
+    // the upload gate never disagree about which row is the live one.
     let q = supabase.from('chapter_manifests')
-      .select('id, exam_type, subject, book, class_level, key_prefix, source_file, entries, status, approved_by, approved_at, file_structure')
-      .eq('exam_type', dbExamType).eq('subject', subject).in('status', ['draft', 'approved']);
+      .select('id, exam_type, subject, book, class_level, key_prefix, source_file, entries, status, approved_by, approved_at, file_structure, created_at')
+      .eq('exam_type', dbExamType).eq('subject', subject).in('status', ['draft', 'approved', 'superseded']);
     q = book.trim() ? q.eq('book', book.trim()) : q.is('book', null);
     const { data, error } = await q;
     setLoading(false);
@@ -149,6 +165,10 @@ export default function AdminChapterManifest() {
     const rows = data ?? [];
     const picked = rows.find((r) => r.status === 'approved') ?? rows.find((r) => r.status === 'draft') ?? null;
     setRow(picked);
+    setSupersededRows(
+      rows.filter((r) => r.status === 'superseded')
+        .sort((a, b) => new Date(b.created_at ?? 0) - new Date(a.created_at ?? 0)),
+    );
     setEntries(picked?.entries ?? []);
     setPrefix(picked?.key_prefix ?? DEFAULT_PREFIX);
     setSourceFile(picked?.source_file ?? '');
@@ -328,6 +348,58 @@ export default function AdminChapterManifest() {
     });
   }
 
+  /* ── Delete — genuine hard delete, separate from Revise ──────────────
+   * Revise never touches the old row; this does, permanently. For real
+   * one-off cleanup only: a manifest created by mistake, duplicate test
+   * data, a discontinued book. Reachable on the live row (draft or approved)
+   * and on any superseded row for this key. Opens a confirm panel rather
+   * than window.confirm because a yes/no click is too easy to fat-finger on
+   * something irreversible — see the type-to-confirm input below. */
+  async function openDeletePanel(target) {
+    setDelTarget(target); setDelTyped(''); setDelAckApproved(false); setDelCounts(null); setDelChecking(true);
+    // knowledge_base has a `book` column, so this is an exact match. study_notes
+    // has no book column at all — only exam_type/subject/chapter — so that count
+    // is necessarily subject-wide, not book-specific. Shown to the admin as such,
+    // not silently narrowed to look more precise than it is.
+    let kbQ = supabase.from('knowledge_base').select('id', { count: 'exact', head: true })
+      .eq('exam_type', target.exam_type).eq('subject', target.subject);
+    kbQ = target.book ? kbQ.eq('book', target.book) : kbQ.is('book', null);
+    const snQ = supabase.from('study_notes').select('id', { count: 'exact', head: true })
+      .eq('exam_type', target.exam_type).eq('subject', target.subject);
+    const [kbRes, snRes] = await Promise.all([kbQ, snQ]);
+    setDelChecking(false);
+    setDelCounts({
+      kb: kbRes.error ? null : (kbRes.count ?? 0),
+      sn: snRes.error ? null : (snRes.count ?? 0),
+      kbErr: kbRes.error?.message ?? null,
+      snErr: snRes.error?.message ?? null,
+    });
+  }
+
+  function closeDeletePanel() {
+    setDelTarget(null); setDelTyped(''); setDelAckApproved(false); setDelCounts(null); setDelChecking(false);
+  }
+
+  const delConfirmLabel = delTarget ? (delTarget.book?.trim() || delTarget.subject) : '';
+  const delReady = !!delTarget && !delChecking && delTyped === delConfirmLabel
+    && (delTarget.status !== 'approved' || delAckApproved);
+
+  async function handleDeleteConfirmed() {
+    if (!delTarget || !delReady) return;
+    setDeleting(true); setMsg(null);
+    const { error } = await supabase.rpc('admin_delete_chapter_manifest', { p_caller: callerUid, p_id: delTarget.id });
+    setDeleting(false);
+    if (error) { setMsg({ kind: 'err', text: `Delete failed: ${error.message}` }); return; }
+    logChange(ENTITY.CONTENT_ITEM, delTarget.id, ACTION.DELETE, {
+      exam_type: delTarget.exam_type, subject: delTarget.subject, book: delTarget.book ?? null,
+      status: delTarget.status, entries: delTarget.entries?.length ?? 0,
+      knowledge_base_rows: delCounts?.kb ?? null, study_notes_rows_subject_wide: delCounts?.sn ?? null,
+    }, `Chapter manifest DELETED (${delTarget.status}) for ${delTarget.exam_type} ${delTarget.subject}${delTarget.book ? ` — ${delTarget.book}` : ''}`);
+    closeDeletePanel();
+    setMsg({ kind: 'ok', text: 'Manifest deleted.' });
+    load();
+  }
+
   const inputCls = 'bg-slate-800 border border-white/10 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-primary-500';
 
   return (
@@ -433,15 +505,65 @@ export default function AdminChapterManifest() {
               ? <>Approved{row.approved_at ? ` on ${new Date(row.approved_at).toLocaleString()}` : ''} — this manifest is live and gating uploads for this book.</>
               : <>Status <b>{row.status}</b> — saved but <b>not approved</b>, so Study Notes uploads for this book are still blocked.</>}
           </p>
-          {isApproved && (
-            <button onClick={handleRevise} disabled={saving}
-              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-800/60 hover:bg-emerald-700/60 text-emerald-200 disabled:opacity-40"
-              title="Create a new draft copy of this manifest to fix a mistake or add chapters — the approved row itself is never edited or deleted.">
-              <FilePlus2 size={13} /> Revise
+          <div className="flex items-center gap-2 shrink-0">
+            {isApproved && (
+              <button onClick={handleRevise} disabled={saving}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-800/60 hover:bg-emerald-700/60 text-emerald-200 disabled:opacity-40"
+                title="Create a new draft copy of this manifest to fix a mistake or add chapters — the approved row itself is never edited or deleted.">
+                <FilePlus2 size={13} /> Revise
+              </button>
+            )}
+            <button onClick={() => openDeletePanel(row)} disabled={saving || deleting}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-900/40 hover:bg-red-800/50 text-red-300 disabled:opacity-40"
+              title="Permanently delete this manifest — real one-off cleanup only (created by mistake, duplicate test data, a discontinued book).">
+              <Trash2 size={13} /> Delete
             </button>
-          )}
+          </div>
         </div>
-      ) : !loading && subject ? (
+      ) : null}
+      {/* Revise (above) replaces THIS book's approved manifest with a new draft.
+          Adding a Part 2 / a different book entirely is a different operation —
+          not a replacement, a new row — and the only thing that does it is the
+          Book field itself, which stays editable even with an approved manifest
+          loaded (see load()'s effect deps). Proven live already: Ganithaprakash
+          Part 2 and the Physics "PART 2 ANSWERS" manifest were both created
+          exactly this way. Nothing else on screen hints that's possible once
+          the grid below goes read-only, so say it here, next to Revise, where
+          an admin looking at a done-and-locked manifest is already looking. */}
+      {isApproved && (
+        <p className="text-[11px] text-slate-500">
+          Adding a Part 2, or a different book in this subject? Type a new value into <b className="text-slate-400">Book</b> above
+          and Draft/Add rows as usual — a Book value this manifest hasn't used before always starts a brand-new draft, never edits this one.
+        </p>
+      )}
+      {/* Superseded manifests are history, never shown or editable anywhere
+          else on this screen (load() only ever picked draft/approved before
+          Delete needed to reach them too) — this is now the only place they
+          surface, purely so a genuine one-off cleanup (e.g. a superseded row
+          left over from a botched Revise) has somewhere to be deleted from. */}
+      {supersededRows.length > 0 && (
+        <div className="bg-slate-900/30 rounded-xl border border-white/8 p-3 space-y-2">
+          <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+            Superseded manifests for this book ({supersededRows.length})
+          </p>
+          <ul className="space-y-1.5">
+            {supersededRows.map((r) => (
+              <li key={r.id} className="flex items-center justify-between gap-2 text-xs text-slate-400 bg-slate-800/30 rounded-lg px-2.5 py-1.5">
+                <span>
+                  {r.entries?.length ?? 0} entries · superseded
+                  {r.approved_at ? `, was approved ${new Date(r.approved_at).toLocaleDateString()}` : ''}
+                </span>
+                <button onClick={() => openDeletePanel(r)} disabled={saving || deleting}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold bg-red-900/40 hover:bg-red-800/50 text-red-300 disabled:opacity-40">
+                  <Trash2 size={11} /> Delete
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {!row && !loading && subject ? (
         <div className="flex items-start gap-2 bg-slate-800/40 border border-white/8 rounded-xl p-3">
           <Info size={14} className="text-slate-500 mt-0.5 shrink-0" />
           <p className="text-xs text-slate-500">
@@ -609,6 +731,86 @@ export default function AdminChapterManifest() {
             </button>
             {!row && <span className="text-[11px] text-slate-500">Save the draft before it can be approved.</span>}
             {isApproved && <span className="text-[11px] text-emerald-400/80">Approved manifests are read-only here — use Revise above to create an editable copy.</span>}
+          </div>
+        </div>
+      )}
+
+      {/* ── Delete confirm panel ────────────────────────────────────────
+          A modal, not an inline banner like Approve's window.confirm — this
+          is stronger and slower on purpose: type-to-confirm the exact book
+          (or subject, when Book is blank) name, plus an extra acknowledgement
+          checkbox gating the button when the target is the live approved
+          manifest, since deleting that one blocks all uploads for the book
+          immediately with no fallback. */}
+      {delTarget && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-red-700/40 rounded-2xl p-5 max-w-md w-full space-y-3">
+            <div className="flex items-start gap-2">
+              <Trash2 size={16} className="text-red-400 mt-0.5 shrink-0" />
+              <div>
+                <h3 className="text-sm font-semibold text-red-300">Delete manifest</h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {delTarget.exam_type} {delTarget.subject}{delTarget.book ? ` — ${delTarget.book}` : ''} · status{' '}
+                  <b className="text-slate-300">{delTarget.status}</b> · {delTarget.entries?.length ?? 0} entries
+                </p>
+              </div>
+            </div>
+
+            {delChecking ? (
+              <p className="text-xs text-slate-500 flex items-center gap-1.5">
+                <Loader2 size={12} className="animate-spin" /> Checking for existing content…
+              </p>
+            ) : delCounts && (
+              (delCounts.kb > 0 || delCounts.sn > 0) ? (
+                <div className="bg-amber-900/20 border border-amber-700/25 rounded-lg p-2 text-xs">
+                  <p className="font-semibold flex items-center gap-1.5 text-amber-300">
+                    <AlertTriangle size={12} /> Existing content found
+                  </p>
+                  <ul className="mt-1 text-amber-300/90 list-disc pl-4 space-y-0.5">
+                    {delCounts.kb > 0 && (
+                      <li>knowledge_base: <b>{delCounts.kb}</b> row(s) matching this exact book.</li>
+                    )}
+                    {delCounts.kbErr && <li className="text-red-300">knowledge_base check failed: {delCounts.kbErr}</li>}
+                    {delCounts.sn > 0 && (
+                      <li>study_notes: <b>{delCounts.sn}</b> row(s) for this subject (approximate — study_notes has no book field, so this spans every book in the subject).</li>
+                    )}
+                    {delCounts.snErr && <li className="text-red-300">study_notes check failed: {delCounts.snErr}</li>}
+                  </ul>
+                  <p className="mt-1.5 text-amber-300/80">
+                    Deleting the manifest won't delete this content — but no new admin work on this book can happen until a new manifest is created and approved.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-emerald-400/80">No matching knowledge_base content found, and no study_notes rows for this subject.</p>
+              )
+            )}
+
+            {delTarget.status === 'approved' && (
+              <label className="flex items-start gap-2 bg-red-900/20 border border-red-700/25 rounded-lg p-2 text-xs text-red-300 cursor-pointer">
+                <input type="checkbox" checked={delAckApproved} onChange={(e) => setDelAckApproved(e.target.checked)}
+                  className="accent-red-500 mt-0.5" />
+                <span>I understand this is the ACTIVE approved manifest. Deleting it blocks ALL Study Notes uploads for this book immediately, with no fallback, until a new manifest is drafted and approved.</span>
+              </label>
+            )}
+
+            <div>
+              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide block mb-1">
+                Type "{delConfirmLabel}" to confirm
+              </label>
+              <input value={delTyped} onChange={(e) => setDelTyped(e.target.value)} autoFocus
+                className={`${inputCls} w-full`} />
+            </div>
+
+            <div className="flex items-center gap-2 justify-end pt-1">
+              <button onClick={closeDeletePanel} disabled={deleting}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40">
+                Cancel
+              </button>
+              <button onClick={handleDeleteConfirmed} disabled={!delReady || deleting}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-700 hover:bg-red-600 text-white disabled:opacity-40 disabled:cursor-not-allowed">
+                {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />} Delete permanently
+              </button>
+            </div>
           </div>
         </div>
       )}
