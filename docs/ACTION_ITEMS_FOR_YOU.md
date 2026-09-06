@@ -6,6 +6,25 @@ shipped in a degraded state. The narrative of what changed and why lives in
 
 ---
 
+## 🔧 OPEN, NOT URGENT — practice/paper generation has no progress feedback for a 30-120s wait (2026-09-06)
+
+**Found during a full student-journey QA pass** — see `docs/QA_TEST_SESSION_2026-09-06.md` for the
+whole session. The generation button's own promised time ("~15-25 sec") was fixed to state an
+honest range, but the underlying UX gap is still open: a student sees a single static spinner for
+what `answerVerification.js` itself documents as 52-119 seconds (more for larger papers), with no
+staged feedback ("Retrieving textbook content… → Writing questions… → Checking answers…"). The
+honest-copy fix (commit `d0d4d71`) is a bandage — it stops the wait from looking *broken*, but
+doesn't make a 1-2 minute silent wait feel any shorter. A real staged-progress UI is the actual fix,
+not scoped or built this session.
+
+**Also from the same session, not urgent**: `docs/PROJECT_STATUS.md` (2026-08-11) says CBSE has no
+Class 12 content and NEET/JEE Class 12 has zero textbook chunks — a live generation this session for
+CBSE Class 12 Physics retrieved 12 real knowledge-base chunks, so that inventory is at least
+partially stale. Not re-audited in full; worth a fresh content-inventory pass before relying on that
+doc's §3 numbers for a real decision.
+
+---
+
 ## 🔴 OPEN, URGENT — Live Supabase schema has drifted from `supabase/migrations/` (2026-08-21)
 
 **Found while investigating the new-signup auth-error incident.** Queried the linked production DB directly and confirmed `get_own_user`'s live definition already has a `parent_student_links` ownership check that does not exist in any committed migration. Whatever "tonight's production reset / RLS lockdown" work was — mentioned by the owner, not found in `git log` or `supabase/migrations/` — was applied straight to Supabase (SQL editor / dashboard), not through this repo.

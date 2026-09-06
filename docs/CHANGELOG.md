@@ -4,6 +4,25 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-09-06 — Full student-journey E2E test pass: 3 real bugs found and fixed, none deployed
+
+Owner asked for a complete, single-run functional pass "as a real student would use it," not another audit-and-plan cycle, plus a from-scratch look at why Search Console shows no indexing despite a submitted sitemap. Full detail, methodology, and a walkthrough for the next dev is in **`docs/QA_TEST_SESSION_2026-09-06.md`** — this entry is the short version. **Nothing in this session was deployed** — three commits landed locally on `main` (`9e7ac9d`, `d0d4d71`, `63993ec`), local build/tests verified, live site untouched.
+
+**How the real student flow was actually driven, not just read**: Playwright against `localhost:5173`, signing in through the real phone-OTP screen with the Firebase test number `+919633484641` (fixed OTP `123456` — already configured from a prior session; confirmed working) rather than a fabricated session, so every downstream Supabase call carries a genuine, JWT-verified identity. Real Google OAuth and the dev-only `?qa_uid=` bypass both turned out to be dead ends for automation — see the doc for why — which cost real time before landing on the phone-OTP path.
+
+**Bugs found and fixed:**
+1. **Broken avatar fallback** (`9e7ac9d`) — a Google-linked profile photo that fails to load (expired URL, ad-blocker, ORB — reproduced live) showed a permanently broken-image icon in TopHeader, Sidebar, ProfilePage, and LeaderboardPage instead of falling back to the initials avatar already built for "no photo at all." All four now track load failure and fall back the same way.
+2. **Misleading generation-time copy** (`d0d4d71`) — the practice-paper screen promised "~15-25 sec" (and "~30-60 seconds" for >30 questions); a real 10-question CBSE generation took ~60s end-to-end, matching `answerVerification.js`'s own documented 52-119s for 15 questions. Initially misdiagnosed this as a hung generator — it wasn't; every backend call returned 200 and quota incremented correctly, the UI had just fallen well behind its own promised time. Copy now states honest ranges.
+3. **Dead dev-testing bypass, undocumented** (`63993ec`) — `AuthContext.jsx`'s `?qa_uid=` bypass has been non-functional since the Firebase-JWT hardening shipped (real security behavior working as intended, not a regression), but its comment still claimed it worked, and following it cost real debugging time this session. Comment corrected in place; a working replacement (`auth.settings.appVerificationDisabledForTesting`, DEV-only, in `firebase/config.js`) plus `scripts/qa-set-test-phone.mjs` now gives real phone-OTP E2E testing with zero reCAPTCHA friction.
+
+**Search Console / indexing** — re-verified every documented technical fix live today: `robots.txt` correctly scoped, `sitemap.xml` live with the right 6 URLs, `/about/` (and by extension the other prerendered routes) serving its own distinct title/canonical, no stray `google-site-verification` conflicts found in `index.html`. **Nothing found to fix in code.** The prior session's own honest assessment (`docs/ACTION_ITEMS_FOR_YOU.md`, "the thing that actually caps rankings") still holds: a brand-new domain with 6 indexable pages, all technical blockers already closed, is expected to sit at near-zero visible search presence for days to weeks regardless of code quality — this is a Search Console data / content-strategy question, not something a repo change can answer. Owner should read Search Console's own **Pages** report (not reachable from here) for the actual per-URL status.
+
+**Not tested this session**: admin-portal feature depth (only confirmed `/admin/login` itself renders cleanly with no console errors — deep admin flows need real Google + 6-digit-passcode credentials, not available to automate here), a real (non-test-number) Google-account sign-in click-through, and payment/Razorpay flows (deliberately avoided touching anything that could move real money without being asked).
+
+Also: all 603 existing tests still pass, and `npm run build` succeeds clean, after every fix above.
+
+---
+
 ## 2026-09-04 — Deployed: "Delete manifest" + "Backup all data" (deploy 2026.09.04.1)
 
 Two asks in one message: a genuine hard-delete for `chapter_manifests` (separate from Revise, which never touches the old row), and a superadmin-only full-data export to a browser-downloaded zip. Plan and confirmation-flow design were shown and approved before building.
