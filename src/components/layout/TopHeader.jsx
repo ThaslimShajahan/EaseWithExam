@@ -21,6 +21,12 @@ export default function TopHeader({ mobile = false }) {
 
   const name   = userProfile?.display_name || currentUser?.displayName || 'Student';
   const avatar = userProfile?.photo_url    || currentUser?.photoURL;
+  // QA-EDIT-START (2026-09-06): a Google-linked photo URL can 404/expire/get
+  // blocked (ad-blocker, ORB, revoked share permission) — without this,
+  // that renders a permanently broken-image icon in the header nav instead
+  // of falling back to the initials avatar already built for "no photo".
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  // QA-EDIT-END
 
   const handleSignOut = async () => {
     await signOut();
@@ -72,8 +78,8 @@ export default function TopHeader({ mobile = false }) {
               onClick={() => setMenuOpen((v) => !v)}
               className="flex items-center gap-2 h-11 px-2 rounded-xl hover:bg-slate-100 transition-colors"
             >
-              {avatar ? (
-                <img src={avatar} alt={name} className="h-7 w-7 rounded-full object-cover" />
+              {avatar && !avatarFailed ? (
+                <img src={avatar} alt={name} className="h-7 w-7 rounded-full object-cover" onError={() => setAvatarFailed(true)} />
               ) : (
                 <div className="h-7 w-7 rounded-full bg-primary-600 flex items-center justify-center text-white text-xs font-bold">
                   {(name[0] || 'S').toUpperCase()}

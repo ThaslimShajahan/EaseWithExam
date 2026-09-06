@@ -147,6 +147,10 @@ function ReadOnlyField({ label, value, icon: Icon, hint }) {
 
 function ProfileHero({ avatar, name, email, editName, setEditName, nameVal, setNameVal, onSave }) {
   const initials = (nameVal || name || 'S')[0].toUpperCase();
+  // QA-EDIT-START (2026-09-06): broken-avatar fallback belongs here, not the
+  // parent — this is the component that actually renders the <img>.
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  // QA-EDIT-END
 
   return (
     <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary-900 via-primary-800 to-violet-800 text-white p-6">
@@ -161,8 +165,8 @@ function ProfileHero({ avatar, name, email, editName, setEditName, nameVal, setN
         <div className="shrink-0 relative">
           <div className="p-[3px] rounded-full bg-gradient-to-br from-amber-300 via-primary-300 to-violet-400 shadow-xl">
             <div className="p-[3px] rounded-full bg-gradient-to-br from-primary-700 to-primary-900">
-              {avatar ? (
-                <img src={avatar} alt={name} className="h-[84px] w-[84px] rounded-full object-cover" />
+              {avatar && !avatarFailed ? (
+                <img src={avatar} alt={name} className="h-[84px] w-[84px] rounded-full object-cover" onError={() => setAvatarFailed(true)} />
               ) : (
                 <div className="h-[84px] w-[84px] rounded-full bg-gradient-to-br from-primary-400 to-primary-700 flex items-center justify-center text-3xl font-bold text-white">
                   {initials}

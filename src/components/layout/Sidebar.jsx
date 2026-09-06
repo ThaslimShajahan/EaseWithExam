@@ -83,6 +83,9 @@ export default function Sidebar() {
   const avatar = userProfile?.photo_url || currentUser?.photoURL;
   const name   = userProfile?.display_name || currentUser?.displayName || 'Student';
   const exam   = userProfile?.target_exam;
+  // QA-EDIT-START (2026-09-06): same broken-avatar fallback as TopHeader.jsx.
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  // QA-EDIT-END
 
   return (
     <motion.aside
@@ -186,8 +189,8 @@ export default function Sidebar() {
           onClick={() => setOpen((v) => !v)}
           className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5 transition-colors group"
         >
-          {avatar ? (
-            <img src={avatar} alt={name} className="h-8 w-8 rounded-full object-cover shrink-0" />
+          {avatar && !avatarFailed ? (
+            <img src={avatar} alt={name} className="h-8 w-8 rounded-full object-cover shrink-0" onError={() => setAvatarFailed(true)} />
           ) : (
             <div className="h-8 w-8 rounded-full bg-primary-700 flex items-center justify-center text-white text-xs font-bold shrink-0">
               {(name[0] || 'S').toUpperCase()}

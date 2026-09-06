@@ -34,7 +34,20 @@ function MedalIcon({ rank }) {
 }
 
 function Avatar({ name, photoUrl, size = 36 }) {
-  if (photoUrl) return <img src={photoUrl} alt={name} className="rounded-full object-cover" style={{ width: size, height: size }} />;
+  // QA-EDIT-START (2026-09-06): fall back to the initials avatar if the
+  // photo URL fails to load, instead of a permanently broken-image icon —
+  // same fix as TopHeader/Sidebar/ProfilePage.
+  const [failed, setFailed] = useState(false);
+  if (photoUrl && !failed) {
+    return (
+      <img
+        src={photoUrl} alt={name} className="rounded-full object-cover"
+        style={{ width: size, height: size }}
+        onError={() => setFailed(true)}
+      />
+    );
+  }
+  // QA-EDIT-END
   return (
     <div className="rounded-full bg-primary-700 flex items-center justify-center text-white font-bold shrink-0"
       style={{ width: size, height: size, fontSize: size * 0.35 }}>
