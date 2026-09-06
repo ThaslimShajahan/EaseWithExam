@@ -101,12 +101,27 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     // ── QA-only auth bypass ──────────────────────────────────────────
-    // Google OAuth can't be driven headlessly, so there was no way to do a
-    // real click-through test of authenticated screens. Gated on
-    // import.meta.env.DEV, which Vite resolves to a static `false` in
-    // production builds — this whole branch is dead-code-eliminated and
-    // never ships. Visit /auth?qa_uid=some-id in `npm run dev` to sign in
-    // as that fake uid (auto-creates a `users` row on first use).
+    // QA-EDIT-START (2026-09-06) — flagging this dead, not fixing it here.
+    // BROKEN since the Firebase-JWT hardening described in supabase.js
+    // (`currentFirebaseIdToken`/`auth.jwt() ->> 'sub'`) shipped: this branch
+    // only ever fakes the REACT state below, it never calls a real Firebase
+    // sign-in method, so the real `auth.currentUser` (firebase/config.js)
+    // stays null. Every Supabase RPC below — upsert_own_user included —
+    // now requires a proven Firebase JWT whose `sub` matches the uid being
+    // acted on, so with no real token this 401s immediately on first use.
+    // That's the hardening working as intended, not a bug to route around;
+    // do NOT "fix" this by accepting an unverified uid again. For a real
+    // authenticated click-through instead, sign in via the phone-OTP form
+    // with a Firebase Console-registered test number (see
+    // scripts/qa-set-test-phone.mjs) — auth.settings
+    // .appVerificationDisabledForTesting is set for DEV builds in
+    // firebase/config.js so the real OTP flow runs with no reCAPTCHA.
+    // QA-EDIT-END
+    // Original comment, kept for history: "Google OAuth can't be driven
+    // headlessly, so there was no way to do a real click-through test of
+    // authenticated screens." Gated on import.meta.env.DEV, which Vite
+    // resolves to a static `false` in production builds — this whole
+    // branch is dead-code-eliminated and never ships.
     if (QA_BYPASS_UID) {
       const qaUid = QA_BYPASS_UID;
       const fakeUser = { uid: qaUid, email: `${qaUid}@qa.local`, displayName: 'QA Tester', photoURL: null };

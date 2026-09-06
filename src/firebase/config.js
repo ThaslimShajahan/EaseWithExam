@@ -16,6 +16,23 @@ const firebaseConfig = {
 export const app  = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
+// QA-EDIT-START (2026-09-06, student E2E test pass) ---------------------
+// Firebase's own officially-documented mechanism for testing phone-OTP
+// sign-in without solving reCAPTCHA: paired with a "test phone number"
+// registered in the Firebase Console (Authentication → Sign-in method →
+// Phone), it accepts that number's fixed OTP with zero reCAPTCHA
+// involvement. Needed because reCAPTCHA correctly flags ANY
+// automation-controlled Chromium (Playwright/Puppeteer) regardless of
+// headless mode, so the real phone-login screen could not otherwise be
+// driven end-to-end at all. Gated on import.meta.env.DEV, which Vite
+// resolves to a static `false` in production builds — same dead-code-
+// elimination guarantee as the QA_BYPASS_UID flag in AuthContext.jsx,
+// so this line never ships and never weakens production reCAPTCHA.
+if (import.meta.env.DEV) {
+  auth.settings.appVerificationDisabledForTesting = true;
+}
+// QA-EDIT-END -------------------------------------------------------------
+
 // Admin Portal uses a SEPARATE named Firebase app instance (same project/config,
 // different Auth session) so signing in as an admin never touches the student
 // session on `auth` above. Without this, admin + student shared one Auth
