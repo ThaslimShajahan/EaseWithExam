@@ -1066,9 +1066,15 @@ export default function PracticeGeneratorPage({ embedded = false }) {
                   <div className="flex flex-wrap gap-2">
                     {COUNTS.map((n) => <Chip key={n} label={String(n)} selected={count === n} onClick={() => setCount(n)} />)}
                   </div>
+                  {/* QA-EDIT-START (2026-09-06): was "~30-60 seconds" — understated by
+                      the same measurement as the line below (52-119s measured for just
+                      15 questions, per answerVerification.js), and this warning only
+                      shows for MORE questions than that, so it needs to read higher, not
+                      lower, than the general-case line. */}
                   {count > 30 && (
-                    <p className="text-[10px] text-amber-600 mt-1.5">Larger sets take ~30–60 seconds to generate</p>
+                    <p className="text-[10px] text-amber-600 mt-1.5">Larger sets can take 1–3 minutes to generate</p>
                   )}
+                  {/* QA-EDIT-END */}
                 </div>
                 {genError && (
                   <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-600">{genError}</div>
@@ -1079,7 +1085,14 @@ export default function PracticeGeneratorPage({ embedded = false }) {
                     ? <><Loader2 size={18} className="animate-spin" /> Generating {count} questions…</>
                     : <><Sparkles size={18} /> Generate Questions</>}
                 </button>
-                <p className="text-[10px] text-slate-400 text-center">Follows real {getExamLabel(examType)} paper pattern · equations rendered in LaTeX · ~15–25 sec</p>
+                {/* QA-EDIT-START (2026-09-06): was a static "~15-25 sec" — real, verified
+                    end-to-end latency (generation + the per-question answer-verification
+                    pass) is 52-119s for 15 questions per answerVerification.js's own
+                    comment, confirmed live here too (a 10-question CBSE paper took ~60s).
+                    The old copy made a genuinely-working generation look hung well before
+                    it could finish. */}
+                <p className="text-[10px] text-slate-400 text-center">Follows real {getExamLabel(examType)} paper pattern · equations rendered in LaTeX · usually 30–90 sec, longer for bigger papers</p>
+                {/* QA-EDIT-END */}
               </ConfigForm>
             </motion.div>
           )}
