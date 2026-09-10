@@ -275,3 +275,78 @@ describe('validateManifest — isUnit containers (Unit -> Chapter structure)', (
     expect(inferFileStructure(wingsOfHope)).toBe('per_chapter');
   });
 });
+
+/* ── PERMANENT FIXTURE: the real Kerala State English Class 8 manifest ──
+ *
+ * The 7-test isUnit suite above shipped without ever running against this
+ * book's real shape and missed a second bug: every unit heading here comes
+ * back `numbered: false` (a Unit heading has no printed CHAPTER number,
+ * which reads just as naturally as "not numbered in the sequence" as an
+ * interleaved poem does — see manifestExtraction.js's `numbered` prompt
+ * text), and validateManifest branched on `numbered` BEFORE `isUnit`, so
+ * every one of "Unit I"/"Unit II"/"Unit III" fell into the INTERLEAVED
+ * branch and was required to sit inside a single leaf chapter's range —
+ * impossible for a heading spanning several chapters — producing
+ * `interleaved "Unit ..." sits inside no numbered chapter` on the heading
+ * itself. Fixed by making `isUnit` override `numbered` everywhere it's
+ * read, not by special-casing this manifest.
+ *
+ * Titles/pages below are a structural reconstruction (3 units, `numbered:
+ * false` on each heading, ordinal 11 "The Astronomer" carrying a
+ * genuinely half-filled page range) matching what was reported from the
+ * live admin screen, not a byte-exact export of the book's own contents
+ * page — true up the exact titles/pages here if the real manifest JSON
+ * ever gets exported from the admin UI. What matters for regression
+ * purposes is the SHAPE: isUnit + numbered:false containers, each
+ * spanning multiple real chapters, in a `combined` file-structure book. */
+describe('validateManifest — Kerala State English Class 8 (permanent regression fixture)', () => {
+  const keralaEnglish8 = [
+    { ordinal: 1, title: 'Unit I', unit: null, pageStart: 1, pageEnd: 40, numbered: false, isUnit: true, printedNumber: null, fileOrdinal: null },
+    { ordinal: 2, title: 'Chapter placeholder 1A', unit: 'Unit I', pageStart: 3, pageEnd: 20, numbered: true, printedNumber: 1, fileOrdinal: 1 },
+    { ordinal: 3, title: 'Chapter placeholder 1B', unit: 'Unit I', pageStart: 21, pageEnd: 40, numbered: true, printedNumber: 2, fileOrdinal: 1 },
+    { ordinal: 4, title: 'Unit II', unit: null, pageStart: 41, pageEnd: 72, numbered: false, isUnit: true, printedNumber: null, fileOrdinal: null },
+    { ordinal: 5, title: 'Hope is the Thing with Feathers', unit: 'Unit II', pageStart: 43, pageEnd: 46, numbered: true, printedNumber: 1, fileOrdinal: 2 },
+    { ordinal: 6, title: 'The Path of the Rain', unit: 'Unit II', pageStart: 50, pageEnd: 72, numbered: true, printedNumber: 2, fileOrdinal: 2 },
+    { ordinal: 7, title: 'Unit III', unit: null, pageStart: 73, pageEnd: 120, numbered: false, isUnit: true, printedNumber: null, fileOrdinal: null },
+    { ordinal: 8, title: 'Chapter placeholder 3A', unit: 'Unit III', pageStart: 75, pageEnd: 90, numbered: true, printedNumber: 1, fileOrdinal: 3 },
+    { ordinal: 9, title: 'Chapter placeholder 3B', unit: 'Unit III', pageStart: 91, pageEnd: 100, numbered: true, printedNumber: 2, fileOrdinal: 3 },
+    { ordinal: 10, title: 'Chapter placeholder 3C', unit: 'Unit III', pageStart: 101, pageEnd: 115, numbered: true, printedNumber: 3, fileOrdinal: 3 },
+    { ordinal: 11, title: 'The Astronomer', unit: 'Unit III', pageStart: 116, pageEnd: null, numbered: true, printedNumber: 4, fileOrdinal: 3 },
+  ];
+
+  it('the ONLY error on the real manifest is entry 11\'s genuinely half-filled page range — not one false "interleaved ... sits inside no numbered chapter" on Unit I/II/III', () => {
+    const r = validateManifest(keralaEnglish8, 'combined');
+    expect(r.ok).toBe(false);
+    expect(r.errors).toHaveLength(1);
+    expect(r.errors[0]).toMatch(/pageStart and pageEnd must be integers/);
+    expect(r.errors.join(' ')).not.toMatch(/sits inside no numbered chapter/);
+  });
+
+  it('passes cleanly once "The Astronomer"\'s real pageEnd is filled in — confirming the fix, not the missing page number, was the blocker', () => {
+    const fixed = keralaEnglish8.map((e) => (e.ordinal === 11 ? { ...e, pageEnd: 120 } : e));
+    expect(validateManifest(fixed, 'combined')).toEqual({ ok: true, errors: [] });
+  });
+
+  it('reproduces the exact previously-broken combination directly: isUnit true + numbered false must never be read as interleaved', () => {
+    // A unit with only ONE child whose range happens to exactly equal the
+    // unit's own range would pass even under the old, broken code (the
+    // interleaved "host" check degenerates to true when the "host" and the
+    // thing needing a host cover identical pages) — that shape proves
+    // nothing. This needs at least two children, so no single leaf's range
+    // could ever contain the whole unit's range, which is the actual failure
+    // mode reported live: confirmed by running this exact object against
+    // commit 52cdcd6's chapterManifest.js directly, which produced
+    // `interleaved "Unit I" pp1-40 sits inside no numbered chapter`.
+    const unitOnly = [
+      { ordinal: 1, title: 'Unit I', pageStart: 1, pageEnd: 40, numbered: false, isUnit: true },
+      { ordinal: 2, title: 'Ch A', unit: 'Unit I', pageStart: 1, pageEnd: 20, numbered: true, printedNumber: 1, fileOrdinal: 1 },
+      { ordinal: 3, title: 'Ch B', unit: 'Unit I', pageStart: 21, pageEnd: 40, numbered: true, printedNumber: 2, fileOrdinal: 1 },
+    ];
+    expect(validateManifest(unitOnly, 'combined')).toEqual({ ok: true, errors: [] });
+  });
+
+  it('candidatesForFile: a Unit container with numbered:false is still never offered as an interleaved candidate, even when its whole range sits inside one file\'s span (the combined-book shape where one PDF IS a whole unit)', () => {
+    const c = candidatesForFile(keralaEnglish8, null, [41, 72]);
+    expect(c.map((e) => e.title)).not.toContain('Unit II');
+  });
+});

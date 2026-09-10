@@ -85,7 +85,10 @@ export function validateManifest(entries, fileStructure = null) {
     if (!isInt(e?.ordinal) || e.ordinal < 1) errors.push(`${at}: ordinal must be a positive integer`);
     if (!String(e?.title ?? '').trim()) errors.push(`${at}: title is required`);
 
-    const pagesOptionalHere = fileStructure === 'per_chapter' && e?.numbered !== false;
+    // `isUnit` reads as "not interleaved" here too, same as everywhere else
+    // in this function — a container's own `numbered` field is never trusted
+    // on its own (see the isUnit-before-numbered branch below for why).
+    const pagesOptionalHere = fileStructure === 'per_chapter' && (e?.isUnit === true || e?.numbered !== false);
     if (pagesOptionalHere) {
       // Still internally consistent when given: a half-filled range or a
       // backwards one is a real typo even if page numbers aren't required.
@@ -112,10 +115,27 @@ export function validateManifest(entries, fileStructure = null) {
       else seenOrdinal.set(e.ordinal, e.title);
     }
 
-    // A numbered entry is one a file maps onto, so it needs the binding that
-    // makes corroboration possible. An interleaved one has neither by
-    // definition, and claiming either would be a false signal.
-    if (e?.numbered === false) {
+    // `isUnit` is checked FIRST, before `numbered`, and deliberately does not
+    // care what `numbered` says. A real contents page's own wording for a Unit
+    // heading ("false ONLY for something explicitly listed but NOT numbered in
+    // the sequence" — see manifestExtraction.js's prompt for `numbered`) reads
+    // just as naturally as false for a Unit heading as it does for an
+    // interleaved poem, since a Unit heading has no printed CHAPTER number
+    // either. Branching on `numbered` before `isUnit` here previously routed
+    // a `{isUnit: true, numbered: false}` row into the INTERLEAVED branch
+    // below, which then demanded a single leaf chapter's range fully contain
+    // it — impossible for a heading that spans several chapters — producing
+    // "interleaved ... sits inside no numbered chapter" on the heading itself.
+    // A unit container is never interleaved, full stop, regardless of its own
+    // `numbered` field; that field is simply not read for an `isUnit` row.
+    if (e?.isUnit === true) {
+      numbered.push(e);
+      if (e.printedNumber != null) errors.push(`${at}: a unit row has no printed chapter number of its own`);
+      if (e.fileOrdinal != null) errors.push(`${at}: a unit row has no file of its own`);
+    } else if (e?.numbered === false) {
+      // A numbered entry is one a file maps onto, so it needs the binding that
+      // makes corroboration possible. An interleaved one has neither by
+      // definition, and claiming either would be a false signal.
       if (e.printedNumber != null) errors.push(`${at}: interleaved entries have no printed chapter number`);
       if (e.fileOrdinal != null) errors.push(`${at}: interleaved entries have no file of their own`);
     } else {
@@ -186,8 +206,12 @@ export function validateManifest(entries, fileStructure = null) {
   // An interleaved entry with no leaf-chapter host is unreachable: nothing
   // will ever supply a file whose span contains it, so it would sit in the
   // manifest forever and never receive content. A unit container can never
-  // be the host — it spans multiple files, not one.
+  // be the host, NOR can it ever BE the interleaved entry needing one — it
+  // spans multiple chapters by definition, so no single leaf could ever
+  // contain it. Checked (and skipped) before the `numbered` read below,
+  // regardless of what a container's own `numbered` field happens to say.
   for (const e of entries) {
+    if (e?.isUnit === true) continue;
     if (e?.numbered !== false || !isInt(e.pageStart)) continue;
     const host = leaves.some((n) => isInt(n.pageStart) && e.pageStart >= n.pageStart && e.pageEnd <= n.pageEnd);
     if (!host) errors.push(`interleaved "${e.title}" pp${e.pageStart}-${e.pageEnd} sits inside no numbered chapter — nothing will ever load it`);
@@ -202,8 +226,14 @@ export function validateManifest(entries, fileStructure = null) {
  *  worth of chapters, not one file's worth of content. */
 export function candidatesForFile(entries, fileOrdinal, filePageRange) {
   const own = entries.filter((e) => e.numbered !== false && e.isUnit !== true && e.fileOrdinal === fileOrdinal);
+  // `e.isUnit !== true` here too: for a 'combined' book, one file can BE an
+  // entire unit's worth of pages, so a container's own (huge) range can
+  // legitimately fall entirely inside a single file's span — the same shape
+  // as a real interleaved entry, but a container must never be offered as
+  // one (see validateManifest's isUnit-before-numbered note for why its own
+  // `numbered` field cannot be trusted to already exclude it).
   const inside = filePageRange
-    ? entries.filter((e) => e.numbered === false
+    ? entries.filter((e) => e.numbered === false && e.isUnit !== true
         && e.pageStart >= filePageRange[0] && e.pageEnd <= filePageRange[1])
     : [];
   return [...own, ...inside];

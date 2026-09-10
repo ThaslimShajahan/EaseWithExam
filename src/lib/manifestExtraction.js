@@ -41,6 +41,9 @@ Return JSON: { "entries": [ { "ordinal", "title", "unit", "pageStart", "pageEnd"
   (1, 2, 3...). false ONLY for something explicitly listed but NOT numbered in
   the sequence — an unnumbered poem inside a numbered prose section is the
   textbook example. If you are not looking at that exact situation, use true.
+  ALWAYS true for a Unit/Theme heading row (isUnit true below), even though a
+  heading has no chapter number of its own either — it is a different kind of
+  entry from an interleaved poem, not the same kind with the number missing.
 - printedNumber: the number actually printed next to this entry (a section can
   restart at 1 partway through a book — Hornbill's Writing Skills does exactly
   this after 8 numbered Reading Skills chapters). null if numbered is false.
@@ -136,8 +139,14 @@ export async function draftManifestFromContentsPage(arrayBuffer, ctx = {}) {
 function normaliseEntries(entries) {
   if (!Array.isArray(entries)) return [];
   return entries.map((e) => {
-    const numbered = e?.numbered !== false;
     const isUnit = e?.isUnit === true;
+    // A unit heading is never interleaved, regardless of what the model (or
+    // hand-edited JSON) sent for `numbered` — see chapterManifest.js's
+    // validateManifest for why trusting that field for an isUnit row is
+    // exactly the bug this normalises away at the source, before it can ever
+    // reach the DB. `numbered: false` only ever means "interleaved" from here
+    // on; `isUnit: true` fully overrides it to true.
+    const numbered = isUnit ? true : e?.numbered !== false;
     const printedNumber = numbered && !isUnit
       ? (Number.isFinite(Number(e?.printedNumber)) ? Math.trunc(Number(e.printedNumber)) : null)
       : null;

@@ -45,9 +45,16 @@ const RENDER_MAX_EDGE = 1600;
 
 /** JPEG for the vision payload: a 2x A4 PNG is 1.5-3MB and base64 adds another
  *  third on top, per page, through an edge function. q0.85 lands ~150-350KB
- *  with no measurable OCR cost. Figure images stay PNG — they're line art,
- *  where JPEG ringing actually shows. */
+ *  with no measurable OCR cost. */
 const PAGE_JPEG_QUALITY = 0.85;
+
+/** Figures uploaded to storage (not the vision payload above) target WebP in
+ *  this size band. The bucket was blowing past its free-tier limit on
+ *  full-resolution PNG figure uploads (~557KB average, many 1.5-3MB) — WebP
+ *  at these qualities holds line art and scanned-page detail while landing
+ *  in the 150-300KB band the same content hit as lossless PNG at 5-10x. */
+const FIGURE_MAX_BYTES = 300 * 1024;
+const FIGURE_QUALITY_STEPS = [0.82, 0.7, 0.55, 0.4];
 
 /**
  * Whether to crop a figure out of the page using the bounding box the vision
@@ -220,20 +227,74 @@ function canvasToBlob(canvas, type = 'image/png', quality) {
 
 const slug = (s) => (s || 'misc').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'misc';
 
+/** Re-encodes a page/figure canvas as WebP, stepping quality down until the
+ *  blob fits FIGURE_MAX_BYTES or the quality floor is reached. Whatever the
+ *  browser actually produced wins — some browsers silently fall back to PNG
+ *  for an unsupported requested type, and blob.type (not the request) is what
+ *  the caller trusts for extension/content-type. */
+async function compressFigureCanvas(canvas) {
+  let best = null;
+  for (const quality of FIGURE_QUALITY_STEPS) {
+    let blob;
+    try {
+      blob = await canvasToBlob(canvas, 'image/webp', quality);
+    } catch {
+      continue;
+    }
+    best = blob;
+    if (blob.size <= FIGURE_MAX_BYTES) break;
+  }
+  return best;
+}
+
+async function sha256Hex(blob) {
+  const buf = await blob.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+const EXT_FOR_TYPE = { 'image/webp': 'webp', 'image/jpeg': 'jpg', 'image/png': 'png' };
+
 /**
- * Uploads a cropped figure to the existing public `question-papers` bucket
- * (same bucket the manual per-question diagram upload already uses).
- * Returns a public URL, or null — a figure that fails to upload must never take
- * the whole ingestion down with it.
+ * Compresses and uploads a figure/page canvas to the existing public
+ * `question-papers` bucket (same bucket the manual per-question diagram
+ * upload already uses). Returns a public URL, or null — a figure that fails
+ * to upload must never take the whole ingestion down with it.
+ *
+ * The object name is the content hash, not a timestamp: retried or repeated
+ * extraction runs that render the same page/figure again land on the exact
+ * same storage path instead of piling up near-identical objects (the actual
+ * cause of the mathematics/chapter-3-style duplicate clusters — same bytes,
+ * minutes apart, under a timestamp name that could never collide).
  */
-export async function uploadFigure(blob, { subject, chapter } = {}) {
+export async function uploadFigure(canvas, { subject, chapter } = {}) {
   try {
-    const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
-    const path = `figures/${slug(subject)}/${slug(chapter)}/${name}`;
-    const { error } = await supabase.storage
-      .from('question-papers')
-      .upload(path, blob, { upsert: true, contentType: 'image/png' });
-    if (error) return null;
+    const blob = await compressFigureCanvas(canvas);
+    if (!blob) return null;
+
+    const ext = EXT_FOR_TYPE[blob.type] || 'png';
+    const hash = await sha256Hex(blob);
+    const folder = `figures/${slug(subject)}/${slug(chapter)}`;
+    const path = `${folder}/${hash}.${ext}`;
+
+    // Cheap existence check before spending upload bandwidth on bytes the
+    // bucket already has. Best-effort: if list() itself fails, fall through
+    // to upload — upsert + the content-addressed path make that idempotent.
+    let alreadyExists = false;
+    try {
+      const { data: existing } = await supabase.storage
+        .from('question-papers')
+        .list(folder, { search: `${hash}.${ext}` });
+      alreadyExists = !!existing?.some((f) => f.name === `${hash}.${ext}`);
+    } catch { /* fall through to upload */ }
+
+    if (!alreadyExists) {
+      const { error } = await supabase.storage
+        .from('question-papers')
+        .upload(path, blob, { upsert: true, contentType: blob.type });
+      if (error) return null;
+    }
+
     const { data } = supabase.storage.from('question-papers').getPublicUrl(path);
     return data?.publicUrl ?? null;
   } catch {
@@ -506,8 +567,7 @@ export async function extractPagesWithVision(arrayBuffer, ctx = {}, {
     let pageImageUrl = null;
     if (result.figures.length) {
       try {
-        const blob = await canvasToBlob(pageCanvas, 'image/png');
-        pageImageUrl = blob ? await uploadFigure(blob, { subject: ctx.subject, chapter: ctx.chapter }) : null;
+        pageImageUrl = await uploadFigure(pageCanvas, { subject: ctx.subject, chapter: ctx.chapter });
       } catch { pageImageUrl = null; }
     }
 
@@ -518,8 +578,7 @@ export async function extractPagesWithVision(arrayBuffer, ctx = {}, {
 
       if (CROP_FROM_MODEL_BBOX && structurallyOk) {
         try {
-          const blob = await canvasToBlob(cropCanvas(pageCanvas, fig.bbox), 'image/png');
-          const cropUrl = blob ? await uploadFigure(blob, { subject: ctx.subject, chapter: ctx.chapter }) : null;
+          const cropUrl = await uploadFigure(cropCanvas(pageCanvas, fig.bbox), { subject: ctx.subject, chapter: ctx.chapter });
           if (cropUrl) { url = cropUrl; cropped = true; }
         } catch { /* fall back to the page image */ }
       }

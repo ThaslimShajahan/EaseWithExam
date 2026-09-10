@@ -197,21 +197,31 @@ if (ENQUEUE) {
   process.exit(failed > 0 ? 1 : 0);
 }
 
-/* ── Shared: manifest lookup + validation for one (exam, subject, book). ── */
+/* ── Shared: manifest lookup + validation for one (exam, subject, book).
+ * Same `.maybeSingle()`-without-status-filter bug already found and fixed
+ * in AdminChapterManifest.jsx's load() and AdminContentIntake.jsx's
+ * manifestRow lookup (a book mid-revision, or one revised and re-approved
+ * once, briefly or permanently has BOTH a live approved row and a draft or
+ * superseded sibling — superseded rows are kept, never deleted). Third
+ * occurrence of the same shape in one night; matches those two exactly:
+ * excludes `superseded`, picks `approved` over `draft` in JS rather than
+ * trusting the DB to return exactly one row. ── */
 async function loadManifest(exam, subject, book) {
   return page.evaluate(async ({ exam, subject, book }) => {
     const { supabase } = await import('/src/lib/supabase.js');
     const { validateManifest } = await import('/src/lib/chapterManifest.js');
     let q = supabase.from('chapter_manifests').select('id, status, entries, book, key_prefix, file_structure')
-      .eq('exam_type', exam).eq('subject', subject);
+      .eq('exam_type', exam).eq('subject', subject).in('status', ['draft', 'approved']);
     q = book ? q.eq('book', book) : q.is('book', null);
-    const { data, error } = await q.maybeSingle();
+    const { data, error } = await q;
     if (error) return { error: error.message };
-    if (!data)  return { error: 'no manifest found for this exam/subject/book' };
-    if (data.status !== 'approved') return { error: `manifest is '${data.status}', not approved` };
-    const v = validateManifest(data.entries, data.file_structure);
+    const rows = data ?? [];
+    const picked = rows.find((r) => r.status === 'approved') ?? rows.find((r) => r.status === 'draft') ?? null;
+    if (!picked) return { error: 'no manifest found for this exam/subject/book' };
+    if (picked.status !== 'approved') return { error: `manifest is '${picked.status}', not approved` };
+    const v = validateManifest(picked.entries, picked.file_structure);
     if (!v.ok) return { error: `approved manifest failed validation: ${v.errors.join('; ')}` };
-    return { entries: data.entries, keyPrefix: data.key_prefix ?? 'c', fileStructure: data.file_structure ?? 'combined' };
+    return { entries: picked.entries, keyPrefix: picked.key_prefix ?? 'c', fileStructure: picked.file_structure ?? 'combined' };
   }, { exam, subject, book });
 }
 
@@ -229,10 +239,14 @@ async function processOneFile({ url, filename, exam, subject, classLevel, book, 
       import('/src/lib/supabase.js'),
     ]);
 
+    // Same superseded-sibling shape as loadManifest() above — a second,
+    // independent query against the same table needs the same fix.
     let q = supabase.from('chapter_manifests').select('id, status, entries, book, file_structure')
-      .eq('exam_type', exam).eq('subject', subject);
+      .eq('exam_type', exam).eq('subject', subject).in('status', ['draft', 'approved']);
     q = book ? q.eq('book', book) : q.is('book', null);
-    const { data: manifestRow } = await q.maybeSingle();
+    const { data: manifestRows } = await q;
+    const manifestRow = (manifestRows ?? []).find((r) => r.status === 'approved')
+      ?? (manifestRows ?? []).find((r) => r.status === 'draft') ?? null;
 
     const buf = await (await fetch(url)).arrayBuffer();
 
