@@ -43,6 +43,19 @@
  * NEVER SEES THE KEY. The prompt carries the question and options only. Showing
  * the model the stored answer turns independent re-solving into agreement bias,
  * which would report a clean rate that isn't real.
+ *
+ * EXTENDED 2026-09-11: everything above measured a DIFFERENT bug class — "is
+ * the keyed option itself correct". A real report ("which of these is a
+ * perfect square? 64, 50, 72, 81" keyed only 64, but 81 is also one) exposed
+ * that the original single-derived-answer design structurally cannot catch a
+ * question with MORE THAN ONE valid option: re-solving "is 64 a perfect
+ * square" correctly agrees with the key and never looks at 81 at all. The
+ * verifier now asks the model to list every option it derives as correct,
+ * not just one (see buildPrompt/verifyOne) — >1 letters back is flagged the
+ * same way a wrong key is. The deterministic sibling of this fix
+ * (ambiguousOptionsReason in questionGen.js) covers the same failure mode
+ * for free on a handful of mechanically-checkable categories; this is the
+ * fallback for everything that isn't mechanically checkable.
  */
 
 import { chatComplete } from './aiProxy';
@@ -128,6 +141,8 @@ const SYSTEM = `You are a meticulous exam marker. Solve the question yourself, f
 
 Do not try to guess what an answer key might say. If your working leads to a value that is not among the options, say so — that is useful information, not a failure.
 
+For multiple-choice questions, check EVERY option against the question, not just the one that seems intended — some questions have more than one option that technically satisfies what's asked, and reporting only the "expected" one would hide that.
+
 Return ONLY valid JSON.`;
 
 function buildPrompt(q) {
@@ -141,7 +156,8 @@ function buildPrompt(q) {
 Question: ${q.question}${optionBlock}
 ${isNumerical
     ? `Return JSON: {"answer": "<the final numeric value, with unit if any>", "confidence": "high" | "low"}`
-    : `Return JSON: {"answer": "<the single letter of the option you derived>", "none_match": <true if your derived answer matches NO option>, "confidence": "high" | "low"}`}
+    : `List EVERY option that correctly answers the question — not just one. A well-written question has exactly one, but some do not; report what you actually find, not what you expect to find.
+Return JSON: {"correct_letters": ["<letter>", ...one per option you derived as correct, empty array if none], "confidence": "high" | "low"}`}
 
 Keep any reasoning out of the JSON. Answer only.`;
 }
@@ -171,12 +187,12 @@ export async function verifyOne(q, { signal, model = MODEL } = {}) {
     if (!raw) return { status: 'error', reason: 'empty verifier response' };
 
     const parsed = JSON.parse(raw);
-    const answer = parsed?.answer;
-    if (answer == null || String(answer).trim() === '') {
-      return { status: 'error', reason: 'verifier returned no answer' };
-    }
 
     if (q.type === 'Numerical') {
+      const answer = parsed?.answer;
+      if (answer == null || String(answer).trim() === '') {
+        return { status: 'error', reason: 'verifier returned no answer' };
+      }
       const agrees = numericAgrees(answer, q.correctAnswer);
       // null = neither side yielded a number, so there is nothing to compare.
       if (agrees === null) return { status: 'skipped' };
@@ -189,24 +205,53 @@ export async function verifyOne(q, { signal, model = MODEL } = {}) {
           };
     }
 
-    // MCQ: compare option letters.
-    const letter = String(answer).trim().toUpperCase().replace(/^[([{\s]+/, '').charAt(0);
-    const idx = LETTERS.indexOf(letter);
-    if (idx === -1) return { status: 'error', reason: `unparseable verifier answer ${JSON.stringify(answer)}` };
+    // MCQ: the verifier reports EVERY option it derived as correct, not just
+    // one — this is what catches a question with more than one valid option
+    // (e.g. "which is a perfect square? 64, 50, 72, 81" keyed only 64, when
+    // 81 is also one), which comparing a single derived answer against the
+    // key can never see: that comparison only asks "is the key right", never
+    // "is it the ONLY right one".
+    const rawLetters = Array.isArray(parsed?.correct_letters) ? parsed.correct_letters : null;
+    if (!rawLetters) return { status: 'error', reason: `unparseable verifier response ${JSON.stringify(parsed).slice(0, 120)}` };
 
-    if (parsed?.none_match === true) {
+    const idxs = [...new Set(
+      rawLetters
+        .map((l) => String(l).trim().toUpperCase().replace(/^[([{\s]+/, '').charAt(0))
+        .map((l) => LETTERS.indexOf(l))
+        .filter((i) => i !== -1),
+    )];
+
+    // A non-empty array that yielded no valid letters is a parsing failure
+    // (fail open, like any other malformed response) — distinct from the
+    // model EXPLICITLY returning [], which is a real "nothing matches" verdict.
+    if (rawLetters.length > 0 && idxs.length === 0) {
+      return { status: 'error', reason: `unparseable verifier letters ${JSON.stringify(rawLetters).slice(0, 120)}` };
+    }
+
+    if (!idxs.length) {
       return {
         status: 'disagree',
-        modelAnswer: letter,
-        reason: `verifier derived an answer matching no option (closest ${letter}, key ${LETTERS[q.correctOption]})`,
+        modelAnswer: null,
+        reason: `verifier found no option that correctly answers the question (key says ${LETTERS[q.correctOption]})`,
       };
     }
-    if (idx === q.correctOption) return { status: 'agree', modelAnswer: letter };
+
+    if (idxs.length > 1) {
+      const letters = idxs.map((i) => LETTERS[i]).sort().join(', ');
+      return {
+        status: 'disagree',
+        modelAnswer: letters,
+        reason: `verifier found multiple options that correctly answer the question (${letters}; key says ${LETTERS[q.correctOption]})`,
+      };
+    }
+
+    const [idx] = idxs;
+    if (idx === q.correctOption) return { status: 'agree', modelAnswer: LETTERS[idx] };
 
     return {
       status: 'disagree',
-      modelAnswer: letter,
-      reason: `verifier chose ${letter}, key says ${LETTERS[q.correctOption]}`,
+      modelAnswer: LETTERS[idx],
+      reason: `verifier chose ${LETTERS[idx]}, key says ${LETTERS[q.correctOption]}`,
     };
   } catch (e) {
     // Navigated away — stop the whole run rather than verifying into the void.

@@ -26,7 +26,7 @@ vi.mock('../syllabus', () => ({
   getChapters: vi.fn().mockResolvedValue([]),
 }));
 
-import { PAPER_PATTERNS, toEngineFormat } from '../questionGen';
+import { PAPER_PATTERNS, toEngineFormat, ambiguousOptionsReason } from '../questionGen';
 import { getExamPattern } from '../examPattern';
 
 // questionGen.js and examPattern.js import from each other (examPattern reads
@@ -98,5 +98,97 @@ describe('toEngineFormat — figures', () => {
     );
     expect(q.image_url).toBe('https://cdn.example/bond.png');
     expect(q.options).toBeNull();
+  });
+});
+
+/* ── ambiguousOptionsReason — the reported bug: "which of these is a
+ * perfect square? 64, 50, 72, 81" keyed only 64, but 81 (9^2) is also a
+ * perfect square. Neither keyContradictsExplanation nor the semantic
+ * verifier can catch this — both only ask "is the keyed option correct",
+ * never "is it the ONLY correct one". This is the check that does. */
+describe('ambiguousOptionsReason', () => {
+  it('flags the exact reported bug: two perfect squares, only one keyed', () => {
+    const reason = ambiguousOptionsReason(
+      'Which of the following numbers is a perfect square?',
+      ['64', '50', '72', '81'],
+      0, // keyed: 64
+    );
+    expect(reason).toMatch(/81/);
+    expect(reason).toMatch(/perfect square/);
+  });
+
+  it('passes clean when exactly one option satisfies the category', () => {
+    const reason = ambiguousOptionsReason(
+      'Which of the following numbers is a perfect square?',
+      ['64', '50', '72', '48'],
+      0,
+    );
+    expect(reason).toBeNull();
+  });
+
+  it('covers perfect cube, prime, even, odd', () => {
+    expect(ambiguousOptionsReason('Which is a perfect cube?', ['27', '8', '10', '12'], 0)).toMatch(/8/);
+    expect(ambiguousOptionsReason('Which of these is a prime number?', ['9', '15', '7', '11'], 2)).toMatch(/11/);
+    expect(ambiguousOptionsReason('Which of these is an even number?', ['3', '4', '6', '9'], 1)).toMatch(/6/);
+    expect(ambiguousOptionsReason('Which of these is an odd number?', ['2', '4', '7', '9'], 2)).toMatch(/9/);
+  });
+
+  it('handles "multiple of N" with the N extracted from the question', () => {
+    const reason = ambiguousOptionsReason('Which of the following is a multiple of 7?', ['14', '21', '15', '9'], 0);
+    expect(reason).toMatch(/21/);
+  });
+
+  it('flips the expected direction for negated phrasing ("is NOT a perfect square")', () => {
+    // 50, 72, 48 are all non-squares — three valid answers to a question
+    // that should only have one, so this must still fire even negated.
+    const reason = ambiguousOptionsReason(
+      'Which of the following is NOT a perfect square?',
+      ['64', '50', '72', '48'],
+      1, // keyed: 50
+    );
+    expect(reason).toMatch(/perfect square/);
+  });
+
+  it('is not fooled by a genuinely unique negated answer', () => {
+    const reason = ambiguousOptionsReason(
+      'Which of the following is NOT a perfect square?',
+      ['64', '81', '49', '48'],
+      3, // keyed: 48, the only non-square
+    );
+    expect(reason).toBeNull();
+  });
+
+  it('returns null — not a guess — when options are not plain numbers', () => {
+    expect(ambiguousOptionsReason('Which is a perfect square?', ['sixty-four', 'fifty', 'seventy-two', 'eighty-one'], 0))
+      .toBeNull();
+  });
+
+  it('returns null when the question matches no checkable category', () => {
+    expect(ambiguousOptionsReason('What is the capital of France?', ['Paris', 'London', 'Berlin', 'Madrid'], 0))
+      .toBeNull();
+  });
+
+  it('never blames the keyed option itself — that is a different check\'s job', () => {
+    // Key (50) is not even a perfect square, and no OTHER option is either —
+    // this function has nothing to say about that; it only compares options
+    // against each other, never judges the key in isolation.
+    const reason = ambiguousOptionsReason('Which of the following is a perfect square?', ['50', '48', '72', '12'], 0);
+    expect(reason).toBeNull();
+  });
+});
+
+describe('toEngineFormat — flags ambiguous options via needs_review', () => {
+  it('flags the reported perfect-square question end to end', () => {
+    const [q] = toEngineFormat(
+      [{
+        question: 'Which of the following numbers is a perfect square?',
+        options: ['A. 64', 'B. 50', 'C. 72', 'D. 81'],
+        answer: 'A',
+        explanation: '64 = 8 squared, so A is correct.',
+      }],
+      'Mathematics', 'CBSE Class 8',
+    );
+    expect(q.needs_review).toBe(true);
+    expect(q.review_reason).toMatch(/81/);
   });
 });

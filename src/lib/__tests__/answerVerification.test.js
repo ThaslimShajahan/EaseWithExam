@@ -95,30 +95,49 @@ describe('numericAgrees', () => {
 });
 
 describe('verifyOne', () => {
-  it('agrees when the verifier picks the keyed option', async () => {
-    chatComplete.mockResolvedValue(reply({ answer: 'B', confidence: 'high' }));
+  it('agrees when the verifier picks only the keyed option', async () => {
+    chatComplete.mockResolvedValue(reply({ correct_letters: ['B'], confidence: 'high' }));
     await expect(verifyOne(mcq())).resolves.toMatchObject({ status: 'agree' });
   });
 
-  it('disagrees when the verifier picks a different option', async () => {
-    chatComplete.mockResolvedValue(reply({ answer: 'C' }));
+  it('disagrees when the verifier picks a different single option', async () => {
+    chatComplete.mockResolvedValue(reply({ correct_letters: ['C'] }));
     const v = await verifyOne(mcq());
     expect(v.status).toBe('disagree');
     expect(v.reason).toMatch(/chose C.*key says B/);
   });
 
-  it('flags when the verifier says no option matches — the Q2/Q3 failure mode', async () => {
-    chatComplete.mockResolvedValue(reply({ answer: 'A', none_match: true }));
+  it('flags when the verifier finds no option matches — the Q2/Q3 failure mode', async () => {
+    chatComplete.mockResolvedValue(reply({ correct_letters: [] }));
     const v = await verifyOne(mcq());
     expect(v.status).toBe('disagree');
-    expect(v.reason).toMatch(/matching no option/);
+    expect(v.reason).toMatch(/no option that correctly answers/);
+  });
+
+  // The actual bug this extension exists for: "which of these is a perfect
+  // square? 64, 50, 72, 81" keyed only A (64), but D (81) is also one — a
+  // verifier that only re-derives ONE answer agrees with the key and never
+  // looks at the others. Listing every option it finds correct is what
+  // catches this.
+  it('flags when the verifier finds MORE THAN ONE option correct, even if the key is among them', async () => {
+    chatComplete.mockResolvedValue(reply({ correct_letters: ['B', 'A'] })); // key is A (idx 1... see mcq() below)
+    const v = await verifyOne(mcq({ correctOption: 0 })); // key = A
+    expect(v.status).toBe('disagree');
+    expect(v.reason).toMatch(/multiple options/);
+    expect(v.reason).toMatch(/A/);
+    expect(v.reason).toMatch(/B/);
+  });
+
+  it('deduplicates repeated letters before deciding single vs multiple', async () => {
+    chatComplete.mockResolvedValue(reply({ correct_letters: ['B', 'B', 'b'] }));
+    await expect(verifyOne(mcq())).resolves.toMatchObject({ status: 'agree' });
   });
 
   it('never sends the stored key, explanation or answer to the model', async () => {
     // Distinctive sentinels: if any of these reach the prompt, the verifier is
     // agreeing with the key rather than re-deriving, and the measured recall
     // would be fiction.
-    chatComplete.mockResolvedValue(reply({ answer: 'B' }));
+    chatComplete.mockResolvedValue(reply({ correct_letters: ['B'] }));
     await verifyOne(mcq({
       explanation: 'SENTINEL_EXPLANATION_TEXT',
       review_reason: 'SENTINEL_REVIEW_REASON',
@@ -147,7 +166,13 @@ describe('verifyOne', () => {
     chatComplete.mockResolvedValue({ choices: [{ message: { content: 'not json' } }] });
     await expect(verifyOne(mcq())).resolves.toMatchObject({ status: 'error' });
 
-    chatComplete.mockResolvedValue(reply({ answer: 'Z' }));
+    // correct_letters missing entirely — unparseable response shape
+    chatComplete.mockResolvedValue(reply({ confidence: 'high' }));
+    await expect(verifyOne(mcq())).resolves.toMatchObject({ status: 'error' });
+
+    // correct_letters present but every entry is garbage — a parsing failure,
+    // not a legitimate "found nothing" verdict (that's an explicit []).
+    chatComplete.mockResolvedValue(reply({ correct_letters: ['Z', '??'] }));
     await expect(verifyOne(mcq())).resolves.toMatchObject({ status: 'error' });
   });
 
@@ -161,8 +186,8 @@ describe('verifyOne', () => {
 describe('verifyQuestions', () => {
   it('flags only the disagreeing question and leaves the rest untouched', async () => {
     chatComplete
-      .mockResolvedValueOnce(reply({ answer: 'B' }))   // agrees
-      .mockResolvedValueOnce(reply({ answer: 'D' }));  // disagrees
+      .mockResolvedValueOnce(reply({ correct_letters: ['B'] }))   // agrees
+      .mockResolvedValueOnce(reply({ correct_letters: ['D'] }));  // disagrees
     const { questions, stats } = await verifyQuestions([mcq(), mcq()]);
     expect(questions[0].needs_review).toBeFalsy();
     expect(questions[1].needs_review).toBe(true);
@@ -170,7 +195,7 @@ describe('verifyQuestions', () => {
   });
 
   it('keeps the free cross-check reason alongside its own', async () => {
-    chatComplete.mockResolvedValue(reply({ answer: 'D' }));
+    chatComplete.mockResolvedValue(reply({ correct_letters: ['D'] }));
     const seeded = mcq({ needs_review: true, review_reason: 'cross-check said so' });
     const { questions } = await verifyQuestions([seeded]);
     expect(questions[0].review_reason).toMatch(/cross-check said so/);

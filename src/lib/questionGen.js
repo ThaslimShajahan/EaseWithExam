@@ -158,6 +158,81 @@ export function keyContradictsExplanation(optionText, explanation) {
   return `keyed option (${optNums.join(', ')}) shares no value with its explanation (${expNums.slice(0, 6).join(', ')})`;
 }
 
+/* ── Mechanically-checkable "more than one option is correct" categories ──
+ * Deliberately the same math as scripts/sanity-check-mcq-answers.mjs's
+ * retroactive check, promoted into the generation path itself. Kept as a
+ * separate free check from keyContradictsExplanation on purpose: that one
+ * asks "is the keyed option itself right", this one asks "is it the ONLY
+ * right one" — two different bugs, two different checks. */
+
+function isPerfectSquare(n) { return Number.isInteger(n) && n >= 0 && Number.isInteger(Math.sqrt(n)); }
+function isPerfectCube(n) {
+  if (!Number.isInteger(n)) return false;
+  const r = Math.round(Math.cbrt(n));
+  return r * r * r === n;
+}
+function isPrime(n) {
+  if (!Number.isInteger(n) || n < 2) return false;
+  if (n % 2 === 0) return n === 2;
+  for (let i = 3; i * i <= n; i += 2) if (n % i === 0) return false;
+  return true;
+}
+const isEven = (n) => Number.isInteger(n) && n % 2 === 0;
+const isOdd  = (n) => Number.isInteger(n) && Math.abs(n % 2) === 1;
+
+const AMBIGUITY_CATEGORIES = [
+  { name: 'perfect square', re: /perfect\s+square/i,    test: isPerfectSquare },
+  { name: 'perfect cube',   re: /perfect\s+cube/i,       test: isPerfectCube   },
+  { name: 'prime number',   re: /\bprime\s+numbers?\b/i, test: isPrime         },
+  { name: 'even number',    re: /\beven\s+numbers?\b/i,  test: isEven          },
+  { name: 'odd number',     re: /\bodd\s+numbers?\b/i,   test: isOdd           },
+];
+
+const NEGATION_RE = /\b(not|n't|except|excluding|neither)\b/i;
+const firstOptionNumber = (s) => {
+  const m = String(s ?? '').match(/-?\d+(?:\.\d+)?/);
+  return m ? Number(m[0]) : null;
+};
+
+/**
+ * Flags an MCQ where an option OTHER than the keyed one also satisfies the
+ * category the question asks about — the "64 and 81 are both perfect
+ * squares but only 64 was keyed" bug. Narrowly scoped: this does not judge
+ * whether the KEYED option itself is correct (keyContradictsExplanation and
+ * the semantic verifier already own that) — only whether it's the only one.
+ *
+ * Covers a handful of mechanically-checkable categories (perfect square/
+ * cube, prime, even/odd, "multiple of N") with negation handling ("which of
+ * these is NOT a perfect square" flips the expected direction). Options that
+ * aren't plain numbers, or a question matching none of these categories,
+ * are left alone — not every question is checkable this way, and returning
+ * null for "can't tell" (rather than guessing) matches
+ * keyContradictsExplanation's own conservatism.
+ *
+ * Returns a reason string, or null.
+ */
+export function ambiguousOptionsReason(questionText, options, keyIdx) {
+  if (!Array.isArray(options) || options.length < 2 || keyIdx == null) return null;
+  const text = questionText ?? '';
+
+  const multipleMatch = text.match(/multiples?\s+of\s+(-?\d+)/i);
+  const category = multipleMatch
+    ? { name: `multiple of ${multipleMatch[1]}`, test: (n) => { const N = Number(multipleMatch[1]); return N !== 0 && Number.isInteger(n) && n % N === 0; } }
+    : AMBIGUITY_CATEGORIES.find((c) => c.re.test(text));
+  if (!category) return null;
+
+  const nums = options.map(firstOptionNumber);
+  if (nums.some((n) => n === null)) return null; // not all options are plain numbers — not checkable
+
+  const negated   = NEGATION_RE.test(text);
+  const satisfies = nums.map((n) => (negated ? !category.test(n) : category.test(n)));
+  const others    = satisfies.filter((v, i) => i !== keyIdx && v);
+  if (!others.length) return null;
+
+  const otherOptions = options.filter((_, i) => i !== keyIdx && satisfies[i]);
+  return `option${otherOptions.length > 1 ? 's' : ''} ${otherOptions.join(', ')} also satisf${otherOptions.length > 1 ? 'y' : 'ies'} "${category.name}" alongside the keyed answer (${options[keyIdx]})`;
+}
+
 export function toEngineFormat(questionsInput, subject, examType = 'NEET') {
   // generateQuestionPaper() returns { questions, meta, ... }, not a bare array — accept
   // either shape here instead of requiring every caller to remember to unwrap it (one
@@ -212,7 +287,8 @@ export function toEngineFormat(questionsInput, subject, examType = 'NEET') {
       // Shuffle AFTER the key is resolved, so the index follows its option.
       let review = null;
       if (isMCQ && !invalid) {
-        review = keyContradictsExplanation(options[keyIdx], q.explanation);
+        review = keyContradictsExplanation(options[keyIdx], q.explanation)
+          || ambiguousOptionsReason(q.question, options, keyIdx);
         if (!hasOrderedOptions(type, options)) {
           const s = shuffleOptions(options, keyIdx);
           options = s.options;

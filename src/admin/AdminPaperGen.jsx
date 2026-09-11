@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { generateImage as proxyGenerateImage, chatComplete } from '../lib/aiProxy';
 import { generateQuestionPaper, toEngineFormat, extractPYQFromKB } from '../lib/questionGen';
+import { verifyQuestions } from '../lib/answerVerification';
 import { getExamPattern, getMarkingLabel, getTestDurationMinutes } from '../lib/examPattern';
 import { publishTest, getPYQCount, clearPYQQuestions, supabase } from '../lib/supabase';
 import { broadcastNotification, createNotification } from '../lib/notifications';
@@ -258,6 +259,93 @@ function QuestionCard({ q, index, showAnswer, onImageUpload, onRemoveImage }) {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+/**
+ * Shown when verifyQuestions flags one or more questions right before
+ * publish — the gap this closes: this tool used to compute the free
+ * cross-check's needs_review and never call the semantic verifier at all,
+ * then silently publish flagged questions straight to students as a graded
+ * Mock Test with no human ever seeing the flag. Now: flagged questions are
+ * shown here, excluded from the publish by default, and an admin can
+ * explicitly include one anyway after reviewing the reason.
+ */
+function AnswerReviewModal({ checked, excluded, onToggleExclude, onCancel, onConfirm, publishing }) {
+  const flagged = checked.filter((q) => q.needs_review);
+  const willPublish = checked.length - excluded.size;
+
+  return (
+    <motion.div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      onClick={onCancel}
+    >
+      <motion.div
+        className="bg-slate-800 border border-white/10 rounded-2xl p-6 max-w-2xl w-full space-y-4 max-h-[85vh] overflow-y-auto"
+        initial={{ scale: 0.95 }} animate={{ scale: 1 }} exit={{ scale: 0.95 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2">
+          <AlertTriangle size={18} className="text-amber-400 shrink-0" />
+          <p className="text-white font-bold">
+            {flagged.length} of {checked.length} question{flagged.length === 1 ? '' : 's'} flagged for review
+          </p>
+        </div>
+        <p className="text-xs text-slate-400">
+          An automated answer check found a possible problem with these questions before
+          publish — commonly a keyed answer that isn't the only option satisfying the
+          question, or a key that contradicts its own explanation. Flagged questions are
+          excluded by default; review the reason and include one anyway if you've checked it
+          yourself.
+        </p>
+
+        <div className="space-y-3">
+          {flagged.map((q) => (
+            <div key={q.id} className="bg-slate-900 border border-amber-700/30 rounded-xl p-3">
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 shrink-0"
+                  checked={!excluded.has(q.id)}
+                  onChange={() => onToggleExclude(q.id)}
+                />
+                <div className="flex-1 min-w-0 space-y-1.5">
+                  <div className="text-xs text-slate-200"><MathText text={q.question} /></div>
+                  {q.options && (
+                    <ul className="text-[11px] text-slate-400 space-y-0.5">
+                      {q.options.map((o, i) => (
+                        <li key={i} className={i === q.correctOption ? 'text-emerald-400 font-semibold' : ''}>
+                          {String.fromCharCode(65 + i)}. {o}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="text-[10px] text-amber-400 flex items-start gap-1">
+                    <AlertTriangle size={11} className="shrink-0 mt-0.5" /> {q.review_reason}
+                  </p>
+                </div>
+              </label>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-between gap-3 pt-2 border-t border-white/5">
+          <p className="text-xs text-slate-400 shrink-0">{willPublish} of {checked.length} will be published</p>
+          <div className="flex gap-2">
+            <button onClick={onCancel}
+              className="px-4 py-2 rounded-xl text-sm text-slate-400 hover:bg-slate-700 transition-colors">
+              Cancel
+            </button>
+            <button onClick={onConfirm} disabled={publishing || willPublish === 0}
+              className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white transition-colors">
+              {publishing ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+              Publish {willPublish} question{willPublish === 1 ? '' : 's'}
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -1107,6 +1195,8 @@ export default function AdminPaperGen() {
   const [sourceMeta,       setSourceMeta]        = useState(null); // { pyqCount, studyNotesCount }
   const [blueprintMatchPct, setBlueprintMatchPct] = useState(null);
   const [patternMatch,      setPatternMatch]      = useState(null);
+  // { checked: engine-format questions post-verifyQuestions, excluded: Set<id> } | null
+  const [reviewData,        setReviewData]        = useState(null);
   const paperRef = useRef(null);
 
   const toggleType = (t) =>
@@ -1165,13 +1255,10 @@ export default function AdminPaperGen() {
     }
   };
 
-  const handlePublish = async () => {
-    if (!pubTitle.trim() || publishing) return;
-    const engineQs = toEngineFormat(questions, subject, examType);
-    if (engineQs.length === 0) {
-      alert('None of the generated questions are in a publishable format (e.g. every "Match the Following" question came back without the required options) — nothing was published. Try regenerating.');
-      return;
-    }
+  // Actually writes the test. Shared by the no-flags fast path and by the
+  // review modal's confirm button — publishing itself doesn't change based
+  // on whether a review happened, only which questions make it into `finalQs`.
+  const finishPublish = async (finalQs) => {
     setPublishing(true);
     try {
       const durationMin = getTestDurationMinutes(getExamPattern(examType));
@@ -1180,19 +1267,20 @@ export default function AdminPaperGen() {
         subject,
         examType,
         difficulty,
-        questions:          engineQs,
+        questions:          finalQs,
         durationMinutes:    durationMin,
         blueprintMatchPct:  blueprintMatchPct ?? undefined,
         createdBy:          'admin',
       });
       setPublished(true);
       setShowPubDlg(false);
+      setReviewData(null);
       // Notify all students in-app
       broadcastNotification(
         getCallerUid(),
         'new_paper',
         `New ${examType} ${subject} Test Available`,
-        `${pubTitle.trim()} — ${engineQs.length} questions · ${durationMin} min`,
+        `${pubTitle.trim()} — ${finalQs.length} questions · ${durationMin} min`,
         '/exam-center',
       ).catch(() => {});
     } catch (e) {
@@ -1200,6 +1288,55 @@ export default function AdminPaperGen() {
     } finally {
       setPublishing(false);
     }
+  };
+
+  const handlePublish = async () => {
+    if (!pubTitle.trim() || publishing) return;
+    const engineQs = toEngineFormat(questions, subject, examType);
+    if (engineQs.length === 0) {
+      alert('None of the generated questions are in a publishable format (e.g. every "Match the Following" question came back without the required options) — nothing was published. Try regenerating.');
+      return;
+    }
+
+    setPublishing(true);
+    // Same semantic re-solve check AI Practice and the student background-
+    // generation path already run before a student ever sees a question —
+    // this tool used to skip it entirely. Fails open: a verifier outage
+    // must never block publishing, same discipline as answerVerification.js
+    // itself (it fails open internally too; this catch is for verifyQuestions
+    // throwing before it gets that far, e.g. the feature-flag lookup).
+    let checked = engineQs;
+    try {
+      const result = await verifyQuestions(engineQs);
+      checked = result.questions;
+    } catch (e) {
+      if (import.meta.env.DEV) console.warn('[AdminPaperGen] verifyQuestions failed — publishing unchecked:', e);
+    }
+    setPublishing(false);
+
+    const flagged = checked.some((q) => q.needs_review);
+    if (flagged) {
+      setShowPubDlg(false);
+      setReviewData({ checked, excluded: new Set(checked.filter((q) => q.needs_review).map((q) => q.id)) });
+      return;
+    }
+
+    await finishPublish(checked);
+  };
+
+  const toggleReviewExclude = (id) => {
+    setReviewData((prev) => {
+      if (!prev) return prev;
+      const next = new Set(prev.excluded);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return { ...prev, excluded: next };
+    });
+  };
+
+  const confirmReviewPublish = () => {
+    if (!reviewData) return;
+    const finalQs = reviewData.checked.filter((q) => !reviewData.excluded.has(q.id));
+    finishPublish(finalQs);
   };
 
   const config = { subject, examType, difficulty, count, qTypes };
@@ -1292,6 +1429,20 @@ export default function AdminPaperGen() {
                 </div>
               </motion.div>
             </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Answer-review dialog — only shown when verifyQuestions flagged something */}
+        <AnimatePresence>
+          {reviewData && (
+            <AnswerReviewModal
+              checked={reviewData.checked}
+              excluded={reviewData.excluded}
+              onToggleExclude={toggleReviewExclude}
+              onCancel={() => setReviewData(null)}
+              onConfirm={confirmReviewPublish}
+              publishing={publishing}
+            />
           )}
         </AnimatePresence>
       </div>

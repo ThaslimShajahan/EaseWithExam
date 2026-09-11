@@ -24,7 +24,7 @@
  * account key, and only for a uid that is already an active admin.
  */
 import { signInWithCustomToken } from 'firebase/auth';
-import { auth } from '../firebase/config';
+import { auth, adminAuth } from '../firebase/config';
 
 /**
  * Signs the page in as `uid` using a custom token minted by firebase-admin.
@@ -37,6 +37,20 @@ export async function signInWithMintedToken(customToken) {
   const cred = await signInWithCustomToken(auth, customToken);
   // Force a token fetch now so supabase.js's accessToken callback resolves
   // immediately on the first request rather than racing the first insert.
+  await cred.user.getIdToken(true);
+  return cred.user.uid;
+}
+
+/**
+ * Same as signInWithMintedToken, but against `adminAuth` — the separate
+ * named Firebase app instance AdminGuard actually watches (see firebase/
+ * config.js). Needed to drive real admin-portal UI end to end (past
+ * AdminGuard's Firebase check) in a headless Playwright script; the
+ * passcode screen behind it still requires the real passcode — this only
+ * gets you to that screen, it does not bypass it.
+ */
+export async function signInAdminWithMintedToken(customToken) {
+  const cred = await signInWithCustomToken(adminAuth, customToken);
   await cred.user.getIdToken(true);
   return cred.user.uid;
 }
