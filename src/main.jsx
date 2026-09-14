@@ -7,6 +7,7 @@ import { loadCategories } from './lib/categories';
 import { loadOnboardingOptions } from './lib/onboardingOptions';
 import { loadPaperTemplateOverrides } from './lib/examPattern';
 import { captureReferralFromUrl } from './lib/referral';
+import { initMetaPixel } from './lib/metaPixel';
 import App from './App';
 import './styles/index.css';
 
@@ -14,6 +15,9 @@ import './styles/index.css';
 // code is parked now and redeemed once onboarding creates the user. Runs before
 // render so the param is stripped from the URL the student actually sees.
 captureReferralFromUrl();
+
+// PROD-only (see metaPixel.js) — installs fbq and fires the base PageView.
+initMetaPixel();
 
 const queryClient = new QueryClient({
   defaultOptions: {

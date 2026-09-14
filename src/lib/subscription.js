@@ -2,6 +2,7 @@ import { supabase, getSubscription } from './supabase';
 import { createNotification } from './notifications';
 import { sendTransactionalEmail } from './email';
 import { arePaymentsEnabled, PAYMENTS_CLOSED_ERROR } from './paymentsGate';
+import { trackPixelEvent } from './metaPixel';
 
 /* ── Plan catalogue ─────────────────────────────────────── */
 
@@ -237,6 +238,7 @@ async function verifyAndActivateSubscription(firebaseUid, {
             '/dashboard',
           ).catch(() => {});
           sendTransactionalEmail(firebaseUid, 'subscription_active', { planName });
+          trackPixelEvent('Purchase', { value: (Number(amount_paid) || 0) / 100, currency: 'INR' });
           return {
             plan, planName,
             amountPaise: amount_paid, baseAmountPaise: base_amount_paise,
@@ -262,6 +264,7 @@ async function verifyAndActivateSubscription(firebaseUid, {
     '/dashboard',
   ).catch(() => {});
   sendTransactionalEmail(firebaseUid, 'subscription_active', { planName });
+  trackPixelEvent('Purchase', { value: (Number(amount_paid) || 0) / 100, currency: 'INR' });
 
   // Everything the payment-confirmation page needs, so it doesn't need a
   // second fetch — the same values the receipt email is built from.
@@ -445,6 +448,11 @@ export async function createRazorpayOrder({ planId, firebaseUid }) {
   } finally {
     clearTimeout(timeout);
   }
+
+  // order.amount is the server-confirmed, GST-inclusive paise amount — same
+  // value verifyAndActivateSubscription later reports as the Purchase value,
+  // so the two events never drift against each other.
+  trackPixelEvent('InitiateCheckout', { value: (Number(order.amount) || 0) / 100, currency: 'INR' });
 
   return { order, plan };
 }
