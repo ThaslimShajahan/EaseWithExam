@@ -4,6 +4,18 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-09-16 — Admin showed "Unknown" for phone-login students: display + search fallback fix, deployed
+
+Owner reported that in the admin students list, phone-OTP sign-ups showed as "Unknown" with a blank subtitle line, making them impossible to identify or search for.
+
+**Root cause**: phone-only Firebase sign-in never populates `displayName` or `email` — `AuthContext.jsx`'s `upsertProfileFor` writes both as `null` for these accounts. `AdminStudents.jsx`'s name/avatar/search logic only ever fell back through `display_name → email → 'Unknown'`, with no awareness that `phone_number` (populated for every phone sign-up, confirmed via `admin_list_users`, which returns whole `users` rows) was sitting right there unused.
+
+**Fix, `src/admin/AdminStudents.jsx` only**: added `phone_number` as a fallback ahead of `'Unknown'`/`'—'` in four places — the student list row's name and email-subtitle line, the edit-drawer header and avatar initial, and the delete-confirmation modal's name — plus added `phone_number` to the search filter so these accounts are findable by number. Students can already set their own display name from Profile (pencil icon next to their name, pre-existing); this fix is scoped to the admin view showing something useful in the meantime rather than a dead end.
+
+**Deployed** via the standard procedure (`docs/DEPLOY.md`): `npm test` (615/615 passed) → `npm run build:seo` → bundle hash `index-BwHiU5ky.js` verified identical at every checkpoint (pre-flight, packaged tarball, transferred tarball, extracted on disk, served over HTTP) → permissions fixed (0 unreadable files) → all 5 prerendered routes (`/about`, `/contact`, `/privacy`, `/terms`, `/refund`) confirmed serving their own title/canonical, not the homepage's. No DB migration.
+
+---
+
 ## 2026-09-11 — MCQ answer-uniqueness gap: investigated, built, E2E-validated, and deployed
 
 Owner reported a real bug from AI Practice: "Which of the following numbers is a perfect square? 64, 50, 72, 81" keyed only A (64) — but 81 (9²) is also a perfect square, so the question has two valid answers under a single-select format. Same night, in order: broad investigation → approved plan → build with unit tests → real authenticated E2E validation → deploy. Full arc below.
