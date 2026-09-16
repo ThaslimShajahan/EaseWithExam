@@ -4,6 +4,38 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-09-16 (2) — Android Phase 1 groundwork deployed: guarded native shims, native-feeling landing screen
+
+Started tonight's Android work by scaffolding a separate Capacitor wrapper project (`../easewithexam-android`, sibling repo, never mixed into this one) that consumes this repo's `dist/` build output — see that repo's README for the full setup, toolchain (Capacitor v6, not v8 — `@capacitor-firebase/authentication@8.x` needs `firebase@^12`, this repo is on `firebase@^10`), and known gaps.
+
+**What actually landed here** (everything guarded by `Capacitor.isNativePlatform()`, `false` for every real website visitor — verified the plain web build and full test suite before and after each change):
+
+1. **Native phone-auth wiring** (`AuthContext.jsx`) — `sendOTP`/`verifyOTP` branch to `@capacitor-firebase/authentication`'s event-based flow on native (Play-Integrity-backed, no reCAPTCHA) instead of the web SDK's `RecaptchaVerifier`. `skipNativeAuth` defaults to false, so the JS `auth` instance stays synced automatically — `onAuthStateChanged` and the profile-upsert pipeline are completely unchanged. De-dupe/cleanup on the fresh-signin path uses the plugin's own `deleteUser()`/`signOut()`, not `result.user.delete()` (doesn't exist on this plugin's plain result shape — a real bug that would have shipped if copy-pasted from the web path).
+2. **Native push wiring** (`notifications.js`) — `requestPushPermission` branches to `@capacitor/push-notifications` (FCM) on native instead of Web Push/VAPID — Android WebViews are unreliable at background delivery, exactly when a daily-reminder push matters. New `notification_prefs.push_fcm_token` column (migration `20260916010000`), deliberately separate from `push_endpoint`/`p256dh`/`auth` — those three are structurally Web-Push-specific (ECDH keys), and `send-push` still exclusively reads them. **Registration only** — `send-push` has no FCM/HTTP-v1 delivery path yet, that's a separate follow-up before native push notifications actually reach anyone.
+3. **Native landing screen** — owner reported the app "feels like a website loaded," not an app: the root route was showing the full marketing `LandingPage` (nav bar, hero copy, cookie-consent banner) even on native. New `NativeAuthScreen.jsx` — reuses the existing `AuthCard` (same sign-in form as the web modal) full-screen on a branded gradient, no marketing chrome. `App.jsx`'s root route now picks between the two based on platform; `PlatformChrome.jsx`'s cookie banner is suppressed on native (a browser-cookies concept that doesn't apply to a WebView loading local bundled assets). `LandingPage` itself and its SEO content are completely untouched for web visitors.
+
+**Verified end-to-end on a real Android emulator (API 34)**, not just the web build: installed the debug APK, confirmed it's the foreground activity, screenshotted both the before (marketing site) and after (native auth screen) states. Without `google-services.json` (not yet generated — needs a Firebase Console step, next up), the native Firebase plugin fails to *load* with a clearly logged error but the app does not crash — confirmed live in logcat, documented as an expected, non-fatal gap rather than something to rediscover later.
+
+**Deployed** via the standard procedure (`docs/DEPLOY.md`), version `2026.09.16.2`: 615/615 tests, bundle hash `index-Bad_Su2P.js` verified identical at every checkpoint, migration `20260916010000_push_fcm_token.sql` applied first (`supabase db push`, confirmed live via direct query — purely additive, nullable column, no existing code path touches it), all 5 prerendered routes content-checked clean. `deploy_log` entries also backfilled tonight for two previously-undocumented deploys (`3737513` figure-dedup fix, `a066e64` MCQ-uniqueness fix) — see the `docs/DEPLOY.md` change below for why those went missing and how that's now structurally prevented.
+
+**Not done tonight, flagged for the owner**: Google Sign-In on the native build still runs as a WebView OAuth popup, which Google blocks (`disallowed_useragent`) — needs its own native wiring + Firebase Console SHA-1 registration, out of this phase's scope. Push registration works once `google-services.json` exists; push *delivery* to Android users needs a new FCM HTTP v1 path in the backend. Play Billing not attempted.
+
+---
+
+## 2026-09-16 — Fixed `deploy_log` silently never getting written; made it mandatory
+
+Owner asked why the 09-11 and 09-16 deploys never got a `deploy_log` row. Root cause was two-fold: `docs/DEPLOY.md`'s own 8-step procedure never once mentioned writing to `deploy_log` — that convention lived only in a migration-file comment and an `AdminChangelog.jsx` comment, invisible to anyone just following the numbered steps (this session included, initially). And the "no admin browser session available" excuse used in several past entries was already known false — 2026-08-24's entry found this once (`assert_verified_admin` only checks the Firebase JWT `sub` against `admins`, no passcode or browser needed) but the assumption got carried forward anyway.
+
+New `scripts/log-deploy.mjs` writes to `deploy_log` headlessly — mints an admin custom token via the existing service-account bootstrap (same pattern `scripts/recompress-figures.mjs` already uses), exchanges it for a real ID token via Firebase's REST API, calls the RPC directly. No browser, no passcode. `docs/DEPLOY.md` now calls it as an explicit numbered step (1b) and fails loudly with a ready-to-run manual RPC payload rather than silently no-op'ing if it can't write — a deploy is documented as not complete until this step succeeds or is explicitly flagged.
+
+Retroactively backfilled the 3 identifiable real deploys since the last confirmed entry: `3737513` (figure dedup/manifest fix, ~09-11 early AM, version `2026.09.11.1`), `a066e64` (MCQ answer-uniqueness fix, 09-11, version `2026.09.11.2`), and `5781bde` (phone-login "Unknown" fix, 09-16, version `2026.09.16.1`) — bundle hashes recovered by diffing the server's own backup archive (each backup is a snapshot taken right before a deploy). A 4th deploy shipped ~09-14 (bundle `index-DHNpFAK4.js`) with no matching commit — its timing only fits a build from an uncommitted working tree, deliberately left unlogged rather than guessed at.
+
+Also added `VITE_APP_VERSION`, decided once per deploy and baked into the build via `import.meta.env` — the same string written to `deploy_log` and shown to students on `ProfilePage`'s new "App Version" line, so the two can never disagree.
+
+Deployed together with the Android Phase 1 entry above, same window.
+
+---
+
 ## 2026-09-16 — Admin showed "Unknown" for phone-login students: display + search fallback fix, deployed
 
 Owner reported that in the admin students list, phone-OTP sign-ups showed as "Unknown" with a blank subtitle line, making them impossible to identify or search for.
