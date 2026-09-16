@@ -452,7 +452,7 @@ function EditDrawer({ user, onClose, onSaved }) {
           <div>
             <h3 className="font-bold text-white">Edit Student</h3>
             <p className="text-slate-400 text-xs mt-0.5 truncate max-w-[200px]">
-              {user.email}
+              {user.email || user.phone_number}
             </p>
           </div>
           <button onClick={onClose} className="h-8 w-8 flex items-center justify-center rounded-xl hover:bg-white/10 text-slate-400">
@@ -469,11 +469,11 @@ function EditDrawer({ user, onClose, onSaved }) {
               <img src={user.photo_url} alt="" className="h-12 w-12 rounded-full object-cover" />
             ) : (
               <div className="h-12 w-12 rounded-full bg-primary-800 flex items-center justify-center text-white font-bold">
-                {(user.display_name || user.email || 'S')[0].toUpperCase()}
+                {(user.display_name || user.email || user.phone_number || 'S')[0].toUpperCase()}
               </div>
             )}
             <div>
-              <p className="text-white text-sm font-medium">{user.display_name || '—'}</p>
+              <p className="text-white text-sm font-medium">{user.display_name || user.phone_number || '—'}</p>
               <p className="text-slate-400 text-xs">Firebase UID: {user.firebase_uid?.slice(0, 12)}…</p>
             </div>
           </div>
@@ -590,7 +590,7 @@ function DeleteConfirmModal({ user, onClose, onDeleted }) {
   const [typed,   setTyped]   = useState('');
   const [deleting, setDeleting] = useState(false);
   const [error,   setError]   = useState('');
-  const name = user.display_name || user.email || user.firebase_uid;
+  const name = user.display_name || user.email || user.phone_number || user.firebase_uid;
 
   const handleDelete = async () => {
     setDeleting(true); setError('');
@@ -696,8 +696,9 @@ export default function AdminStudents() {
     if (!query) return true;
     const q = query.toLowerCase();
     return (
-      u.display_name?.toLowerCase().includes(q) ||
-      u.email?.toLowerCase().includes(q)        ||
+      u.display_name?.toLowerCase().includes(q)  ||
+      u.email?.toLowerCase().includes(q)         ||
+      u.phone_number?.toLowerCase().includes(q)  ||
       u.target_exam?.toLowerCase().includes(q)
     );
   });
@@ -757,7 +758,7 @@ export default function AdminStudents() {
           <div className="divide-y divide-white/5">
             {filtered.map((u, idx) => {
               const avatar  = u.photo_url;
-              const name    = u.display_name || u.email?.split('@')[0] || 'Unknown';
+              const name    = u.display_name || u.email?.split('@')[0] || u.phone_number || 'Unknown';
               const tests   = testCountMap[u.firebase_uid] || 0;
               const badge   = EXAM_BADGE[u.target_exam] || 'bg-slate-700 text-slate-400';
               const sub     = subs[u.firebase_uid];
@@ -781,7 +782,7 @@ export default function AdminStudents() {
                     )}
                     <div className="min-w-0">
                       <p className="text-sm text-white font-medium truncate">{name}</p>
-                      <p className="text-[10px] text-slate-500 truncate">{u.email}</p>
+                      <p className="text-[10px] text-slate-500 truncate">{u.email || u.phone_number}</p>
                     </div>
                   </div>
 
