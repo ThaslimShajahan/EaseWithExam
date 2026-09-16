@@ -697,6 +697,16 @@ export default function ProfilePage() {
             </div>
             <ChevronRight size={15} className="text-red-300" />
           </button>
+
+          {/* Build-time only — import.meta.env.VITE_APP_VERSION is set by
+              docs/DEPLOY.md's procedure (same version string written to
+              deploy_log by scripts/log-deploy.mjs, so this and Admin > Changelog
+              can never disagree). Unset in local dev, so nothing renders there. */}
+          {import.meta.env.VITE_APP_VERSION && (
+            <p className="text-center text-[11px] text-slate-400 pt-3">
+              App Version {import.meta.env.VITE_APP_VERSION}
+            </p>
+          )}
         </Section>
       </motion.div>
 

@@ -67,9 +67,10 @@ export default function AdminChangelog() {
       <div className="flex items-start gap-2 bg-slate-800/40 border border-white/8 rounded-xl p-3">
         <Info size={14} className="text-slate-400 mt-0.5 shrink-0" />
         <p className="text-xs text-slate-400 leading-relaxed">
-          Every production deploy gets one entry here, written before the 8-step
-          procedure in <span className="font-mono text-slate-300">docs/DEPLOY.md</span> even
-          starts. Read-only — there is no edit or delete, a deploy record should not change after the fact.
+          Every production deploy gets one entry here — a mandatory step
+          (<span className="font-mono text-slate-300">scripts/log-deploy.mjs</span>) right after
+          the bundle hash is captured in <span className="font-mono text-slate-300">docs/DEPLOY.md</span>'s
+          procedure. Read-only — there is no edit or delete, a deploy record should not change after the fact.
         </p>
       </div>
 

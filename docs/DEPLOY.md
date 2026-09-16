@@ -27,17 +27,44 @@ instead of the deploy key. Always use the alias.
 
 ```bash
 # 1. Pre-flight — never deploy an unverified tree
+#    Decide the deploy version FIRST ('YYYY.MM.DD.N' — bump N for a second
+#    same-day deploy) and export it so it gets baked into the build via
+#    import.meta.env.VITE_APP_VERSION (ProfilePage's student-facing "App
+#    Version" line) — the same string step 1b then writes to deploy_log, so
+#    the two can never disagree. Unset, it silently doesn't render — not a
+#    build failure — but always set it for a real deploy.
+#
 #    build:seo, NOT build. Plain `vite build` emits the SPA shell whose body is
 #    `<div id="root"></div>` and whose canonical points at the homepage on every
 #    route — deploying that silently reverts the prerender fix and re-declares
 #    /about and /privacy as duplicates of /. build:seo runs vite build and then
 #    scripts/prerender.mjs, which refuses to write a file with a wrong canonical.
+export VITE_APP_VERSION="<YYYY.MM.DD.N>"
 npm test && npm run build:seo
 grep -o 'assets/index-[A-Za-z0-9_-]*\.js' dist/index.html   # note this hash
 
 # Prerender sanity — the body must NOT be an empty root div
 sed -n '/<body/,$p' dist/index.html | head -3
 grep -o '<link rel="canonical" href="[^"]*"' dist/about/index.html   # must end /about
+
+# 1b. Log the deploy — MANDATORY, not optional. Write it BEFORE touching the
+#     server, reusing the same $VITE_APP_VERSION from step 1 (never retype the
+#     version — that's exactly how the student-facing number and this record
+#     could drift apart) plus the bundle hash step 1 just produced. Headless,
+#     no browser/admin login needed — see scripts/log-deploy.mjs's own header
+#     for why this is safe to run from a shell.
+#
+#     A deploy is NOT complete until this step has either succeeded, or its
+#     failure has been explicitly surfaced (the script prints a ready-to-run
+#     RPC payload on failure — hand that to whoever has a live admin session,
+#     and say clearly "deploy log entry NOT written, needs manual follow-up").
+#     Do not silently continue past a failure here.
+node scripts/log-deploy.mjs \
+  --version "$VITE_APP_VERSION" \
+  --summary "<one-line human-readable summary>" \
+  --changes '[{"type":"fixed","text":"..."}]' \
+  --commit "<git commit hash>" \
+  --bundle "<hash from step 1, e.g. index-XXXXXXXX.js>"
 
 # 2. Back up the current web root (fast to restore; seconds)
 ssh easewithexam 'R=~/htdocs/www.easewithexam.com; B=~/deploy-backups; mkdir -p $B; \
