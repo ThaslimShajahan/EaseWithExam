@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Capacitor } from '@capacitor/core';
 import { useAuth } from './context/AuthContext';
 import { trackPageView } from './lib/analytics';
 import { COACHING_MODULE_ENABLED } from './lib/moduleStatus';
@@ -10,6 +11,7 @@ import MaintenanceGate from './components/ui/MaintenanceGate';
 
 /* ── Eagerly loaded (tiny, needed on first paint) ─────────── */
 import LandingPage    from './pages/LandingPage';
+import NativeAuthScreen from './pages/NativeAuthScreen';
 import OnboardingPage from './pages/OnboardingPage';
 import DashboardPage  from './pages/DashboardPage';
 // Eager: the 404 is the catch-all, so a lazy chunk would mean a crawler (and a
@@ -281,7 +283,14 @@ export default function App() {
           <Route path="/coaching-invite/:code" element={<CoachingStaffJoinPage />} />
         )}
 
-        <Route path="/"  element={<RequireNoAuth><LandingPage /></RequireNoAuth>} />
+        {/* Native Android build gets the sign-in screen directly, not the
+            marketing site — see NativeAuthScreen's own header for why.
+            isNativePlatform() is false for every real website visitor, so
+            LandingPage (and its SEO-critical content) is completely
+            unaffected there. */}
+        <Route path="/"  element={
+          <RequireNoAuth>{Capacitor.isNativePlatform() ? <NativeAuthScreen /> : <LandingPage />}</RequireNoAuth>
+        } />
 
         {/* A branded 404, NOT a redirect. This used to be
             <Navigate to="/dashboard" replace />, which sent every logged-out

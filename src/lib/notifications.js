@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import { supabase } from './supabase';
 
 /* ── Push infrastructure ────────────────────────────────── */
@@ -29,7 +30,51 @@ function withTimeout(promise, ms, message) {
   ]);
 }
 
+// Native Android build only (Capacitor wrapper) — FCM via @capacitor/push-
+// notifications, not the Web Push/VAPID flow below (a WebView's Notification/
+// PushManager APIs are unreliable once Android's battery optimizer backgrounds
+// the app, which is exactly when a daily-reminder push matters most). Saves
+// to notification_prefs.push_fcm_token, a column the Web Push send-push edge
+// function deliberately never reads — see that migration's header for why
+// this alone does not yet mean native push DELIVERY works; only registration.
+async function requestNativePushPermission(firebaseUid) {
+  const { PushNotifications } = await import('@capacitor/push-notifications');
+
+  const perm = await PushNotifications.requestPermissions();
+  if (perm.receive !== 'granted') return { granted: false, reason: 'denied' };
+
+  return withTimeout(
+    new Promise((resolve, reject) => {
+      let regHandle, errHandle;
+      const cleanup = () => { regHandle?.remove(); errHandle?.remove(); };
+      PushNotifications.addListener('registration', async (token) => {
+        cleanup();
+        try {
+          await supabase.from('notification_prefs').upsert({
+            user_id:        firebaseUid,
+            push_fcm_token: token.value,
+            push_enabled:   true,
+            updated_at:     new Date().toISOString(),
+          }, { onConflict: 'user_id' });
+          resolve({ granted: true, token: token.value });
+        } catch (err) {
+          reject(err);
+        }
+      }).then((h) => { regHandle = h; });
+      PushNotifications.addListener('registrationError', (err) => {
+        cleanup();
+        reject(new Error(err.error || 'FCM registration failed'));
+      }).then((h) => { errHandle = h; });
+      PushNotifications.register();
+    }),
+    PUSH_SETUP_TIMEOUT_MS,
+    'Native push registration did not complete in time',
+  ).catch((err) => ({ granted: false, reason: 'error', error: err.message }));
+}
+
 export async function requestPushPermission(firebaseUid) {
+  if (Capacitor.isNativePlatform()) return requestNativePushPermission(firebaseUid);
+
   if (!('Notification' in window))    return { granted: false, reason: 'not_supported' };
   if (!('serviceWorker' in navigator)) return { granted: false, reason: 'no_sw' };
   if (!('PushManager' in window))     return { granted: false, reason: 'no_push_api' };

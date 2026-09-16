@@ -12,6 +12,7 @@ import {
   unlink,
   signOut as firebaseSignOut,
 } from 'firebase/auth';
+import { Capacitor } from '@capacitor/core';
 import { auth } from '../firebase/config';
 import { getUser, upsertUser, updateUser, getSubscription, getUserByPhone } from '../lib/supabase';
 
@@ -322,8 +323,46 @@ export function AuthProvider({ children }) {
    */
   const confirmationRef = useRef(null);
   const recaptchaRef    = useRef(null);
+  // Native path only: @capacitor-firebase/authentication is event-based
+  // (phoneCodeSent/phoneVerificationFailed listeners), not the web SDK's
+  // promise-returning confirmationResult — this is where sendOTP stashes the
+  // verificationId those listeners hand back, for verifyOTP to consume.
+  const nativePhoneRef  = useRef(null);
 
   const sendOTP = async (phoneNumber, recaptchaContainerId = 'recaptcha-container') => {
+    // Native Android build (Capacitor wrapper, not the website): Firebase's
+    // web RecaptchaVerifier doesn't belong in a WebView shell — it works, but
+    // it's the wrong tool (a visible/invisible reCAPTCHA challenge instead of
+    // Play-Integrity-based silent verification a real native app gets for
+    // free). skipNativeAuth defaults to false for this plugin, so it signs
+    // in on the native layer AND keeps the JS SDK's `auth` instance synced —
+    // onAuthStateChanged below still fires exactly as it does on web, no
+    // changes needed there. isNativePlatform() is false for every website
+    // visitor, so this branch is inert dead weight there, not a behavior
+    // change — see AuthContext.jsx's module header reasoning for why this
+    // guard pattern is safe to ship in the shared bundle.
+    if (Capacitor.isNativePlatform()) {
+      const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
+      await new Promise((resolve, reject) => {
+        let codeSentHandle, failedHandle;
+        const cleanup = () => { codeSentHandle?.remove(); failedHandle?.remove(); };
+        FirebaseAuthentication.addListener('phoneCodeSent', (event) => {
+          nativePhoneRef.current = { verificationId: event.verificationId };
+          cleanup();
+          resolve();
+        }).then((h) => { codeSentHandle = h; });
+        FirebaseAuthentication.addListener('phoneVerificationFailed', (event) => {
+          cleanup();
+          reject(new Error(event.message));
+        }).then((h) => { failedHandle = h; });
+        const call = currentUser
+          ? FirebaseAuthentication.linkWithPhoneNumber({ phoneNumber })
+          : FirebaseAuthentication.signInWithPhoneNumber({ phoneNumber });
+        call.catch((err) => { cleanup(); reject(err); });
+      });
+      return;
+    }
+
     if (!recaptchaRef.current) {
       recaptchaRef.current = new RecaptchaVerifier(auth, recaptchaContainerId, { size: 'invisible' });
     }
@@ -333,8 +372,41 @@ export function AuthProvider({ children }) {
   };
 
   const verifyOTP = async (code) => {
-    if (!confirmationRef.current) throw new Error('No OTP request in progress. Please request a new code.');
     const wasLinking = !!currentUser;
+
+    if (Capacitor.isNativePlatform()) {
+      if (!nativePhoneRef.current) throw new Error('No OTP request in progress. Please request a new code.');
+      const { verificationId } = nativePhoneRef.current;
+      nativePhoneRef.current = null;
+      const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
+      // confirmVerificationCode's resolved `user` is the plugin's own plain
+      // SignInResult shape (uid/phoneNumber/...), NOT a firebase/auth `User`
+      // instance — it has no .delete()/.getIdToken(), unlike the web path's
+      // confirmationResult.confirm() result. Every uid/phoneNumber read below
+      // uses THIS value rather than waiting on the JS-SDK sync to land, since
+      // that sync is a separate native->JS bridge event with no guaranteed
+      // ordering against this promise resolving.
+      const result = await FirebaseAuthentication.confirmVerificationCode({ verificationId, verificationCode: code });
+
+      if (wasLinking) {
+        const updated = await updateUser(currentUser.uid, { phone_number: result.user?.phoneNumber ?? null });
+        setUserProfile(updated);
+        return currentUser;
+      }
+
+      const existing = await getUserByPhone(result.user?.phoneNumber ?? null);
+      if (existing && existing.firebase_uid !== result.user?.uid) {
+        // deleteUser() (native layer) — not result.user.delete(), which
+        // doesn't exist on this plugin's plain user object.
+        await FirebaseAuthentication.deleteUser().catch(() => FirebaseAuthentication.signOut());
+        throw new Error('An account already exists for this phone number. Please continue with Google instead.');
+      }
+
+      // Profile upsert happens in onAuthStateChanged, same as the web path —
+      // the JS SDK's auth.currentUser syncs from this native sign-in shortly
+      // after (skipNativeAuth: false), firing the listener independently.
+      return result.user;
+    }
 
     // A wrong/expired code, or (when linking) this phone number already
     // being the real Firebase credential for a DIFFERENT uid, both surface
@@ -343,6 +415,7 @@ export function AuthProvider({ children }) {
     // shared mapAuthError (lib/authErrors.js) is the single place that
     // turns auth/credential-already-in-use, auth/invalid-verification-code,
     // etc. into friendly copy.
+    if (!confirmationRef.current) throw new Error('No OTP request in progress. Please request a new code.');
     const result = await confirmationRef.current.confirm(code);
     confirmationRef.current = null;
 

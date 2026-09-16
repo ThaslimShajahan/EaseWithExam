@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
+import { Capacitor } from '@capacitor/core';
 import { usePlatformSettings } from '../../hooks/usePlatformSettings';
 import { isSeoManagedPage } from '../../lib/seo';
 
@@ -33,6 +34,10 @@ export default function PlatformChrome() {
     document.title = platform_name;
   }, [loaded, platform_name, pathname]);
 
+  // No cookie-consent banner inside the native app — it's a web/browser-
+  // cookies concept, meaningless for a WebView loading local bundled assets,
+  // and its /privacy/ link is a web-site page, not a real in-app route.
+  if (Capacitor.isNativePlatform()) return null;
   if (!loaded || dismissed || cookie_banner_enabled !== 'true') return null;
 
   return (
