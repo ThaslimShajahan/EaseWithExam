@@ -4,6 +4,20 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-09-17 — Native OTP sign-in hang fixed, WhatsApp Alerts hidden, native auth screen redesign deployed
+
+Owner tested the Android app's phone-OTP sign-in on a real emulator: after entering the code, the progress bar showed then nothing happened — no error, no crash, no navigation. Investigated with logcat rather than guessing: the native `@capacitor-firebase/authentication` plugin's `confirmVerificationCode()` succeeded in under a second (`signInWithCredential succeeded.`), but its own `idTokenChange` event fired to "No listeners found for event idTokenChange" — the native sign-in only ever touched the native Android layer. `AuthContext.jsx`'s `currentUser` (and therefore `App.jsx`'s `RequireNoAuth` gate) is driven entirely by the Firebase **JS SDK's** `onAuthStateChanged(auth, ...)`, which the native sign-in never updates — so a genuinely successful sign-in left the user stuck on the sign-in screen forever.
+
+Also found and fixed, same investigation: the app's SHA-1 fingerprint was never registered in Firebase Console (`google-services.json` had no `client_type: 1` entry; logcat showed `INVALID_CERT_HASH`) — registered the debug SHA-1 and re-synced the config.
+
+**Fix** (`AuthContext.jsx`'s native `verifyOTP()` branch only): exchanges the native-obtained `verificationId` + code for a `PhoneAuthProvider.credential()` fed into the JS SDK's own `signInWithCredential(auth, credential)` (or `linkWithCredential(currentUser, credential)` when adding a phone number to an already-signed-in account) instead of the plugin's `confirmVerificationCode()`. Same identitytoolkit `verifyPhoneNumber` round-trip, no extra network cost — native now produces a real `firebase/auth` `User` and converges onto the exact same code shape the (untouched) web branch already uses. Verified end-to-end on a real emulator with a Firebase Console test phone number: previously hung indefinitely, now navigates straight to the authenticated Dashboard.
+
+Also shipped in the same window: the native app's sign-in screen (`NativeAuthScreen.jsx`) was redesigned — dark hero with illustration/depth, `+91` phone entry with live validation, 6-box auto-advancing/auto-submitting OTP input, Framer Motion transitions, Material-styled Google button (native-only, inert on web) — and the WhatsApp Alerts toggle was hidden from notification settings on both web and the native app pending relaunch (backend/data untouched, single shared component).
+
+**Deployed** via the standard procedure (`docs/DEPLOY.md`), version `2026.09.17.1`: 615/615 tests, bundle hash `index-C2W50Ix0.js` verified identical at every checkpoint, all 5 prerendered routes content-checked clean. Verified live afterward that the web (non-native) login flow is byte-for-byte unchanged — reaches the same real reCAPTCHA challenge it always has; the fix's diff never touches the web `verifyOTP()` branch.
+
+---
+
 ## 2026-09-16 (2) — Android Phase 1 groundwork deployed: guarded native shims, native-feeling landing screen
 
 Started tonight's Android work by scaffolding a separate Capacitor wrapper project (`../easewithexam-android`, sibling repo, never mixed into this one) that consumes this repo's `dist/` build output — see that repo's README for the full setup, toolchain (Capacitor v6, not v8 — `@capacitor-firebase/authentication@8.x` needs `firebase@^12`, this repo is on `firebase@^10`), and known gaps.
