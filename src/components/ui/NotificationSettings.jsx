@@ -9,6 +9,14 @@ import { requestEmailConnect, confirmEmailConnect } from '../../lib/email';
 import Modal from './Modal';
 import PhoneOTP from '../auth/PhoneOTP';
 
+// Display-only kill switch (2026-09-17) — hides the WhatsApp Alerts row from
+// both web and the Capacitor-wrapped native app (this component is shared,
+// not duplicated) while the feature is paused. Backend/data untouched:
+// prefs.whatsapp_enabled, handleWhatsAppToggle, and the phone-link modal
+// below are all still intact, just unreachable from the UI. Flip back to
+// true to restore.
+const SHOW_WHATSAPP_ALERTS = false;
+
 /**
  * Switch used by the push and email rows.
  *
@@ -392,36 +400,38 @@ export default function NotificationSettings() {
           for why there was nothing to reconnect it to). Toggle only; no
           number to type, because there's nothing left to type — it targets
           whichever number Firebase already verified via SMS OTP. */}
-      <div className="p-4 rounded-2xl border border-slate-200 bg-white">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className={`h-9 w-9 rounded-xl flex items-center justify-center shrink-0 ${waOn ? 'bg-emerald-50' : 'bg-slate-100'}`}>
-              <MessageCircle size={16} className={waOn ? 'text-emerald-600' : 'text-slate-400'} />
+      {SHOW_WHATSAPP_ALERTS && (
+        <div className="p-4 rounded-2xl border border-slate-200 bg-white">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className={`h-9 w-9 rounded-xl flex items-center justify-center shrink-0 ${waOn ? 'bg-emerald-50' : 'bg-slate-100'}`}>
+                <MessageCircle size={16} className={waOn ? 'text-emerald-600' : 'text-slate-400'} />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900">WhatsApp Alerts</p>
+                <p className="text-xs text-slate-500 truncate">
+                  {verifiedPhone
+                    ? `${waOn ? 'Active' : 'Off'} — sent to ${verifiedPhone}`
+                    : 'Weekly reports, exam alerts, announcements'}
+                </p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-900">WhatsApp Alerts</p>
-              <p className="text-xs text-slate-500 truncate">
-                {verifiedPhone
-                  ? `${waOn ? 'Active' : 'Off'} — sent to ${verifiedPhone}`
-                  : 'Weekly reports, exam alerts, announcements'}
-              </p>
-            </div>
+            {verifiedPhone ? (
+              <Toggle on={waOn} busy={waToggling} onClick={handleWhatsAppToggle} label="WhatsApp alerts" />
+            ) : (
+              <button onClick={() => setPhoneModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary-50 text-primary-700 hover:bg-primary-100 transition-colors shrink-0">
+                <Link2 size={12} /> Link phone
+              </button>
+            )}
           </div>
-          {verifiedPhone ? (
-            <Toggle on={waOn} busy={waToggling} onClick={handleWhatsAppToggle} label="WhatsApp alerts" />
-          ) : (
-            <button onClick={() => setPhoneModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary-50 text-primary-700 hover:bg-primary-100 transition-colors shrink-0">
-              <Link2 size={12} /> Link phone
-            </button>
+          {!verifiedPhone && (
+            <p className="text-[11px] text-slate-400 mt-2 pt-2 border-t border-slate-100">
+              Link and verify your phone number to enable WhatsApp alerts.
+            </p>
           )}
         </div>
-        {!verifiedPhone && (
-          <p className="text-[11px] text-slate-400 mt-2 pt-2 border-t border-slate-100">
-            Link and verify your phone number to enable WhatsApp alerts.
-          </p>
-        )}
-      </div>
+      )}
 
       <Modal open={phoneModal} onClose={() => { setPhoneModal(false); setPhoneError(''); }} title="Link Phone Number" size="sm">
         <PhoneOTP onError={setPhoneError} onStepChange={() => {}} onSuccess={handlePhoneLinked} />
