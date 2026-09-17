@@ -1,14 +1,17 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
   GoogleAuthProvider,
+  PhoneAuthProvider,
   RecaptchaVerifier,
   getRedirectResult,
   onAuthStateChanged,
   signInWithPopup,
   signInWithRedirect,
   signInWithPhoneNumber,
+  signInWithCredential,
   linkWithPhoneNumber,
   linkWithPopup,
+  linkWithCredential,
   unlink,
   signOut as firebaseSignOut,
 } from 'firebase/auth';
@@ -71,7 +74,11 @@ export function AuthProvider({ children }) {
       display_name: user.displayName || null,
       email:        user.email       || null,
       phone_number: user.phoneNumber || null,
-      photo_url:    user.photoURL    || null,
+      // photoUrl (lowercase 'url'), not photoURL, is what
+      // @capacitor-firebase/authentication's native User shape uses — see
+      // this file's native auth-state handling below for why currentUser can
+      // be that plugin's plain object instead of a real firebase/auth User.
+      photo_url:    user.photoURL || user.photoUrl || null,
     });
 
   // Re-runs the SAME upsert onAuthStateChanged does on mount, not a plain
@@ -85,7 +92,12 @@ export function AuthProvider({ children }) {
     if (!currentUser) return;
     setLoading(true);
     try {
-      await currentUser.getIdToken(true);
+      if (Capacitor.isNativePlatform()) {
+        const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
+        await FirebaseAuthentication.getIdToken({ forceRefresh: true });
+      } else {
+        await currentUser.getIdToken(true);
+      }
       const profile = await upsertProfileFor(currentUser);
       setUserProfile(profile);
       setProfileError(null);
@@ -378,33 +390,35 @@ export function AuthProvider({ children }) {
       if (!nativePhoneRef.current) throw new Error('No OTP request in progress. Please request a new code.');
       const { verificationId } = nativePhoneRef.current;
       nativePhoneRef.current = null;
-      const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
-      // confirmVerificationCode's resolved `user` is the plugin's own plain
-      // SignInResult shape (uid/phoneNumber/...), NOT a firebase/auth `User`
-      // instance — it has no .delete()/.getIdToken(), unlike the web path's
-      // confirmationResult.confirm() result. Every uid/phoneNumber read below
-      // uses THIS value rather than waiting on the JS-SDK sync to land, since
-      // that sync is a separate native->JS bridge event with no guaranteed
-      // ordering against this promise resolving.
-      const result = await FirebaseAuthentication.confirmVerificationCode({ verificationId, verificationCode: code });
+      // Redeemed via the JS SDK, NOT the plugin's own confirmVerificationCode
+      // — that call only signs in on the native layer (confirmed via logcat:
+      // its idTokenChange event fires to "No listeners found"), so
+      // auth.currentUser here never updated and onAuthStateChanged below
+      // never fired, leaving the app stuck on this screen after a genuinely
+      // successful native sign-in. This is the same identitytoolkit
+      // verifyPhoneNumber round-trip, just issued from the JS SDK using the
+      // verificationId native's Play-Integrity-backed send already obtained
+      // — it produces a real firebase/auth User, converging native onto the
+      // exact same code shape as the web branch below.
+      const credential = PhoneAuthProvider.credential(verificationId, code);
 
       if (wasLinking) {
-        const updated = await updateUser(currentUser.uid, { phone_number: result.user?.phoneNumber ?? null });
+        const result = await linkWithCredential(currentUser, credential);
+        const updated = await updateUser(currentUser.uid, { phone_number: result.user.phoneNumber });
         setUserProfile(updated);
         return currentUser;
       }
 
-      const existing = await getUserByPhone(result.user?.phoneNumber ?? null);
-      if (existing && existing.firebase_uid !== result.user?.uid) {
-        // deleteUser() (native layer) — not result.user.delete(), which
-        // doesn't exist on this plugin's plain user object.
-        await FirebaseAuthentication.deleteUser().catch(() => FirebaseAuthentication.signOut());
+      const result = await signInWithCredential(auth, credential);
+      const existing = await getUserByPhone(result.user.phoneNumber);
+      if (existing && existing.firebase_uid !== result.user.uid) {
+        await result.user.delete().catch(() => firebaseSignOut(auth));
         throw new Error('An account already exists for this phone number. Please continue with Google instead.');
       }
 
-      // Profile upsert happens in onAuthStateChanged, same as the web path —
-      // the JS SDK's auth.currentUser syncs from this native sign-in shortly
-      // after (skipNativeAuth: false), firing the listener independently.
+      // Profile upsert happens in onAuthStateChanged, which fires directly
+      // off this real JS-SDK sign-in — same as the web path below, no
+      // separate native->JS sync step needed anymore.
       return result.user;
     }
 
