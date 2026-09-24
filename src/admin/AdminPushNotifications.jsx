@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Bell, Send, Users, User, CheckCircle2, Loader2, X, AlertTriangle, MessageCircle, Smartphone, Mail } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { Bell, Send, Users, User, CheckCircle2, Loader2, X, AlertTriangle, Smartphone, Mail } from 'lucide-react';
+import { supabase, edgeFunctionHeaders } from '../lib/supabase';
 import { adminSendNotification, broadcastNotification } from '../lib/notifications';
 import StudentPicker from '../components/admin/StudentPicker';
 
@@ -55,11 +55,10 @@ export default function AdminPushNotifications() {
     expires_in_days: '',
   });
   const [selectedStudent, setSelectedStudent] = useState(null);
-  const [channels, setChannels] = useState({ inapp: true, push: true, whatsapp: false, email: false });
+  const [channels, setChannels] = useState({ inapp: true, push: true, email: false });
   const [sending,   setSending]   = useState(false);
   const [sent,      setSent]      = useState(false);
   const [pushResult, setPushResult] = useState(null);
-  const [waResult,   setWaResult]   = useState(null);
   const [emailResult, setEmailResult] = useState(null);
   const [err,       setErr]       = useState('');
   const [history,   setHistory]   = useState([]);
@@ -79,7 +78,7 @@ export default function AdminPushNotifications() {
   async function handleSend() {
     if (!form.title.trim() || !form.body.trim()) { setErr('Title and message are required'); return; }
     if (form.target === 'user' && !form.user_id.trim()) { setErr('Firebase UID is required for targeted send'); return; }
-    setSending(true); setErr(''); setSent(false); setWaResult(null); setEmailResult(null);
+    setSending(true); setErr(''); setSent(false); setEmailResult(null);
     try {
       const { error } = await supabase.rpc('admin_send_notification', {
         p_caller:          callerUid,
@@ -116,9 +115,8 @@ export default function AdminPushNotifications() {
           const fnUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-push`;
           const pushRes = await fetch(fnUrl, {
             method:  'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+            headers: await edgeFunctionHeaders(),   // admin verified server-side from the token
             body: JSON.stringify({
-              caller_uid: callerUid,
               title:      form.title.trim(),
               body:       form.body.trim(),
               user_id:    form.target === 'user' ? form.user_id.trim() : undefined,
@@ -131,24 +129,8 @@ export default function AdminPushNotifications() {
         }
       }
 
-      // WhatsApp via Twilio
-      if (channels.whatsapp) {
-        try {
-          const waUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whatsapp-alert`;
-          const waRes = await fetch(waUrl, {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-            body: JSON.stringify(
-              form.target === 'user'
-                ? { to: form.user_id.trim(), message: `${form.title.trim()}\n\n${form.body.trim()}` }
-                : { broadcast: true, caller_uid: callerUid, message: `*${form.title.trim()}*\n\n${form.body.trim()}` }
-            ),
-          });
-          setWaResult(await waRes.json());
-        } catch {
-          setWaResult({ error: 'whatsapp-alert unreachable' });
-        }
-      }
+      // WhatsApp removed 2026-09-25: the whatsapp-alert function is disabled
+      // until rebuilt (its single send had no authorization). ACTION_ITEMS.
 
       // Email via Resend (send-email edge function) — single target sends
       // directly to that user; "All Students" uses the function's own
@@ -159,9 +141,8 @@ export default function AdminPushNotifications() {
           const emailUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`;
           const emailRes = await fetch(emailUrl, {
             method:  'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+            headers: await edgeFunctionHeaders(),   // admin verified server-side from the token
             body: JSON.stringify({
-              caller_uid: callerUid,
               template:   'admin_broadcast',
               data:       { title: form.title.trim(), body: form.body.trim(), url: form.url.trim() || '' },
               ...(form.target === 'user'
@@ -276,7 +257,6 @@ export default function AdminPushNotifications() {
               {[
                 { key: 'inapp',    icon: Bell,          label: 'In-App',   locked: true  },
                 { key: 'push',     icon: Smartphone,    label: 'Device Push'             },
-                { key: 'whatsapp', icon: MessageCircle, label: 'WhatsApp'                },
                 { key: 'email',    icon: Mail,           label: 'Email'                   },
               ].map(({ key, icon: Icon, label, locked }) => {
                 const on = channels[key];
@@ -296,11 +276,6 @@ export default function AdminPushNotifications() {
                 );
               })}
             </div>
-            {channels.whatsapp && (
-              <p className="text-[10px] text-amber-400 mt-1.5">
-                WhatsApp only reaches students who saved their number in Profile → Notifications.
-              </p>
-            )}
             {channels.email && (
               <p className="text-[10px] text-amber-400 mt-1.5">
                 Email skips students with no email on file and anyone who turned off email notifications.
@@ -331,16 +306,6 @@ export default function AdminPushNotifications() {
                       : pushResult.sent > 0
                         ? `Device push: ${pushResult.sent}/${pushResult.total} delivered`
                         : (pushResult.message ?? 'Device push: no subscriptions found')}
-                  </div>
-                )}
-                {waResult && (
-                  <div className={`flex items-center gap-2 rounded-xl px-3 py-2 border text-xs font-semibold ${waResult.error ? 'bg-red-500/10 border-red-500/20 text-red-400' : waResult.sent > 0 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' : 'bg-amber-500/10 border-amber-500/20 text-amber-400'}`}>
-                    <MessageCircle size={13} className="shrink-0" />
-                    {waResult.error
-                      ? `WhatsApp error: ${waResult.error}`
-                      : waResult.sent > 0
-                        ? `WhatsApp: sent to ${waResult.sent}${waResult.total ? `/${waResult.total}` : ''} users`
-                        : (waResult.message ?? 'WhatsApp: no opted-in users found')}
                   </div>
                 )}
                 {emailResult && (

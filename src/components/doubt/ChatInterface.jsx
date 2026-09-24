@@ -9,7 +9,7 @@ import MathText from '../ui/MathText';
 import { awardXP } from '../../lib/gamification';
 import { createNotification } from '../../lib/notifications';
 import { useAuth } from '../../context/AuthContext';
-import { checkQuota, incrementQuota } from '../../lib/quota';
+import { beginAiAction, endAiAction, QuotaExceededError } from '../../lib/aiActions';
 import PaywallModal from '../ui/PaywallModal';
 import { buildExamType } from '../../lib/categories';
 
@@ -473,9 +473,14 @@ export default function ChatInterface({ imageFiles = [] }) {
     // unlimited answer-sheet analyses per day while a single typed follow-up
     // question correctly counted against their daily veda_messages_used cap.
     const uid = currentUser?.uid;
-    if (uid) {
-      const quota = await checkQuota(uid, 'veda_messages_used', isPremium);
-      if (!quota.allowed) { setShowPaywall(true); return; }
+    // Charged server-side up front (begin_ai_action); refunded if it fails.
+    let action = null;
+    try {
+      action = await beginAiAction(uid, 'veda_messages', 1);
+    } catch (qe) {
+      if (qe instanceof QuotaExceededError) { setShowPaywall(true); return; }
+      setApiError(qe.message || 'Could not start — please try again.');
+      return;
     }
 
     const ver = ++analysisVerRef.current;
@@ -566,7 +571,6 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
         { id: aiId, role: 'ai', content: full, streaming: false },
       ]);
       historyRef.current.push({ role: 'assistant', content: full });
-      if (uid) incrementQuota(uid, 'veda_messages_used').catch(() => {});
       persistMessage('user', `[Uploaded ${imageFiles.length > 1 ? `${imageFiles.length} pages` : '1 page'} for answer-sheet analysis]`);
       persistMessage('ai', full);
 
@@ -581,6 +585,7 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
         ).catch(() => {});
       }
     } catch (err) {
+      endAiAction(uid, action, 0);
       if (analysisVerRef.current !== ver) return;
       setMessages([{
         id: scanId,
@@ -598,14 +603,15 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
     const text = input.trim();
     if (!text || loading) return;
 
-    // Quota check before sending
+    // Charged server-side before sending (begin_ai_action); refunded if it fails.
     const uid = currentUser?.uid;
-    if (uid) {
-      const quota = await checkQuota(uid, 'veda_messages_used', isPremium);
-      if (!quota.allowed) {
-        setShowPaywall(true);
-        return;
-      }
+    let action = null;
+    try {
+      action = await beginAiAction(uid, 'veda_messages', 1);
+    } catch (qe) {
+      if (qe instanceof QuotaExceededError) { setShowPaywall(true); return; }
+      setApiError(qe.message || 'Could not send — please try again.');
+      return;
     }
 
     setInput('');
@@ -684,10 +690,9 @@ Follow the Answer Sheet Analysis protocol from your instructions exactly:
         m.map((msg) => msg.id === aiId ? { ...msg, streaming: false } : msg),
       );
       historyRef.current.push({ role: 'assistant', content: full });
-      // Increment quota after successful response
-      if (uid) incrementQuota(uid, 'veda_messages_used').catch(() => {});
       persistMessage('ai', full);
     } catch (err) {
+      endAiAction(uid, action, 0);
       setMessages((m) => m.filter((msg) => msg.id !== aiId));
       setApiError(
         err?.status === 429 ? 'Too many requests — please wait a moment and try again.' :

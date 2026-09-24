@@ -12,7 +12,7 @@ import { verifyQuestions } from '../lib/answerVerification';
 import { saveTestSession, supabase } from '../lib/supabase';
 import { getChapters } from '../lib/syllabus';
 import { useAuth } from '../context/AuthContext';
-import { checkQuota, incrementQuota } from '../lib/quota';
+import { beginAiAction, endAiAction, QuotaExceededError } from '../lib/aiActions';
 import { awardXP } from '../lib/gamification';
 import { createNotification } from '../lib/notifications';
 import MathText from '../components/ui/MathText';
@@ -899,12 +899,15 @@ export default function PracticeGeneratorPage({ embedded = false }) {
     setGenErr(''); setPhase('loading');
     const controller = new AbortController();
     genAbortRef.current = controller;
+    // Charged on the server, up front (begin_ai_action); unused questions are
+    // refunded below, and everything is refunded on failure or cancel.
+    let action = null;
     try {
-      const quota = await checkQuota(currentUser?.uid, 'ai_questions_used', isPremium, undefined, count);
-      if (!quota.allowed) {
-        setPhase('form');
-        setShowPaywall(true);
-        return;
+      try {
+        action = await beginAiAction(currentUser?.uid, 'ai_questions', count, { examType, subject });
+      } catch (qe) {
+        if (qe instanceof QuotaExceededError) { setPhase('form'); setShowPaywall(true); return; }
+        throw qe;
       }
 
       const raw       = await generateQuestionPaper({ subject, topics: topic, examType, difficulty, count, qTypes, rotationSlot: Math.floor(Math.random() * 5), signal: controller.signal });
@@ -929,8 +932,9 @@ export default function PracticeGeneratorPage({ embedded = false }) {
       if (!formatted.length) throw new Error('No questions returned — try different settings.');
       setQs(formatted); setQIdx(0); setCorrect(0); setPhase('quiz');
 
-      await incrementQuota(currentUser?.uid, 'ai_questions_used', formatted.length);
+      endAiAction(currentUser?.uid, action, formatted.length);   // refund questions not served
     } catch (e) {
+      endAiAction(currentUser?.uid, action, 0);                   // nothing delivered: full refund
       if (e.name === 'AbortError') return; // cancelled — page navigated away, nothing to show
       setGenErr(e.message || 'Generation failed.'); setPhase('form');
     }
@@ -981,10 +985,15 @@ export default function PracticeGeneratorPage({ embedded = false }) {
   const loadNotes = async () => {
     if (!topic.trim()) { setNotesError('Enter a chapter or topic first.'); return; }
     setNotesError(''); setNotesPhase('loading');
+    // Was uncharged. PROPOSED (owner to approve): 1 ai_questions per notes set.
+    let action = null;
     try {
+      action = await beginAiAction(currentUser?.uid, 'ai_questions', 1, { examType, subject });
       const data = await generateChapterNotes({ subject, chapter: topic, examType });
       setNotes(data); setNotesPhase('done');
     } catch (e) {
+      endAiAction(currentUser?.uid, action, 0);
+      if (e instanceof QuotaExceededError) { setNotesPhase('form'); setShowPaywall(true); return; }
       setNotesError(e.message || 'Notes generation failed.'); setNotesPhase('form');
     }
   };

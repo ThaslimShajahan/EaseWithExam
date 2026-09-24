@@ -16,8 +16,9 @@
  * this module just invokes it and surfaces a usable reason on failure.
  */
 
+import { edgeFunctionHeaders } from './supabase';
+
 const FN_URL   = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/exam-scraper`;
-const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 // Why a scrape produced nothing — shown to the admin instead of a silent zero,
 // since "blocked" and "nothing new published" need very different responses.
@@ -48,13 +49,14 @@ export async function fetchExamAlerts({ name, url, exam_category: category, id }
   try {
     res = await fetch(FN_URL, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ANON_KEY}` },
+      // The admin is identified by the Firebase token in these headers
+      // (verified server-side), not by a uid in the body.
+      headers: await edgeFunctionHeaders(),
       body: JSON.stringify({
         url,
         examBody:   name,
         category,
         sourceId:   id,
-        caller_uid: callerUid,
       }),
     });
   } catch (err) {

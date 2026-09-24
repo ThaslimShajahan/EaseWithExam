@@ -1,3 +1,7 @@
+// Every proxy call carries the caller's Firebase ID token (x-firebase-id-token);
+// ai-proxy authorises it server-side (security pass 2, 2026-09-25).
+import { edgeFunctionHeaders } from './firebaseToken';
+
 /**
  * AI Proxy — client wrapper for OpenAI chat completions.
  *
@@ -22,7 +26,6 @@
 // doesn't work — the only real guarantee is removing the code path that references it.
 const USE_EDGE = import.meta.env.PROD || import.meta.env.VITE_USE_EDGE_FUNCTIONS === 'true';
 const PROXY_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-proxy`;
-const ANON_KEY  = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 /* ── Timeout + retry ──────────────────────────────────────────────────
  *
@@ -293,10 +296,7 @@ export async function chatComplete(params, {
     ? async (sig) => {
       const res = await fetch(PROXY_URL, {
         method: 'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': `Bearer ${ANON_KEY}`,
-        },
+        headers: await edgeFunctionHeaders(),
         body: JSON.stringify({ ...params, _feature: feature, _caller_uid: callerUid }),
         signal: sig,
       });
@@ -417,10 +417,7 @@ export async function chatCompleteStream(params, { feature = null, callerUid = n
 
   const res = await fetch(PROXY_URL, {
     method: 'POST',
-    headers: {
-      'Content-Type':  'application/json',
-      'Authorization': `Bearer ${ANON_KEY}`,
-    },
+    headers: await edgeFunctionHeaders(),
     body: JSON.stringify({ ...body, _feature: feature, _caller_uid: callerUid }),
   });
   if (!res.ok) {
@@ -473,10 +470,7 @@ export async function generateImage(prompt, { size = '1024x1024', quality = 'sta
     if (USE_EDGE) {
       const res = await fetch(`${PROXY_URL}?route=images`, {
         method: 'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': `Bearer ${ANON_KEY}`,
-        },
+        headers: await edgeFunctionHeaders(),
         body: JSON.stringify({ ...body, _feature: feature, _caller_uid: callerUid }),
       });
       if (!res.ok) return null;
@@ -506,7 +500,7 @@ export async function generateSpeech(text, { voice = 'alloy', feature = null, ca
   if (USE_EDGE) {
     const res = await fetch(`${PROXY_URL}?route=tts`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ANON_KEY}` },
+      headers: await edgeFunctionHeaders(),
       body: JSON.stringify({ ...body, _feature: feature, _caller_uid: callerUid }),
     });
     if (!res.ok) {
@@ -531,7 +525,7 @@ export async function embedText(text, { feature = null, callerUid = null } = {})
     if (USE_EDGE) {
       const res = await fetch(`${PROXY_URL}?route=embeddings`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ANON_KEY}` },
+        headers: await edgeFunctionHeaders(),
         body: JSON.stringify({ model: 'text-embedding-3-small', input: text, _feature: feature, _caller_uid: callerUid }),
       });
       if (!res.ok) return null;
@@ -568,7 +562,7 @@ export async function embedTexts(texts, { feature = null, callerUid = null } = {
     if (USE_EDGE) {
       const res = await fetch(`${PROXY_URL}?route=embeddings`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ANON_KEY}` },
+        headers: await edgeFunctionHeaders(),
         body: JSON.stringify({ model: 'text-embedding-3-small', input: texts, _feature: feature, _caller_uid: callerUid }),
       });
       if (!res.ok) return out;

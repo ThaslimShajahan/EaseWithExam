@@ -15,7 +15,7 @@ import { saveTestSession, clearExamAttemptMode, lockExamAttemptMode } from '../.
 import { awardXP, incrementActivityCount } from '../../lib/gamification';
 import { saveWrongAnswers } from '../../lib/errorNotebook';
 import { createNotification } from '../../lib/notifications';
-import { checkQuota, incrementQuota } from '../../lib/quota';
+import { beginAiAction, endAiAction, QuotaExceededError } from '../../lib/aiActions';
 import QuestionView from './QuestionView';
 import QuestionPalette from './QuestionPalette';
 import ProgressShareCard from './ProgressShareCard';
@@ -958,16 +958,27 @@ export default function MockTestEngine({
       // answers) — reuses that same quota bucket instead of running unmetered.
       // Checked once per submission (not once per question) since a single
       // test's worth of grading is one "evaluation", same as one uploaded paper.
-      const quota = currentUser ? await checkQuota(currentUser.uid, 'paper_evaluations_used', isPremium) : { allowed: true };
-      if (!quota.allowed) {
+      // Charged server-side up front (begin_ai_action); refunded if grading fails.
+      let action = null;
+      let limited = false;
+      if (currentUser) {
+        try {
+          action = await beginAiAction(currentUser.uid, 'paper_evaluations', 1);
+        } catch (qe) {
+          // Over the limit, or couldn't start: submit without AI grading either way.
+          limited = true;
+          if (!(qe instanceof QuotaExceededError)) console.warn('[MockTest] grading not started:', qe.message);
+        }
+      }
+      if (limited) {
         setGradingLimited(true);
       } else {
         setEvalProgress(`Evaluating ${descriptiveQs.length} descriptive answer${descriptiveQs.length > 1 ? 's' : ''} with AI…`);
         try {
           evals = await evaluateDescriptiveAnswers(questions, answers);
-          if (currentUser) incrementQuota(currentUser.uid, 'paper_evaluations_used').catch(() => {});
         } catch {
           // non-fatal — descriptive answers just won't show evaluations
+          endAiAction(currentUser?.uid, action, 0);
         }
         setEvalProgress('');
       }

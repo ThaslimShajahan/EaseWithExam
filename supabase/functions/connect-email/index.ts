@@ -24,11 +24,12 @@
 import { serve }        from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { FROM_ADDRESS, layout, substitute, FALLBACK_TEMPLATES } from '../_shared/emailLayout.ts';
+import { resolveCaller, CALLER_CORS_HEADERS } from '../_shared/caller.ts';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': CALLER_CORS_HEADERS,
 };
 
 const SUPABASE_URL   = Deno.env.get('SUPABASE_URL') ?? '';
@@ -65,11 +66,18 @@ serve(async (req) => {
   const json = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
-  let reqBody: { caller_uid: string; email: string };
+  // The account is the VERIFIED caller (security pass 2, 2026-09-25). This
+  // used to read caller_uid from the body, so anyone could start an email
+  // link — and overwrite pending_email — on any student's account.
+  const verified = await resolveCaller(req);
+  if (!verified || verified.kind !== 'user') return json(401, { error: 'Sign in again to continue' });
+  const caller_uid = verified.uid;
+
+  let reqBody: { email: string };
   try { reqBody = await req.json(); } catch { return json(400, { error: 'Invalid JSON' }); }
 
-  const { caller_uid, email } = reqBody;
-  if (!caller_uid || !email) return json(400, { error: 'Missing required fields' });
+  const { email } = reqBody;
+  if (!email) return json(400, { error: 'Missing required fields' });
 
   const normalized = email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {

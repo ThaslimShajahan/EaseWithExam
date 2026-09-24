@@ -10,15 +10,16 @@
  * that triggered it (onboarding, payment, paper generation).
  */
 
-import { supabase } from './supabase';
+import { supabase, edgeFunctionHeaders } from './supabase';
 
 export async function sendTransactionalEmail(uid, template, data = {}) {
   if (!uid) return;
   try {
     await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-email`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-      body: JSON.stringify({ caller_uid: uid, user_id: uid, template, data }),
+      // Identity comes from the Firebase token in these headers, not the body.
+      headers: await edgeFunctionHeaders(),
+      body: JSON.stringify({ user_id: uid, template, data }),
     });
   } catch (err) {
     console.warn('[email] sendTransactionalEmail failed:', err?.message);
@@ -34,8 +35,8 @@ export async function sendTransactionalEmail(uid, template, data = {}) {
 export async function requestEmailConnect(uid, email) {
   const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/connect-email`, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-    body: JSON.stringify({ caller_uid: uid, email }),
+    headers: await edgeFunctionHeaders(),
+    body: JSON.stringify({ email }),   // the account is the verified caller, not a body uid
   });
   const result = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(result?.error || 'request_failed');

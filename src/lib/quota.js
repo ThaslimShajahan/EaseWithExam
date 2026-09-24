@@ -151,6 +151,18 @@ function invalidateUsageCache(uid) {
   for (const key of _weeklyCache.keys()) if (key.startsWith(`${uid}:`)) _weeklyCache.delete(key);
 }
 
+/**
+ * For writers OTHER than incrementQuota — i.e. the server-side charge in
+ * begin_ai_action / refund in end_ai_action (lib/aiActions.js) — to do the
+ * same two things incrementQuota does after a write: drop cached usage, then
+ * tell the live usage panels (Sidebar, Profile) to re-read.
+ */
+export function notifyQuotaChanged(uid, field, amount) {
+  if (!uid) return;
+  invalidateUsageCache(uid);
+  window.dispatchEvent(new CustomEvent('ewe:quota-updated', { detail: { field, amount } }));
+}
+
 // Exposed for tests (isolating cache state between cases, where the same uid
 // is reused across cases with different mocked responses) and for any admin
 // action that changes a user's override/plan/usage mid-session and needs the

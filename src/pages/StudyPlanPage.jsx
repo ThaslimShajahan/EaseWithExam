@@ -8,7 +8,7 @@ import {
 import { generateStudyPlan } from '../lib/questionGen';
 import { saveStudyGoal, getStudyGoal } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
-import { checkQuota, incrementQuota } from '../lib/quota';
+import { beginAiAction, endAiAction, QuotaExceededError } from '../lib/aiActions';
 import { awardXP } from '../lib/gamification';
 import { createNotification } from '../lib/notifications';
 import { addManualTask } from '../lib/dailyTasks';
@@ -469,14 +469,19 @@ export default function StudyPlanPage() {
   }, [currentUser, userProfile?.target_exam, userProfile?.syllabus, userProfile?.class_level]);
 
   const handleGenerate = async (inputs) => {
-    const quota = await checkQuota(currentUser?.uid, 'ai_questions_used', isPremium);
-    if (!quota.allowed) { setError(quota.reason); return; }
+    // Charged server-side up front (begin_ai_action); refunded if it fails.
+    let action;
+    try {
+      action = await beginAiAction(currentUser?.uid, 'ai_questions', 1);
+    } catch (qe) {
+      setError(qe instanceof QuotaExceededError ? qe.message : (qe.message || 'Could not start — please try again.'));
+      return;
+    }
     setGoal(inputs);
     setError('');
     setPhase('loading');
     try {
-      const result = await generateStudyPlan(inputs);
-      incrementQuota(currentUser?.uid, 'ai_questions_used').catch(() => {});
+      const result = await generateStudyPlan(inputs).catch((e) => { endAiAction(currentUser?.uid, action, 0); throw e; });
       setPlan(result);
       setPhase('plan');
       if (currentUser) {

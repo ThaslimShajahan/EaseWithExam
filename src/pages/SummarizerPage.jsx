@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, Upload, Loader2, Sparkles, AlertCircle } from 'lucide-react';
 import { chatComplete } from '../lib/aiProxy';
-import { checkQuota, incrementQuota } from '../lib/quota';
+import { beginAiAction, endAiAction, QuotaExceededError } from '../lib/aiActions';
 import { useAuth } from '../context/AuthContext';
 import MathText from '../components/ui/MathText';
 import PaywallModal from '../components/ui/PaywallModal';
@@ -11,7 +11,7 @@ import HubPageHeader from '../components/ui/HubPageHeader';
 // Reuses the ai_questions_used quota bucket rather than adding a dedicated
 // field — this is the same "generate AI content from my input" category as
 // Practice Generator, just a different shape of output.
-const QUOTA_FIELD = 'ai_questions_used';
+const QUOTA_BUCKET = 'ai_questions';   // begin_ai_action bucket (daily_usage_quota.ai_questions_used)
 
 function renderMarkdownish(text) {
   // Same lightweight **bold**/paragraph handling as NotesBrowser's note
@@ -73,9 +73,14 @@ export default function SummarizerPage() {
     setError(''); setSummary('');
 
     const uid = currentUser?.uid;
-    if (uid) {
-      const quota = await checkQuota(uid, QUOTA_FIELD, isPremium);
-      if (!quota.allowed) { setShowPaywall(true); return; }
+    // Charged server-side up front (begin_ai_action); refunded if it fails.
+    let action = null;
+    try {
+      action = await beginAiAction(uid, QUOTA_BUCKET, 1);
+    } catch (qe) {
+      if (qe instanceof QuotaExceededError) { setShowPaywall(true); return; }
+      setError(qe.message || 'Could not start — please try again.');
+      return;
     }
 
     setLoading(true);
@@ -108,8 +113,8 @@ ${input.slice(0, 12000)}`,
       const text = resp.choices?.[0]?.message?.content ?? '';
       if (!text) throw new Error('No summary was generated — try again.');
       setSummary(text);
-      if (uid) incrementQuota(uid, QUOTA_FIELD).catch(() => {});
     } catch (e) {
+      endAiAction(uid, action, 0);
       setError(e.message || 'Summarization failed. Please try again.');
     } finally {
       setLoading(false);

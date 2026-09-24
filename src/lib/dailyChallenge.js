@@ -1,6 +1,12 @@
 import { supabase } from './supabase';
 import { chatComplete } from './aiProxy';
 import { fetchSubjectContext } from './questionGen';
+import { beginAiAction, endAiAction } from './aiActions';
+
+// PROPOSED (owner to approve, 2026-09-25): the Daily Mini Test was uncharged.
+// 1 ai_questions per generated test — the dashboard generates one automatically,
+// so charging the full 5 would silently take a quarter of a free student's day.
+const DAILY_TEST_QUOTA = 1;
 
 /*
  * Daily Mini Test — since 2026-09-25 (migration 20260925000000) the SERVER
@@ -77,6 +83,19 @@ export async function generateDailyChallenge({ userId }) {
   if (pick?.status !== 'ok') throw new DailyChallengeUnavailable(pick?.status ?? 'no_subjects');
   const { exam_type: examType, subject, has_content: hasContent } = pick;
 
+  // Charged server-side (begin_ai_action) before any AI call; ai-proxy only
+  // serves this student while the action is open. Refunded on any failure.
+  const action = await beginAiAction(userId, 'ai_questions', DAILY_TEST_QUOTA, { examType, subject });
+  try {
+    return await generateAndSave({ userId, examType, subject, hasContent });
+  } catch (e) {
+    endAiAction(userId, action, 0);
+    throw e;
+  }
+}
+
+/* ── The generation itself, run inside the charged action ─── */
+async function generateAndSave({ userId, examType, subject, hasContent }) {
   // 2. Ground it in loaded textbook content when the server says there is some
   //    (for NEET/JEE that includes CBSE Class 11/12 NCERT — owner decision).
   const extracts = hasContent ? await fetchSubjectContext(subject, examType).catch(() => []) : [];

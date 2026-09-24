@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { auth, adminAuth } from '../firebase/config';
+import { currentFirebaseIdToken } from './firebaseToken';
 import { logChange, ENTITY, ACTION } from './changelog';
 import { embedTexts } from './aiProxy';
 import { examTypesFor } from './examMapping';
@@ -7,38 +7,15 @@ import { examTypesFor } from './examMapping';
 const supabaseUrl  = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnon = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-/**
- * Every request carries the current Firebase ID token, which Supabase
- * validates against Google's JWKS (Firebase is registered as a third-party
- * auth provider). That makes `auth.jwt() ->> 'sub'` a PROVEN Firebase UID in
- * Postgres — previously it was NULL, which is why every RPC had to take an
- * unverified `p_caller` string and why anyone with the public anon key could
- * impersonate an admin by supplying a known UID.
- *
- * Admin and student sessions are deliberately separate Firebase app instances
- * (see firebase/config.js), so the right identity depends on where we are:
- * the admin portal authenticates via `adminAuth`, everything else via `auth`.
- * Falling back the other way keeps a signed-in identity attached rather than
- * dropping to anon.
- *
- * Returning null is normal and fine — signed-out visitors hit public reads,
- * and the request simply carries the anon key alone.
- */
-export async function currentFirebaseIdToken() {
-  try {
-    const onAdminRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/admin');
-    const primary  = onAdminRoute ? adminAuth : auth;
-    const fallback = onAdminRoute ? auth      : adminAuth;
-    const user = primary.currentUser ?? fallback.currentUser;
-    return user ? await user.getIdToken() : null;
-  } catch {
-    return null;
-  }
-}
+// The Firebase ID token helper and the edge-function headers moved to
+// firebaseToken.js (2026-09-25) so aiProxy.js can use them without an import
+// cycle; re-exported here so existing imports keep working.
+export { currentFirebaseIdToken, edgeFunctionHeaders } from './firebaseToken';
 
 export const supabase = createClient(supabaseUrl, supabaseAnon, {
   accessToken: currentFirebaseIdToken,
 });
+
 
 function _getCallerUidFromSession() {
   try {

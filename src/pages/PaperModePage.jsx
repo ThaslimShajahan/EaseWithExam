@@ -15,7 +15,7 @@ import EweLogo from '../components/ui/EweLogo';
 import { chatComplete } from '../lib/aiProxy';
 import { saveWrongAnswers } from '../lib/errorNotebook';
 import { awardXP } from '../lib/gamification';
-import { checkQuota, incrementQuota } from '../lib/quota';
+import { beginAiAction, endAiAction, QuotaExceededError } from '../lib/aiActions';
 import PaywallModal from '../components/ui/PaywallModal';
 
 /* ── Helpers ─────────────────────────────────────────────── */
@@ -1082,11 +1082,14 @@ export default function PaperModePage() {
     if (!imageUrls.length || !questions.length) return;
 
     // Quota gate — checked before changing phase so error shows in upload panel
+    // Charged server-side up front (begin_ai_action); refunded if it fails.
+    let action = null;
     if (currentUser) {
-      const quota = await checkQuota(currentUser.uid, 'paper_evaluations_used', isPremium);
-      if (!quota.allowed) {
-        setShowPaywall(true);
-        return;
+      try {
+        action = await beginAiAction(currentUser.uid, 'paper_evaluations', 1);
+      } catch (qe) {
+        if (qe instanceof QuotaExceededError) { setShowPaywall(true); return; }
+        throw qe;
       }
     }
 
@@ -1099,9 +1102,6 @@ export default function PaperModePage() {
       setPhase('results');
 
       if (currentUser) {
-        // Count quota
-        incrementQuota(currentUser.uid, 'paper_evaluations_used').catch(() => {});
-
         // Analytics session
         saveTestSession(currentUser.uid, {
           test_name:      `Paper Mode: ${title}`,
@@ -1156,6 +1156,7 @@ export default function PaperModePage() {
         }
       }
     } catch (e) {
+      endAiAction(currentUser?.uid, action, 0);
       setEvalError(e.message || 'Evaluation failed — try uploading a clearer image.');
       setPhase('upload');
     }
@@ -1164,11 +1165,14 @@ export default function PaperModePage() {
   const handleSelfEval = async (questionImageUrls, answerImageUrls) => {
     // Quota gate — same AI-vision evaluation cost as handleEvaluate, so it
     // shares the paper_evaluations_used bucket rather than going unmetered.
+    // Charged server-side up front (begin_ai_action); refunded if it fails.
+    let action = null;
     if (currentUser) {
-      const quota = await checkQuota(currentUser.uid, 'paper_evaluations_used', isPremium);
-      if (!quota.allowed) {
-        setShowPaywall(true);
-        return;
+      try {
+        action = await beginAiAction(currentUser.uid, 'paper_evaluations', 1);
+      } catch (qe) {
+        if (qe instanceof QuotaExceededError) { setShowPaywall(true); return; }
+        throw qe;
       }
     }
 
@@ -1180,8 +1184,6 @@ export default function PaperModePage() {
       setSelfResult(result);
       setPhase('selfresults');
       if (currentUser) {
-        incrementQuota(currentUser.uid, 'paper_evaluations_used').catch(() => {});
-
         saveTestSession(currentUser.uid, {
           test_name:      `Self-Graded Paper: ${result.paper_title ?? 'Uploaded Paper'}`,
           score:          result.total_awarded ?? 0,
@@ -1195,6 +1197,7 @@ export default function PaperModePage() {
         }).catch(() => {});
       }
     } catch (e) {
+      endAiAction(currentUser?.uid, action, 0);
       setSelfError(e.message || 'Evaluation failed — try clearer images.');
       setPhase('selfeval');
     }

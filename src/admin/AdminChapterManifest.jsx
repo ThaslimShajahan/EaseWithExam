@@ -156,7 +156,7 @@ export default function AdminChapterManifest() {
     // 'approved' over 'draft' matches AdminContentIntake so this screen and
     // the upload gate never disagree about which row is the live one.
     let q = supabase.from('chapter_manifests')
-      .select('id, exam_type, subject, book, class_level, key_prefix, source_file, entries, status, approved_by, approved_at, file_structure, created_at')
+      .select('id, exam_type, subject, book, class_level, key_prefix, source_file, entries, status, approved_at, file_structure, created_at')
       .eq('exam_type', dbExamType).eq('subject', subject).in('status', ['draft', 'approved', 'superseded']);
     q = book.trim() ? q.eq('book', book.trim()) : q.is('book', null);
     const { data, error } = await q;

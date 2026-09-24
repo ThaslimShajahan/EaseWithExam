@@ -6,10 +6,18 @@
 //   supabase functions deploy ai-proxy
 //
 // CORS: allowed from any origin (restrict to your domain in production)
+//
+// SECURITY PASS 2 (2026-09-25): this used to relay ANY body to OpenAI for
+// anyone holding the public anon key (proven with a zero-cost probe). Now every
+// call must carry the caller's Firebase ID token (x-firebase-id-token) and is
+// authorised by ai_proxy_authorize() — feature allowlist (ai_features), route
+// and model allowlist, admin-only features, and for students an open quota
+// action (begin_ai_action) in one of the feature's buckets, with exam+subject
+// re-checked. Admins are exempt from quota. See migration 20260926010000.
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-firebase-id-token',
   // A cross-origin response hides every header not named here, so without this
   // the browser cannot read Retry-After even when we forward it below — the
   // client's rate-limit backoff would silently fall back to guessing.
@@ -18,6 +26,37 @@ const CORS = {
 
 const SUPABASE_URL         = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE_KEY     = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const ANON_KEY             = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+
+const KNOWN_ROUTES = new Set(['chat', 'embeddings', 'tts', 'images']);
+
+/**
+ * Ask the database whether this verified caller may make this call. The
+ * caller's own Firebase token is forwarded, so identity is Supabase's check.
+ * Returns the verified uid, or a ready-to-send refusal. Refusals use 401/403/
+ * 400 — never 429/5xx, which the client's retry logic would repeat.
+ */
+async function authorize(idToken: string, feature: string | null, route: string, model: string | null):
+  Promise<{ uid: string } | { refuse: Response }> {
+  const refuse = (status: number, error: string, code: string) => ({
+    refuse: new Response(JSON.stringify({ error, code }), { status, headers: { ...CORS, 'Content-Type': 'application/json' } }),
+  });
+  if (!idToken) return refuse(401, 'Sign in again to continue', 'unauthenticated');
+
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/ai_proxy_authorize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: ANON_KEY, Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ p_feature: feature, p_route: route, p_model: model }),
+  });
+  const j = await r.json().catch(() => null);
+  if (r.ok && j?.uid) return { uid: String(j.uid) };
+
+  const msg = String(j?.message ?? 'Not allowed');
+  if (j?.code === '54000') return refuse(403, msg, 'no_active_quota');
+  if (j?.code === '22023') return refuse(400, msg, 'not_allowed');
+  if (/unverified caller/.test(msg) || r.status === 401) return refuse(401, 'Sign in again to continue', 'unauthenticated');
+  return refuse(403, msg, 'forbidden');
+}
 
 /** Passes OpenAI's own backoff instruction through to the browser on a 429.
  *  Guessing a delay works; being told the real one works better. */
@@ -85,17 +124,32 @@ Deno.serve(async (req: Request) => {
       ? 'https://api.openai.com/v1/audio/speech'
       : 'https://api.openai.com/v1/chat/completions';
     const routeTag = route === 'images' ? 'images' : route === 'embeddings' ? 'embeddings' : route === 'tts' ? 'tts' : 'chat';
+    if (route !== null && !KNOWN_ROUTES.has(route)) {
+      return new Response(JSON.stringify({ error: 'Unknown route', code: 'not_allowed' }), {
+        status: 400, headers: { ...CORS, 'Content-Type': 'application/json' },
+      });
+    }
 
-    // Forward the exact OpenAI request body from the client, MINUS the two
-    // logging-only fields below — OpenAI's API rejects unknown top-level
-    // parameters, so these must never reach openaiEndpoint. Client-reported,
-    // not verified — see this migration's header comment on why.
+    // Forward the exact OpenAI request body from the client, MINUS the
+    // metadata fields below — OpenAI's API rejects unknown top-level
+    // parameters, so these must never reach openaiEndpoint. `_caller_uid` is
+    // ignored now: the logged uid is the VERIFIED one from authorize().
     const rawBody = await req.json();
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { _feature, _caller_uid, ...body } = rawBody;
     const feature   = typeof _feature === 'string' ? _feature.slice(0, 100) : null;
-    const callerUid = typeof _caller_uid === 'string' ? _caller_uid.slice(0, 100) : null;
     const model = typeof body?.model === 'string' ? body.model : null;
-    const isStreaming = body?.stream === true;
+
+    const auth = await authorize(req.headers.get('x-firebase-id-token') ?? '', feature, routeTag, model);
+    if ('refuse' in auth) {
+      await logCall({
+        route: routeTag, feature, model, caller_uid: null, status: auth.refuse.status, streaming: false,
+        prompt_tokens: null, completion_tokens: null, total_tokens: null,
+        duration_ms: Date.now() - startedAt, error: 'refused by ai_proxy_authorize',
+      });
+      return auth.refuse;
+    }
+    const callerUid = auth.uid;
 
     // req.signal aborts if the client disconnects (e.g. a component
     // unmounted mid-request and cancelled its fetch) — propagating it here

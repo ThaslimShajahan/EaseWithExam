@@ -4,8 +4,17 @@ import { FileText, BookOpen, RefreshCw, ExternalLink, Download, Layers, Trash2, 
 import { adminGetPapers, adminDeletePapers, adminDeleteAllPapers, supabase } from '../lib/supabase';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 import { DIFFICULTY_DARK, subjectBadge, SUBJECT } from '../lib/badgeStyles';
+import { fetchPdfBuffer } from '../lib/pdfAnalyzer';
 
-const EDGE_PROXY = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/pdf-proxy`;
+// Crawled PDFs are fetched through pdf-proxy, which (since security pass 2,
+// 2026-09-25) requires the caller's Firebase token in a header — so they are
+// opened via fetch + blob, not a plain link that can't carry the token.
+async function openCrawledPdf(sourceUrl) {
+  const buf  = await fetchPdfBuffer(sourceUrl);
+  const url  = URL.createObjectURL(new Blob([buf], { type: 'application/pdf' }));
+  window.open(url, '_blank', 'noopener');
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
 
 const TYPE_COLOR = {
   'Question Paper': 'bg-primary-900/40 text-primary-300',
@@ -16,9 +25,9 @@ const TYPE_COLOR = {
 };
 
 function getPdfUrl(paper) {
-  // Crawled PDF → stream via Edge Function GET (works without storage upload)
+  // Crawled PDF → opened via openCrawledPdf() (token-bearing fetch), not a link
   if (paper.source_url && !paper.source_url.startsWith('local:')) {
-    return `${EDGE_PROXY}?url=${encodeURIComponent(paper.source_url)}`;
+    return null;
   }
   // Manual upload → use Supabase Storage public URL
   if (paper.storage_path) {
@@ -101,7 +110,13 @@ function PaperCard({ paper, selected, onToggle }) {
               <ExternalLink size={11} /> Source
             </a>
           )}
-          {pdfUrl ? (
+          {paper.source_url && !isManual ? (
+            <button type="button"
+              onClick={(e) => { e.stopPropagation(); openCrawledPdf(paper.source_url).catch((err) => alert(`Could not open PDF: ${err.message}`)); }}
+              className="flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-lg bg-primary-700 hover:bg-primary-600 text-white transition-colors">
+              <Download size={11} /> View PDF
+            </button>
+          ) : pdfUrl ? (
             <a href={pdfUrl} target="_blank" rel="noopener noreferrer"
               className="flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1 rounded-lg bg-primary-700 hover:bg-primary-600 text-white transition-colors">
               <Download size={11} /> View PDF

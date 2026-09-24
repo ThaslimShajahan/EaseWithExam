@@ -2,12 +2,12 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Headphones, Loader2, AlertCircle, Download, Sparkles } from 'lucide-react';
 import { chatComplete, generateSpeech } from '../lib/aiProxy';
-import { checkQuota, incrementQuota } from '../lib/quota';
+import { beginAiAction, endAiAction, QuotaExceededError } from '../lib/aiActions';
 import { useAuth } from '../context/AuthContext';
 import PaywallModal from '../components/ui/PaywallModal';
 import HubPageHeader from '../components/ui/HubPageHeader';
 
-const QUOTA_FIELD = 'podcasts_used';
+const QUOTA_BUCKET = 'podcasts';       // begin_ai_action bucket (daily_usage_quota.podcasts_used)
 // tts-1 hard-limits input to 4096 characters — keep well under that.
 const SCRIPT_CHAR_CAP = 3500;
 
@@ -51,9 +51,14 @@ export default function PodcastPage() {
     setError(''); setScript(''); setAudioUrl('');
 
     const uid = currentUser?.uid;
-    if (uid) {
-      const quota = await checkQuota(uid, QUOTA_FIELD, isPremium);
-      if (!quota.allowed) { setShowPaywall(true); return; }
+    // Charged server-side up front (begin_ai_action); refunded if it fails.
+    let action = null;
+    try {
+      action = await beginAiAction(uid, QUOTA_BUCKET, 1);
+    } catch (qe) {
+      if (qe instanceof QuotaExceededError) { setShowPaywall(true); return; }
+      setError(qe.message || 'Could not start — please try again.');
+      return;
     }
 
     try {
@@ -68,8 +73,8 @@ export default function PodcastPage() {
       const url = URL.createObjectURL(blob);
       setAudioUrl(url);
       setStage('done');
-      if (uid) incrementQuota(uid, QUOTA_FIELD).catch(() => {});
     } catch (e) {
+      endAiAction(uid, action, 0);
       setError(e.message || 'Podcast generation failed. Please try again.');
       setStage('idle');
     }

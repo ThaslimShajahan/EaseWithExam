@@ -21,11 +21,12 @@
 
 import { serve }        from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { resolveCaller, isAdmin, CALLER_CORS_HEADERS } from '../_shared/caller.ts';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': CALLER_CORS_HEADERS,
 };
 
 const SUPABASE_URL  = Deno.env.get('SUPABASE_URL') ?? '';
@@ -186,22 +187,25 @@ serve(async (req) => {
   const json = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
-  let reqBody: { caller_uid: string; title: string; body: string; user_id?: string; url?: string; icon?: string };
+  // Identity from credentials, never the body (security pass 2, 2026-09-25):
+  // a body caller_uid used to decide both "is this a self-notify" and "is
+  // this an admin", and an admin uid was publicly readable.
+  const caller = await resolveCaller(req);
+  if (!caller) return json(401, { error: 'Sign in again to continue' });
+
+  let reqBody: { title: string; body: string; user_id?: string; url?: string; icon?: string };
   try { reqBody = await req.json(); } catch { return json(400, { error: 'Invalid JSON' }); }
 
-  const { caller_uid, title, body: msgBody, user_id, url = '/dashboard', icon = '/icon-192.png' } = reqBody;
-  if (!caller_uid || !title || !msgBody) return json(400, { error: 'Missing required fields' });
+  const { title, body: msgBody, user_id, url = '/dashboard', icon = '/icon-192.png' } = reqBody;
+  if (!title || !msgBody) return json(400, { error: 'Missing required fields' });
 
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
-  // Verify caller is either a platform admin, or pushing a notification to
-  // themselves only (self-notify — e.g. "your paper is ready" — needs no
-  // elevated privilege since it can't affect anyone but the caller).
-  const isSelfNotify = !!user_id && caller_uid === user_id;
-  if (!isSelfNotify) {
-    const { data: adminCheck } = await supabase
-      .from('admins').select('uid').eq('uid', caller_uid).eq('is_active', true).maybeSingle();
-    if (!adminCheck) return json(403, { error: 'Unauthorized' });
+  // The platform, a verified admin (one student or everyone), or a verified
+  // student pushing to THEMSELVES only (e.g. "your paper is ready").
+  const isSelfNotify = caller.kind === 'user' && !!user_id && caller.uid === user_id;
+  if (caller.kind !== 'internal' && !isSelfNotify && !isAdmin(caller)) {
+    return json(403, { error: 'Unauthorized' });
   }
 
   // Read VAPID keys from platform_settings (no Supabase secrets needed)

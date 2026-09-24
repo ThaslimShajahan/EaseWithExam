@@ -16,8 +16,8 @@
  * than a static template would add.
  *
  * Two modes:
- *   Single:    { caller_uid, user_id, template, data }
- *   Broadcast: { caller_uid, broadcast: true, template: 'admin_broadcast', data }
+ *   Single:    { user_id, template, data }   (identity from credentials — see _shared/caller.ts)
+ *   Broadcast: { broadcast: true, template: 'admin_broadcast', data }   (verified admin only)
  *              → admin-only; fetches every user with an email on file who
  *              hasn't opted out, and sends via Resend's batch endpoint
  *              (POST /emails/batch, up to 100 personalized emails per HTTP
@@ -43,12 +43,23 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   FROM_ADDRESS, SITE_URL, layout, button, renderTemplateRow, renderReceiptEmail, FALLBACK_TEMPLATES,
 } from '../_shared/emailLayout.ts';
+import { resolveCaller, isAdmin, CALLER_CORS_HEADERS } from '../_shared/caller.ts';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': CALLER_CORS_HEADERS,
 };
+
+// Who may send what (security pass 2, 2026-09-25). The body's caller_uid is
+// no longer read at all — identity comes from resolveCaller().
+//   internal (razorpay-verify/webhook, the DB reminder cron): any template —
+//     the ONLY way receipts and expiry reminders can be sent, so a browser can
+//     no longer mail anyone a forged "payment receipt".
+//   a signed-in student: only to themselves, only these:
+const SELF_TEMPLATES  = new Set(['welcome', 'paper_ready', 'subscription_active']);
+//   a verified admin: admin_broadcast only, to one student or to everyone.
+const ADMIN_TEMPLATES = new Set(['admin_broadcast']);
 
 const SUPABASE_URL   = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_KEY    = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -179,26 +190,30 @@ serve(async (req) => {
   const json = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
+  const caller = await resolveCaller(req);
+  if (!caller) return json(401, { error: 'Sign in again to continue' });
+
   let reqBody: {
-    caller_uid: string; user_id?: string; template: string; data?: Record<string, unknown>;
-    broadcast?: boolean;
+    user_id?: string; template: string; data?: Record<string, unknown>; broadcast?: boolean;
   };
   try { reqBody = await req.json(); } catch { return json(400, { error: 'Invalid JSON' }); }
 
-  const { caller_uid, user_id, template, data = {}, broadcast } = reqBody;
-  if (!caller_uid || !template || (!user_id && !broadcast)) return json(400, { error: 'Missing required fields' });
+  const { user_id, template, data = {}, broadcast } = reqBody;
+  if (!template || (!user_id && !broadcast)) return json(400, { error: 'Missing required fields' });
 
   if (template !== 'admin_broadcast' && !DB_BACKED_TEMPLATES.has(template)) {
     return json(400, { error: `Unknown template: ${template}` });
   }
 
+  const internal = caller.kind === 'internal';
+  const admin    = isAdmin(caller);
+
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
-  /* ── Broadcast: admin-only, fans out to every eligible user ── */
+  /* ── Broadcast: verified admin (or the platform), admin_broadcast only ── */
   if (broadcast) {
-    const { data: adminCheck } = await supabase
-      .from('admins').select('uid').eq('uid', caller_uid).eq('is_active', true).maybeSingle();
-    if (!adminCheck) return json(403, { error: 'Unauthorized' });
+    if (!internal && !admin) return json(403, { error: 'Unauthorized' });
+    if (!internal && !ADMIN_TEMPLATES.has(template)) return json(403, { error: 'Template not allowed for broadcast' });
 
     if (!RESEND_API_KEY) {
       console.error('[send-email] RESEND_API_KEY not configured — skipping broadcast');
@@ -252,13 +267,14 @@ serve(async (req) => {
   }
 
   /* ── Single send ──────────────────────────────────────────── */
-  // Self-send only, or an active admin sending on a user's behalf — same
-  // authorization shape as send-push.
-  const isSelfSend = caller_uid === user_id;
-  if (!isSelfSend) {
-    const { data: adminCheck } = await supabase
-      .from('admins').select('uid').eq('uid', caller_uid).eq('is_active', true).maybeSingle();
-    if (!adminCheck) return json(403, { error: 'Unauthorized' });
+  // The platform may send anything; a verified student only their own
+  // self-service templates to themselves; a verified admin only admin_broadcast.
+  if (!internal) {
+    const isSelfSend = caller.kind === 'user' && caller.uid === user_id;
+    const allowed =
+      (isSelfSend && SELF_TEMPLATES.has(template)) ||
+      (admin && ADMIN_TEMPLATES.has(template));
+    if (!allowed) return json(403, { error: 'Unauthorized' });
   }
 
   // Respect an explicit email opt-out. No row at all means never opted out

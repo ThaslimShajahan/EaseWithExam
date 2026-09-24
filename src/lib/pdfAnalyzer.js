@@ -1,4 +1,5 @@
 import { chatComplete } from './aiProxy';
+import { edgeFunctionHeaders } from './supabase';
 
 // Lazy-load pdfjs to avoid bundling it into the initial app bundle. This
 // keeps the large `pdfjs-dist` code in a separate chunk that's only fetched
@@ -31,8 +32,9 @@ async function ensurePdfjs() {
 /* ── Download strategy: Edge Fn → direct → proxy chain ─── */
 
 const EDGE_URL     = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/pdf-proxy`;
-const ANON_KEY     = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const EDGE_HEADERS = { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` };
+
+// pdf-proxy verifies the caller's Firebase token (security pass 2), so headers
+// are built per request via edgeFunctionHeaders() rather than a static anon pair.
 
 const FALLBACK_PROXIES = [
   (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
@@ -69,7 +71,7 @@ export async function fetchPdfBuffer(pdfUrl) {
   try {
     const edgeEndpoint = `${EDGE_URL}?url=${encodeURIComponent(pdfUrl)}`;
     if (import.meta.env.DEV) console.log(`[pdf] Edge Function → ${fname}`);
-    const r = await tryFetch(edgeEndpoint, { headers: EDGE_HEADERS });
+    const r = await tryFetch(edgeEndpoint, { headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, ...(await edgeFunctionHeaders()) } });
     if (import.meta.env.DEV) console.log(`[pdf] Edge Function ✓ (${r.headers.get('Content-Type')})`);
     const buf = await r.arrayBuffer();
     assertIsPdf(buf);

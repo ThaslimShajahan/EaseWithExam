@@ -13,9 +13,11 @@
 // 2023/2024 dates. The client now calls this function instead, and this
 // function refuses to invoke the model unless it genuinely has page content.
 
+import { resolveCaller, isAdmin as isVerifiedAdmin, CALLER_CORS_HEADERS } from '../_shared/caller.ts';
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': CALLER_CORS_HEADERS,
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -47,16 +49,8 @@ function extractHtmlText(html: string): string {
     .slice(0, 12000);
 }
 
-async function isAdmin(uid: string): Promise<boolean> {
-  if (!uid) return false;
-  const r = await fetch(
-    `${SUPABASE_URL}/rest/v1/admins?select=role&uid=eq.${encodeURIComponent(uid)}&is_active=eq.true`,
-    { headers: { Authorization: `Bearer ${SERVICE_ROLE_KEY}`, apikey: SERVICE_ROLE_KEY } },
-  );
-  if (!r.ok) return false;
-  const rows = await r.json();
-  return Array.isArray(rows) && rows.some((x: any) => x.role === 'admin' || x.role === 'superadmin');
-}
+// isAdmin(uid) removed 2026-09-25: it trusted a body caller_uid. Admin check is
+// now resolveCaller() + isVerifiedAdmin() in the handler (../_shared/caller.ts).
 
 async function callGpt(text: string, url: string, examBody: string): Promise<any[]> {
   const prompt = `Below is the extracted text of a web page from an Indian exam/education organisation.
@@ -176,12 +170,14 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405, headers: CORS });
 
   try {
-    const { url, examBody, category, sourceId, caller_uid } = await req.json();
-
     // This endpoint spends real money on gpt-4o per call and runs with
-    // verify_jwt disabled, so it needs its own caller check — same
-    // admins-table pattern as the rest of the admin surface.
-    if (!(await isAdmin(caller_uid))) return json({ ok: false, reason: 'access_denied' }, 403);
+    // verify_jwt disabled, so it needs its own caller check. Since security
+    // pass 2 (2026-09-25) that check uses the VERIFIED caller — it used to
+    // look up a body caller_uid, and an admin uid was publicly readable.
+    const caller = await resolveCaller(req);
+    if (!isVerifiedAdmin(caller)) return json({ ok: false, reason: 'access_denied' }, 403);
+
+    const { url, examBody, category, sourceId } = await req.json();
     if (!url) return json({ ok: false, reason: 'url_required' }, 400);
 
     let pageResp: Response;

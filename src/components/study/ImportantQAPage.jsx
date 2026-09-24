@@ -7,7 +7,7 @@ import SubjectSetupPrompt from '../ui/SubjectSetupPrompt';
 import SubjectsComingSoon from '../ui/SubjectsComingSoon';
 import { getStudyChapters } from '../../lib/syllabus';
 import { getCachedImportantQA, generateImportantQA } from '../../lib/questionGen';
-import { checkQuota, incrementQuota } from '../../lib/quota';
+import { beginAiAction, endAiAction, QuotaExceededError } from '../../lib/aiActions';
 import HubPageHeader from '../ui/HubPageHeader';
 import PaywallModal from '../ui/PaywallModal';
 import MathText from '../ui/MathText';
@@ -165,18 +165,24 @@ export default function ImportantQAPage() {
     setItems(null);
     setError('');
     setLoading(true);
+    let action = null;
     try {
       const cached = await getCachedImportantQA({ subject: activeSubject, chapter: chapterName, examType });
       if (cached) { setItems(cached.questions); setLoading(false); return; }
 
-      // Only a genuine cache miss reaches the quota gate + AI call.
-      const quota = await checkQuota(currentUser?.uid, 'ai_questions_used', isPremium, subscription?.plan, 1);
-      if (!quota.allowed) { setShowPaywall(true); setLoading(false); setChapter(null); return; }
+      // Only a genuine cache miss reaches the quota gate + AI call. Charged
+      // server-side up front (begin_ai_action); refunded if generation fails.
+      try {
+        action = await beginAiAction(currentUser?.uid, 'ai_questions', 1, { examType, subject: activeSubject });
+      } catch (qe) {
+        if (qe instanceof QuotaExceededError) { setShowPaywall(true); setLoading(false); setChapter(null); return; }
+        throw qe;
+      }
 
       const generated = await generateImportantQA({ subject: activeSubject, chapter: chapterName, examType });
-      incrementQuota(currentUser?.uid, 'ai_questions_used').catch(() => {});
       setItems(generated.questions);
     } catch (e) {
+      endAiAction(currentUser?.uid, action, 0);
       setError(e.message || 'Could not load important questions. Please try again.');
     } finally {
       setLoading(false);

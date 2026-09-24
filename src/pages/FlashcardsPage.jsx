@@ -14,14 +14,14 @@ import { useAllowedSubjects, filterAllowed } from '../lib/allowedSubjects';
 import SubjectSetupPrompt from '../components/ui/SubjectSetupPrompt';
 import SubjectsComingSoon from '../components/ui/SubjectsComingSoon';
 import { generateFlashcards, getFlashcards, getFlashcardSummary, reviewFlashcard } from '../lib/flashcards';
-import { checkQuota, incrementQuota } from '../lib/quota';
+import { beginAiAction, endAiAction, QuotaExceededError } from '../lib/aiActions';
 import { createNotification } from '../lib/notifications';
 import RingChart from '../components/ui/RingChart';
 import PaywallModal from '../components/ui/PaywallModal';
 import EweSpinner from '../components/ui/EweSpinner';
 
 // generateFlashcards() always produces a fixed-size batch (see FLASHCARDS_PER_CHAPTER
-// in lib/flashcards.js) — checkQuota needs to know this upfront to block BEFORE a
+// in lib/flashcards.js) — begin_ai_action charges this upfront, so a batch is refused BEFORE a
 // generation would push usage over the limit, not just after.
 const FLASHCARDS_PER_BATCH = 12;
 
@@ -376,12 +376,14 @@ export default function FlashcardsPage() {
 
   const [showPaywall, setShowPaywall] = useState(false);
 
+  // The quota was charged server-side in handleGenerate (begin_ai_action);
+  // a failed generation refunds it in full.
   const genMutation = useMutation({
-    mutationFn: () => generateFlashcards(uid, activeChapter, examType, 12),
+    mutationFn: ({ action }) => generateFlashcards(uid, activeChapter, examType, 12)
+      .catch((e) => { endAiAction(uid, action, 0); throw e; }),
     onSuccess: (newCards) => {
       qc.setQueryData(['flashcards', uid, activeChapter.key], newCards);
       qc.invalidateQueries({ queryKey: ['flashcard-summary'] });
-      incrementQuota(uid, 'ai_questions_used', FLASHCARDS_PER_BATCH).catch(() => {});
       if (uid) localStorage.setItem(`edu_flashcard_used_${uid}`, '1');
       setMode('study');
     },
@@ -394,9 +396,15 @@ export default function FlashcardsPage() {
   };
 
   const handleGenerate = async () => {
-    const quota = await checkQuota(uid, 'ai_questions_used', isPremium, undefined, FLASHCARDS_PER_BATCH);
-    if (!quota.allowed) { setShowPaywall(true); return; }
-    genMutation.mutate();
+    let action;
+    try {
+      action = await beginAiAction(uid, 'ai_questions', FLASHCARDS_PER_BATCH,
+        { examType, subject: activeChapter?.subject });
+    } catch (e) {
+      if (e instanceof QuotaExceededError) { setShowPaywall(true); return; }
+      throw e;
+    }
+    genMutation.mutate({ action });
   };
 
   const handleStartStudy = () => {

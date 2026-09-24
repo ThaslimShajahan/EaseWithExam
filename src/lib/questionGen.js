@@ -974,8 +974,13 @@ export async function analyzeTopicDistribution(subject, examType) {
     exam_type: examType, subject, topic: t.topic, frequency: t.frequency,
     source: 'estimated',
   }));
+  // Shared with every student of this exam, so it is written through a checked
+  // RPC (security pass 2): the caller must hold a recent charged action for
+  // this exam+subject; admins are exempt. Best-effort — never blocks generation.
   if (rows.length) {
-    supabase.from('topic_frequency').upsert(rows, { onConflict: 'exam_type,subject,topic' }).then(() => {});
+    supabase.rpc('save_topic_frequency', { p_rows: rows }).then(({ error }) => {
+      if (error && import.meta.env.DEV) console.warn('[topic_frequency] not cached:', error.message);
+    });
   }
 
   return topics.map((t) => ({ ...t, source: 'estimated' }));
@@ -1820,13 +1825,13 @@ For AI-synthesized questions not drawn from a real past-year question, set "aske
   const questions = (parsed.questions || []).slice(0, 15);
   const generated_at = new Date().toISOString();
 
-  await supabase.from('important_qa').upsert({
-    exam_type: examType,
-    subject,
-    chapter,
-    questions,
-    generated_at,
-  }, { onConflict: 'exam_type,subject,chapter' });
+  // Served to every student of this exam+chapter afterwards, so written only
+  // through save_important_qa (verified caller, allowed exam+subject, recent
+  // charged action). A refused cache write never loses the student's answer.
+  const { error: cacheErr } = await supabase.rpc('save_important_qa', {
+    p_exam_type: examType, p_subject: subject, p_chapter: chapter, p_questions: questions,
+  });
+  if (cacheErr) console.warn('[important_qa] not cached:', cacheErr.message);
 
   return { questions, generated_at };
 }

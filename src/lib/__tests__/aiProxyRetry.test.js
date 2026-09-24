@@ -137,13 +137,20 @@ describe('chatComplete timeout', () => {
    * `signal: undefined`) this promise never settles at all, so the test fails
    * by TIMING OUT — reproducing the exact 15-minute hang rather than dying on
    * an incidental TypeError from the mock. */
+  // Like real fetch, rejects at once if handed an ALREADY-aborted signal —
+  // since security pass 2 each call awaits the Firebase token before fetch
+  // starts, so a cancel can land before fetch() is even called. (A mock that
+  // only listened for a future 'abort' event would hang there; real fetch
+  // does not.)
   const neverSettles = () => vi.spyOn(globalThis, 'fetch').mockImplementation((_url, opts) =>
     new Promise((_resolve, reject) => {
-      opts?.signal?.addEventListener('abort', () => {
+      const abortErr = () => {
         const e = new Error('The operation was aborted');
         e.name = 'AbortError';
-        reject(e);
-      });
+        return e;
+      };
+      if (opts?.signal?.aborted) { reject(abortErr()); return; }
+      opts?.signal?.addEventListener('abort', () => reject(abortErr()));
     }));
 
   // THE ROOT CAUSE, pinned directly: fetch was called with signal:undefined, so

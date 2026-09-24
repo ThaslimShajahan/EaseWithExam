@@ -9,7 +9,7 @@ import { getExamPattern, getMarkingLabel, getSubjectQuestionCount, getTestDurati
 import { getExamLabel } from '../lib/categories';
 import { getPublishedTests, getCompletedTestIds, supabase, publishPYQPaper } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
-import { checkQuota } from '../lib/quota';
+import { beginAiAction, QuotaExceededError } from '../lib/aiActions';
 import { getFeatureFlag, FLAGS } from '../lib/featureFlags';
 import PaywallModal from '../components/ui/PaywallModal';
 import EweSpinner from '../components/ui/EweSpinner';
@@ -132,8 +132,16 @@ function GenerateModal({ onClose, onStarted }) {
     // would otherwise exceed the whole free daily AI-question allowance in
     // one generation, since that bucket is meant for individual practice
     // questions (Practice Generator/Flashcards/Study Plan), not full papers.
-    const quota = await checkQuota(currentUser?.uid, 'paper_generations_used', isPremium);
-    if (!quota.allowed) { setShowPaywall(true); return; }
+    // Charged server-side up front (begin_ai_action) and handed to the
+    // background job, which refunds it if generation fails.
+    let action;
+    try {
+      action = await beginAiAction(currentUser?.uid, 'paper_generations', 1, { examType, subject });
+    } catch (qe) {
+      if (qe instanceof QuotaExceededError) { setShowPaywall(true); return; }
+      setError(qe.message || 'Could not start — please try again.');
+      return;
+    }
 
     // Resolver, not a direct lookup: the map is keyed 'CBSE' / 'Class 10' but
     // examType is the combined 'CBSE Class 10', so a plain lookup missed and
@@ -152,6 +160,7 @@ function GenerateModal({ onClose, onStarted }) {
       count:           questionCount,
       qTypes:          examQTypes,
       durationMinutes: duration,
+      action,
     }).catch(() => {}); // failure already surfaced via in-app notification
 
     // Immediate feedback: transient toast + persisted in-app notification

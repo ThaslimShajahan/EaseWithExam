@@ -15,8 +15,8 @@
 
 import { generateQuestionPaper, toEngineFormat } from './questionGen';
 import { verifyQuestions } from './answerVerification';
-import { publishTest } from './supabase';
-import { incrementQuota } from './quota';
+import { publishTest, edgeFunctionHeaders } from './supabase';
+import { endAiAction } from './aiActions';
 import { createNotification, getNotificationPrefs } from './notifications';
 import { sendTransactionalEmail } from './email';
 
@@ -32,6 +32,7 @@ export function isGenerationInFlight(firebaseUid) {
 
 export async function startBackgroundPaperGeneration({
   firebaseUid, subject, topics, examType, difficulty, count, qTypes, durationMinutes,
+  action = null,   // begin_ai_action charge from the caller; refunded here on failure
 }) {
   if (inFlight.has(firebaseUid)) {
     throw new Error('A paper is already generating — wait for it to finish first.');
@@ -66,8 +67,6 @@ export async function startBackgroundPaperGeneration({
       userId:          firebaseUid,
     });
 
-    incrementQuota(firebaseUid, 'paper_generations_used').catch(() => {});
-
     // Tell any open Exam Center to refetch. Generation is fire-and-forget and
     // can finish while that page is already mounted, in which case the new
     // paper wouldn't show up until a manual reload. A plain window event keeps
@@ -89,6 +88,7 @@ export async function startBackgroundPaperGeneration({
 
     return published;
   } catch (e) {
+    endAiAction(firebaseUid, action, 0);   // no paper delivered: full refund
     await createNotification(
       firebaseUid,
       'paper_failed',
@@ -110,9 +110,10 @@ async function sendPaperReadyPush(firebaseUid, questionCount, examType, subject,
 
   await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-push`, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+    // Self-notify: send-push checks user_id against the verified Firebase
+    // token in these headers (security pass 2), not a body caller_uid.
+    headers: await edgeFunctionHeaders(),
     body: JSON.stringify({
-      caller_uid: firebaseUid,
       user_id:    firebaseUid,
       title:      'Your paper is ready! 📝',
       body:       `${examType} · ${subject} · ${questionCount} questions — tap to start.`,

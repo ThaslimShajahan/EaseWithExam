@@ -75,20 +75,19 @@ export const ROLE = {
  * @param {string} [note]      - optional human-readable reason
  * @param {object} [actor]     - { uid: string, role: string } — pulled from AdminGuard session if omitted
  */
-export function logChange(entityType, entityId, action, diff = null, note = null, actor = null) {
-  const resolvedActor = actor ?? _resolveActor();
-
+export function logChange(entityType, entityId, action, diff = null, note = null, actor = null) { // eslint-disable-line no-unused-vars
+  // Since security pass 2 (2026-09-25) the changelog accepts writes ONLY via
+  // log_change(), which stamps actor_uid/actor_role from the VERIFIED Firebase
+  // token. The `actor` argument is kept for call-site compatibility and ignored
+  // — a browser-supplied actor is exactly what made audit entries forgeable.
   // Fire-and-forget — never block the UI
   supabase
-    .from('changelog')
-    .insert({
-      entity_type: entityType,
-      entity_id:   String(entityId),
-      action,
-      actor_uid:   resolvedActor?.uid ?? null,
-      actor_role:  resolvedActor?.role ?? null,
-      diff:        diff ?? null,
-      note:        note ?? null,
+    .rpc('log_change', {
+      p_entity_type: entityType,
+      p_entity_id:   String(entityId),
+      p_action:      action,
+      p_diff:        diff ?? null,
+      p_note:        note ?? null,
     })
     .then(({ error }) => {
       if (error) {
@@ -105,27 +104,19 @@ export function logChange(entityType, entityId, action, diff = null, note = null
  *
  * @returns {Promise<{id: string}|null>}
  */
-export async function logChangeAsync(entityType, entityId, action, diff = null, note = null, actor = null) {
-  const resolvedActor = actor ?? _resolveActor();
-  const { data, error } = await supabase
-    .from('changelog')
-    .insert({
-      entity_type: entityType,
-      entity_id:   String(entityId),
-      action,
-      actor_uid:   resolvedActor?.uid ?? null,
-      actor_role:  resolvedActor?.role ?? null,
-      diff:        diff ?? null,
-      note:        note ?? null,
-    })
-    .select('id')
-    .single();
-
+export async function logChangeAsync(entityType, entityId, action, diff = null, note = null, actor = null) { // eslint-disable-line no-unused-vars
+  const { data, error } = await supabase.rpc('log_change', {
+    p_entity_type: entityType,
+    p_entity_id:   String(entityId),
+    p_action:      action,
+    p_diff:        diff ?? null,
+    p_note:        note ?? null,
+  });
   if (error) {
     console.warn('[changelog] failed to write entry:', error.message);
     return null;
   }
-  return data;
+  return data ? { id: data } : null;
 }
 
 /**
@@ -135,20 +126,16 @@ export async function logChangeAsync(entityType, entityId, action, diff = null, 
  */
 export async function logChangesBulk(entries) {
   if (!entries?.length) return;
-  const rows = entries.map((e) => {
-    const actor = e.actor ?? _resolveActor();
-    return {
+  // Admin-only on the server (log_changes_bulk); actors come from the token.
+  const { error } = await supabase.rpc('log_changes_bulk', {
+    p_entries: entries.map((e) => ({
       entity_type: e.entityType,
       entity_id:   String(e.entityId),
       action:      e.action,
-      actor_uid:   actor?.uid ?? null,
-      actor_role:  actor?.role ?? null,
       diff:        e.diff ?? null,
       note:        e.note ?? null,
-    };
+    })),
   });
-
-  const { error } = await supabase.from('changelog').insert(rows);
   if (error) {
     console.warn('[changelog] bulk insert failed:', error.message);
   }
@@ -178,31 +165,5 @@ export async function getEntityHistory(entityType, entityId, limit = 20) {
   return data ?? [];
 }
 
-/**
- * Resolve actor from sessionStorage (set by AdminGuard / CoachingPortalGuard).
- * Returns null if called from a non-admin context (student side).
- *
- * AdminGuard/CoachingPortalGuard cache their record under a key that embeds the
- * caller's uid (`edu_admin_rec_<uid>` / `edu_coaching_rec_<uid>`) — same technique
- * AdminPushNotifications.jsx's getCallerUid() already uses — so the uid can be
- * recovered here without this module needing to import AuthContext.
- */
-function _resolveActor() {
-  try {
-    const role = sessionStorage.getItem('edu_admin_role');
-    if (role) {
-      const adminKey = Object.keys(sessionStorage).find((k) => k.startsWith('edu_admin_rec_'));
-      const uid = adminKey ? adminKey.slice('edu_admin_rec_'.length) : null;
-      return { uid, role };
-    }
-    const coachingKey = Object.keys(sessionStorage).find((k) => k.startsWith('edu_coaching_rec_'));
-    if (coachingKey) {
-      const uid = coachingKey.slice('edu_coaching_rec_'.length);
-      try {
-        const rec = JSON.parse(sessionStorage.getItem(coachingKey) ?? '{}');
-        return { uid, role: rec.role ?? ROLE.INSTRUCTOR };
-      } catch { return { uid, role: ROLE.INSTRUCTOR }; }
-    }
-  } catch { /* SSR / no sessionStorage */ }
-  return null;
-}
+// _resolveActor() removed 2026-09-25: the actor is now stamped server-side from
+// the verified Firebase token by log_change(), never read from sessionStorage.
