@@ -13,12 +13,82 @@ investigate read-only, report, **wait for owner approval** before any migration 
 both-halves verification, deploy per `docs/DEPLOY.md`, `deploy_log` entry, update this file.
 Mark an item DONE only once it is deployed **and** verified live.
 
-1. ✅ **DONE 2026-09-24. Security fix: notifications, plan_config, parent_student_links,
+1. **Exam→subject fix (JEE Advanced · English bug) — NEXT, in progress 2026-09-24** (students are publicly commenting on it). Owner's prompt of 2026-09-24, as given:
+   one admin-controlled `exam_subjects` mapping in the DB, server-side refusal in every
+   generator, "coming soon" state, seed values approved before insert, read-only sweep and
+   dry-run cleanup first. Fix it properly, not with a patch.
+
+2. **Security pass 2.**
+   - `send-email`, `send-push` and `whatsapp-alert` must verify the caller's Firebase token
+     instead of trusting `caller_uid` from the request body. Today anyone who knows an admin
+     uid can email, push or WhatsApp every student.
+   - Then lock the remaining open tables (live query 2026-09-24):
+     - **anon-writable**: `changelog` (INSERT), `concept_misconceptions` (INSERT/UPDATE),
+       `content_versions` (INSERT), `crawl_jobs`, `crawl_pdfs`, `daily_challenge_attempts`,
+       `daily_challenges`, `important_qa`, `monitored_sources`, `question_cache`,
+       `question_papers`, `study_goals`, `topic_frequency`, `user_chapter_progress`,
+       `user_daily_tasks`
+     - **"temporary_open" reads of per-student data**: `daily_usage_quota`, `test_sessions`,
+       `user_gamification`
+     - **public-read, needs review (probably fine: catalogue/content)**:
+       `board_language_config`, `chapter_manifests`, `content_figures`, `feature_flags`,
+       `knowledge_base`, `paper_templates`, `platform_settings`, `pyq_questions`,
+       `quota_config`, `stream_configs`, `subjects`
+   - Also: `expire_subscriptions()` and `send_expiry_reminders()` are anon-executable.
+
+3. **Push keys + Android FCM gap. Web Push has never delivered: no VAPID keys in `platform_settings`** (found
+    2026-09-24). `send-push` returns 500 "VAPID keys not found in platform_settings" for
+    every call, so no push has ever been sent, even though 3 students have saved web push
+    subscriptions (the client has `VITE_VAPID_PUBLIC_KEY`, so subscribing works).
+    - **Native Android (FCM) has the same gap, and a worse one:** no edge function or DB
+      function delivers to `push_fcm_token` at all. The app only stores tokens (0 stored so
+      far). Delivery needs an FCM HTTP v1 path (service-account auth), which doesn't exist
+      yet.
+    - Plan when we get here: generate a VAPID key pair locally. The **owner sets the private
+      key themselves via CLI; it is never pasted in chat**. Note: the existing 3
+      subscriptions are bound to the current public key, so if the matching private key
+      can't be recovered, those students must re-subscribe after the switch. Also move the
+      private key out of `platform_settings` (a table) into an edge-function secret.
+    - Owner confirmed 2026-09-24: **the old VAPID private key is not available**, so the 3
+      existing web subscriptions must re-subscribe after new keys are set.
+4. **Students Online Now + new-registration notifications.** Owner's original prompt, with
+   these decisions: record the event **at signup** (the list shows "onboarding pending");
+   toast, bell and email fire **when onboarding completes**; email **info@acenzos.com
+   only**; owner tests Android personally. Design constraints: `verified_uid()`, not
+   `auth.uid()`; no role grants as a gate; the admin feed goes through an admin-only RPC
+   plus polling, not Realtime.
+
+5. **Guardrails**: content rules checker, fake-student Playwright walkthrough, security
+   tripwire, `npm run predeploy` gate, and a "report a problem" button. Owner's prompt of
+   2026-09-24, **including its gate**: do not start until the 2026-09-24 security fix
+   (done), the exam→subject fix (item 1) and Online Now + registration notifications
+   (item 4) are all deployed and verified.
+
+6. **Android APK on-device check. Status: BUILT, NOT YET TESTED ON DEVICE** (owner
+   deferred the check 2026-09-24).
+   - The APK is `easewithexam-android/android/app/build/outputs/apk/debug/app-debug.apk`
+     (debug build, 2026-09-24 21:06 IST). It bundles `index-VTBEZITE.js`, the same bundle as
+     live `2026.09.24.1`, verified inside the APK.
+   - Until it's installed, the **old** app on the owner's phone reads and writes the tables
+     the security fix locked. So on that phone **the bell doesn't load, notification
+     settings fail, and checkout returns 401** (the old build sends no Firebase token).
+   - To close this: uninstall the old app, install this APK (`adb install -r <path>` or copy
+     it to the phone), sign in with phone OTP, and check that the bell loads, notification
+     settings save, the Plans page opens, and My Progress Report loads.
+   - Every later web fix needs this again (plain `npm run build`, then `npm run sync` in
+     `easewithexam-android`, then `gradlew.bat assembleDebug`). That includes items 1, 4 and
+     5 (the exam→subject fix, the heartbeat, the report button). Build a fresh APK after
+     those rather than testing this one.
+
+
+**Completed:**
+
+- ✅ **DONE 2026-09-24. Security fix: notifications, plan_config, parent_student_links,
    create-razorpay-order.** Deployed and verified live: deploy `2026.09.24.1` (bundle
    `index-VTBEZITE.js`, commit `b5f117e`, migration `20260924000000`,
    `create-razorpay-order` v16), plus DB hotfix `2026.09.24.2` (migration `20260924010000`).
    - Verification: `scripts/verify-20260924-lockdown.mjs` against live gave **35 passed, 0
-     failed, 1 known pre-existing gap** (Web Push, see 3a). A separate flag test also
+     failed, 1 known pre-existing gap** (Web Push, see queue item 3). A separate flag test also
      passed: with `payments_enabled` off, checkout returns 403. The flag was off for under a
      second and is confirmed back **ON**.
    - The throwaway accounts `qa-tmp-sec0924-a/-b` are deleted from the DB (9 rows) and from
@@ -45,67 +115,6 @@ Mark an item DONE only once it is deployed **and** verified live.
      way for the student to **see and remove a linked parent**.
      → `PrivacyPolicyPage.jsx` still describes "Share with Parent". That's legal copy, so the
      owner needs to decide the wording; it was not edited.
-
-2. **🔴 Android rebuild + reinstall — required IMMEDIATELY after item 1 deploys.**
-   **Status 2026-09-24: APK BUILT, awaiting the owner's install + check.**
-   `easewithexam-android/android/app/build/outputs/apk/debug/app-debug.apk` (debug build,
-   21:06 IST) bundles `index-VTBEZITE.js`, the same bundle as live `2026.09.24.1`, verified
-   inside the APK. DONE once the owner confirms on-device: the bell loads, notification
-   settings save, the Plans page opens, and My Progress Report loads.
-   The APK bundles an old copy of the web build (`easewithexam-android/www`), which reads
-   and writes the tables item 1 locks. On the installed app, after item 1: **the bell stops
-   loading, notification settings fail, and checkout returns 401** (no Firebase token is
-   sent). Fix: `npm run sync` in `easewithexam-android` from the new `dist/`, rebuild the
-   APK, reinstall. Steps are in the item-2 report in the session log / CHANGELOG. This is
-   also required later for items 4, 5 and 6 (heartbeat, exam→subject fix, report button).
-
-3a. **Web Push has never delivered: no VAPID keys in `platform_settings`** (found
-    2026-09-24). `send-push` returns 500 "VAPID keys not found in platform_settings" for
-    every call, so no push has ever been sent, even though 3 students have saved web push
-    subscriptions (the client has `VITE_VAPID_PUBLIC_KEY`, so subscribing works).
-    - **Native Android (FCM) has the same gap, and a worse one:** no edge function or DB
-      function delivers to `push_fcm_token` at all. The app only stores tokens (0 stored so
-      far). Delivery needs an FCM HTTP v1 path (service-account auth), which doesn't exist
-      yet.
-    - Plan when we get here: generate a VAPID key pair locally. The **owner sets the private
-      key themselves via CLI; it is never pasted in chat**. Note: the existing 3
-      subscriptions are bound to the current public key, so if the matching private key
-      can't be recovered, those students must re-subscribe after the switch. Also move the
-      private key out of `platform_settings` (a table) into an edge-function secret.
-3. **Security pass 2.**
-   - `send-email`, `send-push` and `whatsapp-alert` must verify the caller's Firebase token
-     instead of trusting `caller_uid` from the request body. Today anyone who knows an admin
-     uid can email, push or WhatsApp every student.
-   - Then lock the remaining open tables (live query 2026-09-24):
-     - **anon-writable**: `changelog` (INSERT), `concept_misconceptions` (INSERT/UPDATE),
-       `content_versions` (INSERT), `crawl_jobs`, `crawl_pdfs`, `daily_challenge_attempts`,
-       `daily_challenges`, `important_qa`, `monitored_sources`, `question_cache`,
-       `question_papers`, `study_goals`, `topic_frequency`, `user_chapter_progress`,
-       `user_daily_tasks`
-     - **"temporary_open" reads of per-student data**: `daily_usage_quota`, `test_sessions`,
-       `user_gamification`
-     - **public-read, needs review (probably fine: catalogue/content)**:
-       `board_language_config`, `chapter_manifests`, `content_figures`, `feature_flags`,
-       `knowledge_base`, `paper_templates`, `platform_settings`, `pyq_questions`,
-       `quota_config`, `stream_configs`, `subjects`
-   - Also: `expire_subscriptions()` and `send_expiry_reminders()` are anon-executable.
-
-4. **Exam→subject fix (JEE Advanced · English bug).** Owner's prompt of 2026-09-24, as given:
-   one admin-controlled `exam_subjects` mapping in the DB, server-side refusal in every
-   generator, "coming soon" state, seed values approved before insert, read-only sweep and
-   dry-run cleanup first. Fix it properly, not with a patch.
-
-5. **Students Online Now + new-registration notifications.** Owner's original prompt, with
-   these decisions: record the event **at signup** (the list shows "onboarding pending");
-   toast, bell and email fire **when onboarding completes**; email **info@acenzos.com
-   only**; owner tests Android personally. Design constraints: `verified_uid()`, not
-   `auth.uid()`; no role grants as a gate; the admin feed goes through an admin-only RPC
-   plus polling, not Realtime.
-
-6. **Guardrails**: content rules checker, fake-student Playwright walkthrough, security
-   tripwire, `npm run predeploy` gate, and a "report a problem" button. Owner's prompt of
-   2026-09-24, **including its gate**: do not start until items 1, 4 and 5 are deployed and
-   verified.
 
 **Also open, from the same investigation:**
 - A phone account created **2026-08-23 14:17 UTC** (after the Aug-22 signup fix went live)
