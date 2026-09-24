@@ -13,30 +13,66 @@ investigate read-only, report, **wait for owner approval** before any migration 
 both-halves verification, deploy per `docs/DEPLOY.md`, `deploy_log` entry, update this file.
 Mark an item DONE only once it is deployed **and** verified live.
 
-1. **Security pass 2.**
-   - **Also from the exam→subject fix:** `ai-proxy` must receive and check `{exam_type,
-     subject}` for generation features (owner decision: this pass). Until then, Practice,
-     Study Plan, Flashcards and Important Q&A only *offer* server-allowed subjects; a
-     forced subject sent straight to `ai-proxy` is not refused. The Daily Mini Test is
-     fully enforced server-side already.
-   - `get_published_tests_for_student(p_uid)` has no identity check of its own (one
-     caller passes `p_uid: null` just to count).
-   - `send-email`, `send-push` and `whatsapp-alert` must verify the caller's Firebase token
-     instead of trusting `caller_uid` from the request body. Today anyone who knows an admin
-     uid can email, push or WhatsApp every student.
-   - Then lock the remaining open tables (live query 2026-09-24):
-     - **anon-writable**: `changelog` (INSERT), `concept_misconceptions` (INSERT/UPDATE),
-       `content_versions` (INSERT), `crawl_jobs`, `crawl_pdfs`, `daily_challenge_attempts`,
-       `daily_challenges`, `important_qa`, `monitored_sources`, `question_cache`,
-       `question_papers`, `study_goals`, `topic_frequency`, `user_chapter_progress`,
-       `user_daily_tasks`
-     - **"temporary_open" reads of per-student data**: `daily_usage_quota`, `test_sessions`,
-       `user_gamification`
-     - **public-read, needs review (probably fine: catalogue/content)**:
-       `board_language_config`, `chapter_manifests`, `content_figures`, `feature_flags`,
-       `knowledge_base`, `paper_templates`, `platform_settings`, `pyq_questions`,
-       `quota_config`, `stream_configs`, `subjects`
-   - Also: `expire_subscriptions()` and `send_expiry_reminders()` are anon-executable.
+1. **✅ Security pass 2: DONE 2026-09-25 (deploy `2026.09.25.1`).** Details are in
+   `docs/CHANGELOG.md`. Verified live with `scripts/verify-20260925-security-pass-2.mjs`,
+   per part and both halves. **Two small follow-ups remain before this item is fully closed:**
+   - **ai-proxy hotfix (fixed locally, NOT deployed, needs owner OK):** a student calling
+     an admin-only AI feature is refused, but with **401 "Sign in again"** instead of
+     **403**. PostgREST answers every `42501` with 401 for the anon role. The student is
+     still denied; only the message is wrong. Deploy command:
+     `npx supabase functions deploy ai-proxy --use-api`, then re-run check B3.
+   - **pdf-proxy GET of `ncert.nic.in` fails** with "Connection reset by peer" from the
+     Supabase edge (probably blocks non-Indian IPs). The fetch code is unchanged by this
+     pass, so this is pre-existing. The proxy itself works: a public https PDF gives 200.
+     Check whether crawled NCERT PDFs ever opened via the proxy.
+   - Known gaps kept as they are, to design separately:
+     - Coaching roles no longer write `changelog` rows (`log_change` stamps admins and
+       students only).
+     - `mock_tests` scoring is still checked in the browser only (no AI call to gate).
+     - `getEntityHistory` still has no `changelog` SELECT policy (pre-existing; see
+       memory "changelog SELECT policy gap").
+     - The `question_cache` helpers are dead code (the table is admin-only now).
+     - Cache-poisoning is possible only by a student who has *paid* an action for that
+       exact subject in the last 30 minutes (`important_qa` / `topic_frequency`).
+     - `ai_call_log` refusal rows carry no `caller_uid` (only 200s do).
+     - `get_published_tests_for_student(p_uid)` identity check: **not part of this pass;
+       still open.**
+
+1a. **URGENT: rebuild the Android APK.** Since `2026.09.25.1`, `ai-proxy` refuses calls
+    without a Firebase token or without a server-charged action. The APK's bundled build
+    sends neither, so **every AI feature fails on the APK** (Practice, Flashcards, Veda chat,
+    Study Plan, Exam Center and more). XP, test results and the Daily Mini Test also
+    changed. See item 6 for the rebuild steps. This moves ahead of item 6's on-device check.
+
+1b. **Rebuild WhatsApp alerts** (owner decision 2026-09-25: disabled entirely for now).
+    `whatsapp-alert` returns **410 `{disabled: true}`** for every caller, and the admin UI
+    for it is removed. It used to trust `caller_uid` from the body, so anyone could message
+    every student. A rebuild needs: verified admin via `_shared/caller.ts`, opt-in phones
+    only, a per-day cap, and an audit row per send.
+
+1c. **Fix the 3 local scripts broken by security pass 2** (owner's scripts; not changed
+    in this pass):
+    - `scripts/latexify-apply.mjs`: its `ai-proxy` calls need an `x-firebase-id-token`
+      header (admin token; admins are quota-exempt).
+    - `scripts/latexify-content.mjs` and `scripts/reclassify-content-types.mjs`: they need
+      to mint an admin token (`createCustomToken`, then `signInWithCustomToken`, the same
+      pattern as `scripts/log-deploy.mjs`) and send it.
+    - Their feature names must be on the `ai_features` allowlist
+      (`notes-latexify-backfill` is; check the others).
+
+1d. **Leaderboard privacy design (minors).** Owner decision 2026-09-25: leave the
+    leaderboard as it is for now. Note: the leaderboard views are `security_invoker` and
+    join the locked `users` table, so **they have returned nothing since the 2026-09-24
+    lock** (and effectively never worked for anon). Design before fixing: what a minor's
+    name or photo may show to other students, opt-in versus opt-out, and parental consent.
+
+1e. **Unexplained AI calls without a feature name (read-only check, 2026-09-25).** 55 rows
+    in `ai_call_log` had no `feature`. 39 of them were on 2026-08-16: all 429, 0 tokens,
+    $0. The rest were single calls on 08-18, 08-30, 09-11, 09-13 and 09-15, plus 11 calls
+    on 09-23 between 14:38 and 15:05 UTC. Total: 15,696 prompt and 32,333 completion
+    tokens, all gpt-4o, **about $0.36**. Most likely a real student on a cached old bundle
+    rather than abuse (unproven). `ai-proxy` now refuses calls with no feature, so nothing
+    to do unless it recurs.
 
 2. **Daily Mini Test: save the attempt automatically when the last question is answered**
    (owner, 2026-09-25; queued after security pass 2).

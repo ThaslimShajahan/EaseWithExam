@@ -54,7 +54,10 @@ async function authorize(idToken: string, feature: string | null, route: string,
   const msg = String(j?.message ?? 'Not allowed');
   if (j?.code === '54000') return refuse(403, msg, 'no_active_quota');
   if (j?.code === '22023') return refuse(400, msg, 'not_allowed');
-  if (/unverified caller/.test(msg) || r.status === 401) return refuse(401, 'Sign in again to continue', 'unauthenticated');
+  // PostgREST answers every 42501 with 401 for the anon role (which is every
+  // caller here), so r.status cannot tell "bad token" from "not your feature".
+  // Only the unverified-caller message means the token itself is the problem.
+  if (/unverified caller/.test(msg) || (r.status === 401 && j?.code !== '42501')) return refuse(401, 'Sign in again to continue', 'unauthenticated');
   return refuse(403, msg, 'forbidden');
 }
 

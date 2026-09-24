@@ -4,6 +4,57 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-09-25 — Security pass 2: verified callers for every edge function, ai-proxy allowlist + server-side quota, remaining tables locked (deploy 2026.09.25.1)
+
+One deploy, three parts, each with its own rollback script in `supabase/rollback/`. Commits `6890dbc` and `21ef7db`. Deployed 20:33:30–20:34:26 UTC, with 0 students active in the prior 15 minutes. Backups are in `ewe-db-backups/2026-09-25-pre-security-pass-2/` (28 files) and `webroot-2026-09-24-203122.tar.gz`.
+
+**Part A: edge functions verify who is calling** (migration `20260926000000`)
+- New `_shared/caller.ts` `resolveCaller()`. A caller is either internal (service-role bearer, or `x-internal-secret` = `INTERNAL_CALL_SECRET`) or a user whose `x-firebase-id-token` is checked by the new `whoami_verified()` RPC. The body `caller_uid` is no longer trusted anywhere.
+- Rules per function:
+  - `send-email`: a student can send only welcome, paper_ready and subscription_active, and only to themselves. `admin_broadcast` is admin-only. Receipts and reminders are server-only.
+  - `send-push`: self or admin.
+  - `connect-email`: the verified user only.
+  - `exam-scraper`: admin only.
+  - `pdf-proxy`: upload is admin-only with a 50 MB cap. Fetch requires sign-in and https, blocks private and loopback hosts (including after redirects), with a 60 MB cap.
+- `whatsapp-alert` is **disabled** (410) until it is rebuilt.
+- The hourly `send_expiry_reminders()` cron sends the internal secret, read from the vault. The secret was generated and set in both the vault and the function secrets without being printed. `send_expiry_reminders()` and `expire_subscriptions()` are no longer anon-executable.
+
+**Part B: ai-proxy is no longer an open relay** (migration `20260926010000`)
+- Every call needs a verified token. `ai_proxy_authorize()` checks the new `ai_features` allowlist: 33 features, each with an audience, routes, models and quota buckets. Only gpt-4o, gpt-4o-mini, text-embedding-3-small and tts-1 are allowed, and the images route is closed.
+- Students also need an open `ai_actions` row. `begin_ai_action()` charges the **existing** quota up front: `quota_config` per plan, or a `quota_overrides` campaign grant. It also enforces the student's allowed exam and subject. `end_ai_action()` refunds whatever wasn't used. Admins are exempt. No new caps.
+- Refusals are 400/401/403, never 429, so the client doesn't retry them. `ai_call_log` now records the verified uid.
+- Every student AI screen moved from the old browser-side `checkQuota`/`incrementQuota` to begin/end (`src/lib/aiActions.js`).
+- `upsert_usage_quota` and `check_and_increment_quota`: own row only, amount 1..500, IST date.
+- **Daily Mini Test: one per student per day** for every plan (owner decision). It charges 1 AI question. The regenerate and retake buttons are gone, and a finished student sees "Your next Daily Mini Test arrives tomorrow".
+
+**Part C: remaining tables locked** (migration `20260926020000`)
+- **Correction:** XP, streaks and mock-test results **were not saving for anyone**. The self-write policies were `TO authenticated`, which no request ever is (every request runs as `anon`). An earlier report said anon probes proved this. The real cause is the role mismatch. Now:
+  - `user_gamification`, `test_sessions`, `daily_usage_quota`, `user_chapter_progress`, `user_daily_tasks` and `study_goals` have own-row / admin policies based on `verified_uid()`.
+  - `award_xp_atomic` is SECURITY DEFINER with a self check, amount 1..500 and IST today.
+  - `increment_field` accepts 3 counters only.
+- Shared caches: `important_qa` and `topic_frequency` are read-only for signed-in users. Writes go only through `save_important_qa` / `save_topic_frequency`, which need a recent charged action for that subject.
+- These tables are now admin-only: `question_cache`, `monitored_sources`, `question_papers`, `crawl_jobs`, `crawl_pdfs` and `content_versions`. `concept_misconceptions` is own row or admin, and both `upsert_misconception` overloads check the caller.
+- `changelog`: direct inserts are gone. `log_change()` stamps the verified actor, and `log_changes_bulk()` is admin-only.
+- `knowledge_base` is signed-in only. `chapter_manifests.approved_by` and `platform_settings.updated_by` are hidden from the public.
+
+**Verified live** with `scripts/verify-20260925-security-pass-2.mjs` (3 throwaway students plus the owner's admin token, all deleted afterwards). First run: **Part A 19/20, Part B 14/15, Part C 11/11**. The two misses:
+- A16 was the test URL (w3.org answers the edge with 403). Re-checked with another public PDF: 200 `%PDF-`.
+- B3: a student calling an admin-only feature is refused, but with 401 "Sign in again" instead of 403. Fixed in `ai-proxy`; **not yet redeployed**.
+
+Specific confirmations:
+- ai-proxy with no token gives 401.
+- A free student at 20/20 is refused with `54000`, and a refund restores the balance.
+- A 100-question campaign grant lets a student take 50 while an ungranted student is refused.
+- XP, streak and a mock-test result save and read back for their owner, and are refused for anyone else.
+- whatsapp-alert gives 410 `disabled` even for an admin.
+- The cron's internal-secret call to `send-email` gets through. The 21:00 UTC run of `send_expiry_reminders` picked up the throwaway grant: `net._http_response` showed 200 `skipped: no_email_on_file` (auth passed), and the in-app reminder was written.
+
+**Cleanup:** the 4 throwaway accounts (`qa-tmp-sp2-*`, including one probe from the investigation) were deleted from 12 tables (18 → 14 users) and from Firebase (4 deleted, 0 left). The two `ai_call_log` rows for the real test calls are kept as spend records, about 31 tokens in total.
+
+**Breaks on old clients:** the Android APK (AI features, XP, results) and the owner's 3 local scripts. Both are queued in ACTION_ITEMS 1a and 1c.
+
+---
+
 ## 2026-09-25 — Exam→subject rules enforced server-side; per-exam subject visibility; Class 8–12 only (deploy 2026.09.24.3)
 
 **The bug:** a student posted a Daily Mini Test labelled "JEE Advanced · English" publicly. `src/lib/dailyChallenge.js` picked the subject from its own hardcoded list:
