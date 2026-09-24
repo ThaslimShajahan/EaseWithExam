@@ -4,6 +4,51 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-09-25 — Exam→subject rules enforced server-side; per-exam subject visibility; Class 8–12 only (deploy 2026.09.24.3)
+
+**The bug:** a student posted a Daily Mini Test labelled "JEE Advanced · English" publicly. `src/lib/dailyChallenge.js` picked the subject from its own hardcoded list:
+- exact matches only for `'NEET'` and `'JEE Main'`
+- a `'Class'`/`'CBSE'` branch
+- **everything else fell to `['Mathematics','Science','English']`**
+
+So JEE Advanced got English roughly one day in three. The browser then built the label and inserted it into `daily_challenges`, which was anon-writable. Live sweep: **62 of 258 Daily Mini Tests** had a subject outside their exam, or the exam `NONE`, and 16 history rows carried the same. All other content (knowledge base, notes, PYQs, manifests, figures, syllabus nodes) was clean. The correct mapping already existed (`exam_categories.subjects`); nothing on this path read it.
+
+**The fix:**
+- `exam_categories` is now the single source. Three hardcoded copies were removed: the `CATEGORIES` subject lists, `CORPUS_FALLBACK` (moved to the new `content_sources` column) and the daily list. `getSubjectsForExam` no longer falls back to Maths/Science/English. `buildExamType` returns `null` instead of inventing `NONE` or `NEET`.
+- New `allowed_subjects_for_caller(uid)` decides each verified student's exams and subjects on the server, using the old client rules plus two new ones: per-exam hidden subjects and no-content subjects are removed.
+- Every student picker reads this list: Practice, Exam Center, Study Plan, Important Q&A, Flashcards and Syllabus Tracker. Each shows an honest "coming soon" state when the list is empty.
+- The Daily Mini Test is picked and saved through RPCs that refuse any other pair, and the server builds the label. The three daily-challenge tables are locked.
+
+**Admin:** a new "Subject visibility for students" section in Categories. Tap to hide or show a subject per exam or class, stored in `exam_categories.hidden_subjects` and written only by `admin_set_subject_hidden`. It uses `assert_verified_admin` and writes an audit row in the same transaction. Hiding deletes nothing: the subject stays in the exam's list, and its content stays loaded. Initial state, set through the RPC (16 audited calls):
+- Hindi and Sanskrit hidden everywhere.
+- Malayalam (added to Kerala 8–10 as a no-content subject) hidden.
+- English hidden for CBSE 11/12 and Kerala 10/11/12; visible where its books are loaded.
+
+**Class 8–12 only:** CBSE and Kerala Class 6/7 rows were deactivated (no student or content used them). Practice's open class selector had fallen back to 6–12, and the admin board editor regenerated Class 6/7 rows; its upsert would have re-activated them on every save. Both are fixed.
+
+**Also fixed on the way:**
+- Daily Mini Test save errors were swallowed (the error returned by supabase-js was ignored, then an empty `catch {}`). They now show with a retry. `daily_challenge_attempts` was empty because no student ever pressed "Finish challenge", not because saves failed; the replayed client save worked.
+- WeeklyReport read a nonexistent `attempted_at` column, so its daily numbers were always empty.
+- Flashcards showed every subject whenever the search box was empty.
+- The knowledge-base keyword fallback ignored the exam, so a Class 8 miss could return Class 12 chunks.
+- The challenge-history RPCs had no identity check.
+- Practice defaulted to Biology and Exam Center to Physics.
+- A dead plan-text parser with its own subject list was deleted.
+
+**Verified live:** `scripts/verify-20260925-exam-subjects.mjs` gave 40 passed, 0 failed:
+- signup for six throwaway profiles, including incomplete and Class 6.
+- the allowed lists per exam.
+- 12 server picks for the JEE Advanced student, all Physics/Chemistry/Maths.
+- a forced "JEE Advanced · English" save refused with `22023`; hidden, other-exam, Class 6 and cross-student writes refused.
+- anon and direct table access denied.
+- a hide→show cycle that removed and then restored the same test.
+
+Plus one real end-to-end generation: server pick, CBSE 12 extracts, gpt-4o, server save.
+
+**Not yet covered:** `ai-proxy` doesn't check exam/subject, so non-daily generators are limited only through their pickers (security pass 2). The Android APK is stale again.
+
+---
+
 ## 2026-09-24 — Security fix: five anon-open tables locked, checkout identity verified (deploys 2026.09.24.1 + .2)
 
 **Found while scoping the Online Now / registration-notification features.** Proven live with the public anon key and no login: `notification_prefs` (phone and WhatsApp numbers, push keys) and `user_notifications` (all 49 rows) were readable, and all five of `user_notifications`, `notification_prefs`, `exam_notifications`, `plan_config` and `parent_student_links` accepted anonymous writes. The proof was a NULL insert that was rejected only by NOT NULL (`23502`), while the locked control table returned `42501`. The dangerous ones:

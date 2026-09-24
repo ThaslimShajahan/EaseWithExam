@@ -13,12 +13,14 @@ investigate read-only, report, **wait for owner approval** before any migration 
 both-halves verification, deploy per `docs/DEPLOY.md`, `deploy_log` entry, update this file.
 Mark an item DONE only once it is deployed **and** verified live.
 
-1. **Exam→subject fix (JEE Advanced · English bug) — NEXT, in progress 2026-09-24** (students are publicly commenting on it). Owner's prompt of 2026-09-24, as given:
-   one admin-controlled `exam_subjects` mapping in the DB, server-side refusal in every
-   generator, "coming soon" state, seed values approved before insert, read-only sweep and
-   dry-run cleanup first. Fix it properly, not with a patch.
-
-2. **Security pass 2.**
+1. **Security pass 2.**
+   - **Also from the exam→subject fix:** `ai-proxy` must receive and check `{exam_type,
+     subject}` for generation features (owner decision: this pass). Until then, Practice,
+     Study Plan, Flashcards and Important Q&A only *offer* server-allowed subjects; a
+     forced subject sent straight to `ai-proxy` is not refused. The Daily Mini Test is
+     fully enforced server-side already.
+   - `get_published_tests_for_student(p_uid)` has no identity check of its own (one
+     caller passes `p_uid: null` just to count).
    - `send-email`, `send-push` and `whatsapp-alert` must verify the caller's Firebase token
      instead of trusting `caller_uid` from the request body. Today anyone who knows an admin
      uid can email, push or WhatsApp every student.
@@ -36,7 +38,7 @@ Mark an item DONE only once it is deployed **and** verified live.
        `quota_config`, `stream_configs`, `subjects`
    - Also: `expire_subscriptions()` and `send_expiry_reminders()` are anon-executable.
 
-3. **Push keys + Android FCM gap. Web Push has never delivered: no VAPID keys in `platform_settings`** (found
+2. **Push keys + Android FCM gap. Web Push has never delivered: no VAPID keys in `platform_settings`** (found
     2026-09-24). `send-push` returns 500 "VAPID keys not found in platform_settings" for
     every call, so no push has ever been sent, even though 3 students have saved web push
     subscriptions (the client has `VITE_VAPID_PUBLIC_KEY`, so subscribing works).
@@ -51,20 +53,24 @@ Mark an item DONE only once it is deployed **and** verified live.
       private key out of `platform_settings` (a table) into an edge-function secret.
     - Owner confirmed 2026-09-24: **the old VAPID private key is not available**, so the 3
       existing web subscriptions must re-subscribe after new keys are set.
-4. **Students Online Now + new-registration notifications.** Owner's original prompt, with
+3. **Students Online Now + new-registration notifications.** Owner's original prompt, with
    these decisions: record the event **at signup** (the list shows "onboarding pending");
    toast, bell and email fire **when onboarding completes**; email **info@acenzos.com
    only**; owner tests Android personally. Design constraints: `verified_uid()`, not
    `auth.uid()`; no role grants as a gate; the admin feed goes through an admin-only RPC
    plus polling, not Realtime.
 
-5. **Guardrails**: content rules checker, fake-student Playwright walkthrough, security
+4. **Guardrails**: content rules checker, fake-student Playwright walkthrough, security
    tripwire, `npm run predeploy` gate, and a "report a problem" button. Owner's prompt of
    2026-09-24, **including its gate**: do not start until the 2026-09-24 security fix
-   (done), the exam→subject fix (item 1) and Online Now + registration notifications
-   (item 4) are all deployed and verified.
+   (done), the exam→subject fix (done) and Online Now + registration notifications
+   (item 3) are all deployed and verified.
+   - Also fix the flaky `ExpiryBadge.test.js` "drops to hours" test (seen failing once on
+     2026-09-25 under full-suite load, passing 3/3 alone). It builds a timestamp exactly
+     23h ahead, and `formatCountdown` reads the clock a few ms later, so `floor` gives 22.
+     Use fake timers. It must not flake once `npm test` gates deploys.
 
-6. **Android APK on-device check. Status: BUILT, NOT YET TESTED ON DEVICE** (owner
+5. **Android APK on-device check. Status: BUILT, NOT YET TESTED ON DEVICE** (owner
    deferred the check 2026-09-24).
    - The APK is `easewithexam-android/android/app/build/outputs/apk/debug/app-debug.apk`
      (debug build, 2026-09-24 21:06 IST). It bundles `index-VTBEZITE.js`, the same bundle as
@@ -75,13 +81,52 @@ Mark an item DONE only once it is deployed **and** verified live.
    - To close this: uninstall the old app, install this APK (`adb install -r <path>` or copy
      it to the phone), sign in with phone OTP, and check that the bell loads, notification
      settings save, the Plans page opens, and My Progress Report loads.
-   - Every later web fix needs this again (plain `npm run build`, then `npm run sync` in
-     `easewithexam-android`, then `gradlew.bat assembleDebug`). That includes items 1, 4 and
-     5 (the exam→subject fix, the heartbeat, the report button). Build a fresh APK after
-     those rather than testing this one.
+   - **This APK is already stale:** the exam→subject deploy (`2026.09.24.3`) changed the
+     web bundle, and it locked `daily_challenges` / `daily_challenge_attempts`, which the
+     APK's bundled build still reads and writes directly. So on that APK **the Daily Mini
+     Test fails to load or save**, and subject pickers use the old rules. **Rebuild before
+     testing:** plain `npm run build`, then `npm run sync` in `easewithexam-android`, then
+     `gradlew.bat assembleDebug`.
+   - Every later web fix needs a rebuild again (the heartbeat and report button, items 3
+     and 4).
 
+## 📚 NEXT CONTENT TASK — load CBSE Class 9 English into the knowledge base (2026-09-25)
+
+The owner believed its 8 content jobs were enqueued but `--work` was never run. **Checked
+read-only 2026-09-25: that is not the case.** `content_jobs` has **0 rows in total**, for
+every exam. So there is no pending CBSE 9 English job to process.
+- What actually exists: **13 study notes across 11 chapters** (loaded 2026-08-15 to
+  08-25, all with verbatim `source_text`), **0 `knowledge_base` chunks**, and syllabus
+  nodes for only **3 of the 8** approved-manifest chapters.
+- The audit log shows the manifest created and approved on 2026-08-15, and no Content
+  Intake runs for it. So the notes came through the older notes-only path, which never
+  writes knowledge-base chunks.
+- **Task:** load the 8 approved-manifest chapters through Content Intake (or `--enqueue`
+  then `--work`) so they get `knowledge_base` chunks and syllabus nodes. Until then, CBSE
+  9 English stays visible (owner decision), but its Daily Mini Tests are AI-written
+  within the subject, **not grounded in the textbook**.
 
 **Completed:**
+
+- ✅ **DONE 2026-09-25. Exam→subject fix (JEE Advanced · English bug) + per-exam subject
+   visibility + Class 8–12 only.** Deploy `2026.09.24.3` (bundle `index-uwfRZ7sz.js`,
+   migrations `20260925000000` + `20260925010000`, commits `4115c4d` + `1189243`). Details
+   are in `docs/CHANGELOG.md`.
+   - Verification: `scripts/verify-20260925-exam-subjects.mjs` against live gave **40
+     passed, 0 failed**. That includes a forced "JEE Advanced · English" save being refused
+     with `22023`, hidden subjects refused, and a hide→show cycle restoring the same test.
+     One real end-to-end generation also worked: JEE Advanced · Mathematics, grounded in
+     CBSE 12 content, saved by the server.
+   - Cleanup (backed up to `C:\Users\THASLIM\ewe-db-backups\2026-09-24-pre-20260925000000\`):
+     62 wrong-subject Daily Mini Tests, 16 history rows, and 4 ZZTEST fixtures deleted. The
+     throwaway accounts were deleted from the DB and Firebase (their 1 `ai_call_log` row and
+     the QA hide/show audit rows are kept as records).
+   - Initial visibility (16 audited admin RPC calls): Hindi and Sanskrit hidden
+     everywhere; Malayalam (added to Kerala 8–10) hidden; English hidden for CBSE 11/12
+     and Kerala 10/11/12. Class 6/7 deactivated (no student used them).
+   - Found but not the attempts bug: `daily_challenge_attempts` was empty because no
+     student ever pressed "Finish challenge". The save itself worked. Save errors are now
+     visible anyway.
 
 - ✅ **DONE 2026-09-24. Security fix: notifications, plan_config, parent_student_links,
    create-razorpay-order.** Deployed and verified live: deploy `2026.09.24.1` (bundle
