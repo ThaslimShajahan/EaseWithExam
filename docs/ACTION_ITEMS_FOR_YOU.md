@@ -47,6 +47,11 @@ Mark an item DONE only once it is deployed **and** verified live.
      owner needs to decide the wording; it was not edited.
 
 2. **🔴 Android rebuild + reinstall — required IMMEDIATELY after item 1 deploys.**
+   **Status 2026-09-24: APK BUILT, awaiting the owner's install + check.**
+   `easewithexam-android/android/app/build/outputs/apk/debug/app-debug.apk` (debug build,
+   21:06 IST) bundles `index-VTBEZITE.js`, the same bundle as live `2026.09.24.1`, verified
+   inside the APK. DONE once the owner confirms on-device: the bell loads, notification
+   settings save, the Plans page opens, and My Progress Report loads.
    The APK bundles an old copy of the web build (`easewithexam-android/www`), which reads
    and writes the tables item 1 locks. On the installed app, after item 1: **the bell stops
    loading, notification settings fail, and checkout returns 401** (no Firebase token is
