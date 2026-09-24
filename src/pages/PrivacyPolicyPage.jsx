@@ -3,7 +3,7 @@ import { ArrowLeft, Shield } from 'lucide-react';
 import { PublicNavBar, PublicFooter } from '../components/layout/PublicChrome';
 import { useSeo } from '../lib/seo';
 
-const LAST_UPDATED = 'August 4, 2026';
+const LAST_UPDATED = 'September 24, 2026';
 
 function Section({ title, children }) {
   return (
@@ -95,8 +95,9 @@ export default function PrivacyPolicyPage() {
 
           <Section title="Students under 18">
             <p>Many of our users are school students. If you are under 18, please use this platform with a
-              parent or guardian's awareness. Parents can view a student's progress via the Share with Parent
-              feature in Profile.</p>
+              parent or guardian's awareness. We may offer a feature in future that lets students share their
+              progress with a parent or guardian. If we do, we'll update this policy to explain what is shared
+              and how the student controls it.</p>
           </Section>
 
           <Section title="Your choices">

@@ -6,6 +6,83 @@ shipped in a degraded state. The narrative of what changed and why lives in
 
 ---
 
+## 🧭 TASK QUEUE (owner-set 2026-09-24) — work top to bottom, one at a time
+
+Any session picking this up: do these **in order**. Each item follows the usual process —
+investigate read-only, report, **wait for owner approval** before any migration or deploy,
+both-halves verification, deploy per `docs/DEPLOY.md`, `deploy_log` entry, update this file.
+Mark an item DONE only once it is deployed **and** verified live.
+
+1. **Security fix — notifications, plan_config, parent_student_links, create-razorpay-order.**
+   Status: *approved, deploying* (migration `20260924000000`, owner-approved 2026-09-24).
+   DONE when verified.
+   - Locks `user_notifications` (and removes it from Realtime; the bell now polls),
+     `notification_prefs`, `exam_notifications`, `plan_config` and `parent_student_links`,
+     all of which the anon key could read and/or write (proven live 2026-09-24).
+   - `create-razorpay-order` gets its identity from the caller's verified Firebase token (no
+     longer the body), enforces `payments_enabled` server-side, and keeps `verification_1rs`
+     superadmin-only on the verified identity. Price overrides are admin-set rows only.
+   - **Parent feature DISABLED** (owner decision): the table is locked with no replacement
+     RPCs. The parent view shows "unavailable". A student's own progress page still works
+     (nav label now "My Progress Report").
+     → Follow-up: rebuild the parent flow properly, with **expiring single-use links** and a
+     way for the student to **see and remove a linked parent**.
+     → `PrivacyPolicyPage.jsx` still describes "Share with Parent". That's legal copy, so the
+     owner needs to decide the wording; it was not edited.
+
+2. **🔴 Android rebuild + reinstall — required IMMEDIATELY after item 1 deploys.**
+   The APK bundles an old copy of the web build (`easewithexam-android/www`), which reads
+   and writes the tables item 1 locks. On the installed app, after item 1: **the bell stops
+   loading, notification settings fail, and checkout returns 401** (no Firebase token is
+   sent). Fix: `npm run sync` in `easewithexam-android` from the new `dist/`, rebuild the
+   APK, reinstall. Steps are in the item-2 report in the session log / CHANGELOG. This is
+   also required later for items 4, 5 and 6 (heartbeat, exam→subject fix, report button).
+
+3. **Security pass 2.**
+   - `send-email`, `send-push` and `whatsapp-alert` must verify the caller's Firebase token
+     instead of trusting `caller_uid` from the request body. Today anyone who knows an admin
+     uid can email, push or WhatsApp every student.
+   - Then lock the remaining open tables (live query 2026-09-24):
+     - **anon-writable**: `changelog` (INSERT), `concept_misconceptions` (INSERT/UPDATE),
+       `content_versions` (INSERT), `crawl_jobs`, `crawl_pdfs`, `daily_challenge_attempts`,
+       `daily_challenges`, `important_qa`, `monitored_sources`, `question_cache`,
+       `question_papers`, `study_goals`, `topic_frequency`, `user_chapter_progress`,
+       `user_daily_tasks`
+     - **"temporary_open" reads of per-student data**: `daily_usage_quota`, `test_sessions`,
+       `user_gamification`
+     - **public-read, needs review (probably fine: catalogue/content)**:
+       `board_language_config`, `chapter_manifests`, `content_figures`, `feature_flags`,
+       `knowledge_base`, `paper_templates`, `platform_settings`, `pyq_questions`,
+       `quota_config`, `stream_configs`, `subjects`
+   - Also: `expire_subscriptions()` and `send_expiry_reminders()` are anon-executable.
+
+4. **Exam→subject fix (JEE Advanced · English bug).** Owner's prompt of 2026-09-24, as given:
+   one admin-controlled `exam_subjects` mapping in the DB, server-side refusal in every
+   generator, "coming soon" state, seed values approved before insert, read-only sweep and
+   dry-run cleanup first. Fix it properly, not with a patch.
+
+5. **Students Online Now + new-registration notifications.** Owner's original prompt, with
+   these decisions: record the event **at signup** (the list shows "onboarding pending");
+   toast, bell and email fire **when onboarding completes**; email **info@acenzos.com
+   only**; owner tests Android personally. Design constraints: `verified_uid()`, not
+   `auth.uid()`; no role grants as a gate; the admin feed goes through an admin-only RPC
+   plus polling, not Realtime.
+
+6. **Guardrails**: content rules checker, fake-student Playwright walkthrough, security
+   tripwire, `npm run predeploy` gate, and a "report a problem" button. Owner's prompt of
+   2026-09-24, **including its gate**: do not start until items 1, 4 and 5 are deployed and
+   verified.
+
+**Also open, from the same investigation:**
+- A phone account created **2026-08-23 14:17 UTC** (after the Aug-22 signup fix went live)
+  signed in once and never got a `users` row. Logs from that date are gone, so the cause is
+  unknown: an abandoned signup or the bug recurring. All 6 signups since (Sep 11–18) got
+  rows. Watch for another occurrence (Firebase accounts without a `users` row).
+- `20260910000000_admin_remap_figure_url.sql` was applied live but never committed. It is
+  now committed (`9d2eeaf`).
+
+---
+
 ## 🔧 OPEN, NOT URGENT — practice/paper generation has no progress feedback for a 30-120s wait (2026-09-06)
 
 **Found during a full student-journey QA pass** — see `docs/QA_TEST_SESSION_2026-09-06.md` for the

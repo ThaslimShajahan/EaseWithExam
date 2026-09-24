@@ -204,9 +204,13 @@ export default function AdminExamWatch() {
 
   const handleClearAll = async () => {
     if (!confirm('Delete all scraped notifications?')) return;
-    await clearExamNotifications();
-    setNotifications([]);
-    showToast('Cleared all notifications');
+    try {
+      await clearExamNotifications();
+      setNotifications([]);
+      showToast('Cleared all notifications');
+    } catch (err) {
+      showToast(`Clear failed: ${err.message}`, 'error');
+    }
   };
 
   const handleRemoveNotification = async (id) => {

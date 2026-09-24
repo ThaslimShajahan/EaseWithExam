@@ -1,4 +1,4 @@
-import { supabase, getSubscription } from './supabase';
+import { supabase, getSubscription, currentFirebaseIdToken } from './supabase';
 import { createNotification } from './notifications';
 import { sendTransactionalEmail } from './email';
 import { arePaymentsEnabled, PAYMENTS_CLOSED_ERROR } from './paymentsGate';
@@ -429,13 +429,18 @@ export async function createRazorpayOrder({ planId, firebaseUid }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
+    // The server identifies the buyer from this verified Firebase ID token,
+    // not from anything in the body (2026-09-24, migration 20260924000000).
+    const idToken = await currentFirebaseIdToken();
+    if (!idToken) throw new Error('Please sign in again to continue.');
     const res = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/create-razorpay-order`, {
       method: 'POST',
       headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        'Content-Type':        'application/json',
+        'Authorization':       `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        'x-firebase-id-token': idToken,
       },
-      body: JSON.stringify({ plan_id: planId, firebase_uid: firebaseUid }),
+      body: JSON.stringify({ plan_id: planId }),
       signal: controller.signal,
     });
     order = await res.json();

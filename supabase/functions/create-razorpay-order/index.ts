@@ -19,13 +19,14 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SUPABASE_URL    = Deno.env.get('SUPABASE_URL')            ?? '';
 const SERVICE_KEY     = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+const SUPABASE_ANON   = Deno.env.get('SUPABASE_ANON_KEY')         ?? '';
 const RAZORPAY_KEY_ID = Deno.env.get('RAZORPAY_KEY_ID')          ?? '';
 const RAZORPAY_SECRET = Deno.env.get('RAZORPAY_KEY_SECRET')      ?? '';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-firebase-id-token',
 };
 
 // Server-side source of truth for plan amounts — mirrors src/lib/subscription.js's
@@ -36,15 +37,6 @@ const PLAN_AMOUNTS_PAISE: Record<string, number> = {
   neet_complete:   499900,
   verification_1rs: 100,
 };
-
-// Plans that require is_active_superadmin(firebase_uid) === true to even
-// create an order — 2026-08-14. The UI already hides verification_1rs from
-// anyone but a superadmin (PricingPage.jsx), but that's the primary gate,
-// not the only one: this is the backstop for a direct API call bypassing
-// the UI entirely, same "don't trust the client alone" reasoning as the
-// payments kill switch re-checking arePaymentsEnabled() here even though
-// the UI already hides its own CTA.
-const SUPERADMIN_ONLY_PLANS = new Set(['verification_1rs']);
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
@@ -57,34 +49,46 @@ serve(async (req) => {
     return json(500, { error: 'Razorpay credentials not configured' });
   }
 
-  let body: { plan_id?: string; firebase_uid?: string };
+  let body: { plan_id?: string };
   try { body = await req.json(); } catch { return json(400, { error: 'Invalid JSON' }); }
 
-  const { plan_id, firebase_uid } = body;
-  if (!plan_id || !firebase_uid) return json(400, { error: 'Missing plan_id or firebase_uid' });
+  const { plan_id } = body;
+  if (!plan_id) return json(400, { error: 'Missing plan_id' });
+  if (!(plan_id in PLAN_AMOUNTS_PAISE)) return json(400, { error: 'Invalid plan_id' });
+
+  // Identity comes from the caller's Firebase ID token, never the body — a
+  // body firebase_uid (still sent by older clients) is ignored. The token is
+  // forwarded to payment_order_preflight, where Supabase verifies it exactly
+  // as for every other RPC and verified_uid() yields the caller. The same RPC
+  // enforces payments_enabled server-side (fail-closed) and keeps
+  // verification_1rs superadmin-only for the VERIFIED caller — 2026-09-24,
+  // see migration 20260924000000. Authorization stays the anon key so the
+  // gateway's JWT check is unchanged; the Firebase token rides its own header.
+  const idToken = req.headers.get('x-firebase-id-token') ?? '';
+  if (!idToken) return json(401, { error: 'Sign in again to continue' });
+
+  const asCaller = createClient(SUPABASE_URL, SUPABASE_ANON, {
+    global: { headers: { Authorization: `Bearer ${idToken}` } },
+    auth:   { persistSession: false },
+  });
+  const { data: pre, error: preErr } = await asCaller.rpc('payment_order_preflight', { p_plan_id: plan_id });
+  if (preErr || !pre?.uid) {
+    const msg = preErr?.message ?? '';
+    if (msg.includes('Payments are closed')) return json(403, { error: 'Payments are currently closed' });
+    // Same non-distinguishing refusal as an unknown plan for the
+    // superadmin-only plan (redeem_payment_order / razorpay-webhook shape).
+    if (msg.includes('Invalid plan_id'))     return json(400, { error: 'Invalid plan_id' });
+    console.error('payment_order_preflight refused:', preErr?.code, msg);
+    return json(401, { error: 'Sign in again to continue' });
+  }
+  const firebase_uid: string = pre.uid;
 
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
-  if (SUPERADMIN_ONLY_PLANS.has(plan_id)) {
-    const { data: isSuperadmin } = await supabase.rpc('is_active_superadmin', { p_uid: firebase_uid });
-    if (!isSuperadmin) {
-      // Same non-distinguishing refusal shape used elsewhere tonight
-      // (redeem_payment_order, razorpay-webhook) — don't tell a caller
-      // WHY it failed beyond "invalid plan", which is also what a genuinely
-      // unknown plan_id returns below.
-      return json(400, { error: 'Invalid plan_id' });
-    }
-  }
-
-  // Admin-set price (Admin > Pricing) takes priority over the hardcoded catalogue,
-  // matching the same precedence the client used to apply itself.
-  const { data: cfg } = await supabase
-    .from('plan_config')
-    .select('price_paise')
-    .eq('plan_id', plan_id)
-    .maybeSingle();
-
-  const basePaise = cfg?.price_paise > 0 ? cfg.price_paise : PLAN_AMOUNTS_PAISE[plan_id];
+  // Admin-set price (Admin > Pricing) takes priority over the hardcoded
+  // catalogue. Since 20260924000000 plan_config accepts writes only through
+  // admin_upsert_plan_config, so any override here was set by a verified admin.
+  const basePaise = pre.price_override_paise > 0 ? pre.price_override_paise : PLAN_AMOUNTS_PAISE[plan_id];
   if (!basePaise) return json(400, { error: 'Invalid plan_id' });
 
   // GST, exclusive/on top of the listed price — owner-confirmed with their

@@ -176,26 +176,19 @@ async function seedCoaching() {
   return `1 centre, ${students.length} students, 1 assignment created`;
 }
 
+// No longer seeds notification_prefs rows: that table became own-row-RPC-only
+// in 20260924000000, and the seeded rows only held off-by-default values that
+// a missing row already means. Kept as a local-notification smoke test.
 async function seedNotifications() {
-  const rows = TEST_UIDS.map(uid => ({
-    user_id:          uid,
-    push_enabled:     false,
-    whatsapp_enabled: false,
-    daily_reminder:   '19:00:00',
-  }));
-  const { error } = await supabase.from('notification_prefs').upsert(rows, { onConflict: 'user_id' });
-  if (error) throw new Error('notification_prefs: ' + error.message);
-
-  // Fire a local notification if permission granted
   if ('Notification' in window && Notification.permission === 'granted') {
     const n = new Notification('EaseWithExam — Test Data Seeded', {
       body: `${TEST_UIDS.length} dummy students ready in the dashboard.`,
       icon: '/icon-192.png',
     });
     setTimeout(() => n.close(), 5000);
-    return `${rows.length} notification pref rows upserted + local notification sent`;
+    return 'local notification sent (notification_prefs no longer seeded)';
   }
-  return `${rows.length} notification pref rows upserted (push not granted)`;
+  return 'push not granted (notification_prefs no longer seeded)';
 }
 
 /* ── Remove all dummy data ────────────────────────────────── */

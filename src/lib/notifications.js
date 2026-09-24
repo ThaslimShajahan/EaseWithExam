@@ -50,12 +50,10 @@ async function requestNativePushPermission(firebaseUid) {
       PushNotifications.addListener('registration', async (token) => {
         cleanup();
         try {
-          await supabase.from('notification_prefs').upsert({
-            user_id:        firebaseUid,
+          await upsertOwnPrefs(firebaseUid, {
             push_fcm_token: token.value,
             push_enabled:   true,
-            updated_at:     new Date().toISOString(),
-          }, { onConflict: 'user_id' });
+          });
           resolve({ granted: true, token: token.value });
         } catch (err) {
           reject(err);
@@ -104,43 +102,44 @@ export async function requestPushPermission(firebaseUid) {
   }
 }
 
+// notification_prefs is RPC-only since 20260924000000 (it held phone numbers
+// and push keys behind an anon-readable policy). upsert_own_notification_prefs
+// refuses any column outside its whitelist rather than dropping it silently.
+async function upsertOwnPrefs(firebaseUid, fields) {
+  const { error } = await supabase.rpc('upsert_own_notification_prefs', {
+    p_uid: firebaseUid, p_fields: fields,
+  });
+  if (error) throw new Error(error.message);
+}
+
 export async function savePushSubscription(firebaseUid, endpoint, p256dh, auth) {
-  await supabase.from('notification_prefs').upsert({
-    user_id:       firebaseUid,
+  await upsertOwnPrefs(firebaseUid, {
     push_endpoint: endpoint,
     push_p256dh:   p256dh,
     push_auth:     auth,
     push_enabled:  true,
-    updated_at:    new Date().toISOString(),
-  }, { onConflict: 'user_id' });
+  });
 }
 
 export async function getNotificationPrefs(firebaseUid) {
-  const { data } = await supabase
-    .from('notification_prefs')
-    .select('*')
-    .eq('user_id', firebaseUid)
-    .maybeSingle();
-  return data;
+  const { data, error } = await supabase.rpc('get_own_notification_prefs', { p_uid: firebaseUid });
+  if (error) throw new Error(error.message);
+  // A composite-returning RPC yields an all-null object, not null, when the
+  // caller has no row yet — normalise to the old .maybeSingle() contract.
+  return data?.user_id ? data : null;
 }
 
 export async function updateNotificationPrefs(firebaseUid, prefs) {
-  await supabase.from('notification_prefs').upsert({
-    user_id:    firebaseUid,
-    ...prefs,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: 'user_id' });
+  await upsertOwnPrefs(firebaseUid, prefs);
 }
 
 export async function disablePush(firebaseUid) {
-  await supabase.from('notification_prefs').upsert({
-    user_id:       firebaseUid,
+  await upsertOwnPrefs(firebaseUid, {
     push_endpoint: null,
     push_p256dh:   null,
     push_auth:     null,
     push_enabled:  false,
-    updated_at:    new Date().toISOString(),
-  }, { onConflict: 'user_id' });
+  });
 }
 
 export function showLocalNotification(title, body, url = '/dashboard') {
@@ -193,96 +192,75 @@ export const NOTIF_TYPES = {
 
 /* ── Create a notification ──────────────────────────────── */
 
+// user_notifications is RPC-only since 20260924000000 and no longer on the
+// Realtime publication. Every student-side writer notifies only its own
+// account; NOTIF_CREATED_EVENT lets the shared feed (useNotifications)
+// refresh immediately instead of waiting for its next poll.
+export const NOTIF_CREATED_EVENT = 'ewe:notif-created';
+
 export async function createNotification(firebaseUid, type, title, body, link = null) {
   if (!firebaseUid) return;
-  try {
-    await supabase.from('user_notifications').insert({
-      user_id:    firebaseUid,
-      type,
-      title,
-      body,
-      link,
-      read:       false,
-      created_at: new Date().toISOString(),
-    });
-  } catch (err) {
-    // Table may not exist yet — fail silently so events never break
-    console.warn('[Notif] createNotification failed:', err?.message);
+  const { error } = await supabase.rpc('create_own_user_notification', {
+    p_uid: firebaseUid, p_type: type, p_title: title, p_body: body ?? '', p_link: link,
+  });
+  if (error) {
+    // A notification is a side effect — never let one break the action behind it.
+    console.warn('[Notif] createNotification failed:', error.message);
+    return;
   }
+  window.dispatchEvent(new Event(NOTIF_CREATED_EVENT));
 }
 
-/* ── Broadcast to all users (admin use only) ────────────── */
+/* ── Admin: one student / every student ─────────────────── */
+export async function adminSendNotification(callerUid, userId, type, title, body, link = null) {
+  const { error } = await supabase.rpc('admin_send_user_notification', {
+    p_caller: callerUid, p_user_id: userId, p_type: type, p_title: title, p_body: body ?? '', p_link: link,
+  });
+  if (error) throw new Error(error.message);
+}
+
 export async function broadcastNotification(callerUid, type, title, body, link = null) {
-  try {
-    // Fetch all firebase_uids from the users table (limit 2000 — enough for most deployments)
-    const { data: uids } = await supabase.rpc('admin_list_all_firebase_uids', { p_caller: callerUid });
-    if (!uids?.length) return;
-
-    const now  = new Date().toISOString();
-    const rows = uids.map((firebase_uid) => ({
-      user_id:    firebase_uid,
-      type,
-      title,
-      body,
-      link,
-      read:       false,
-      created_at: now,
-    }));
-
-    // Insert in batches of 200 to stay within PostgREST limits
-    for (let i = 0; i < rows.length; i += 200) {
-      await supabase.from('user_notifications').insert(rows.slice(i, i + 200));
-    }
-  } catch (err) {
-    console.warn('[Notif] broadcastNotification failed:', err?.message);
+  const { data, error } = await supabase.rpc('admin_broadcast_user_notification', {
+    p_caller: callerUid, p_type: type, p_title: title, p_body: body ?? '', p_link: link,
+  });
+  if (error) {
+    console.warn('[Notif] broadcastNotification failed:', error.message);
+    return 0;
   }
+  return data ?? 0;
 }
 
 /* ── Fetch notifications ────────────────────────────────── */
 
+// Returns null (not []) when the fetch fails, so a poll that hits a blip
+// keeps what's on screen instead of blanking the bell.
 export async function getNotifications(firebaseUid, limit = 30) {
-  try {
-    const { data } = await supabase
-      .from('user_notifications')
-      .select('*')
-      .eq('user_id', firebaseUid)
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    return data ?? [];
-  } catch {
-    return [];
+  const { data, error } = await supabase.rpc('get_own_user_notifications', {
+    p_uid: firebaseUid, p_limit: limit,
+  });
+  if (error) {
+    console.warn('[Notif] getNotifications failed:', error.message);
+    return null;
   }
+  return data ?? [];
 }
 
 /* ── Mark as read ───────────────────────────────────────── */
 
-export async function markNotificationRead(notificationId) {
-  await supabase
-    .from('user_notifications')
-    .update({ read: true })
-    .eq('id', notificationId);
+export async function markNotificationRead(firebaseUid, notificationId) {
+  await supabase.rpc('mark_own_user_notification_read', { p_uid: firebaseUid, p_id: notificationId });
 }
 
 export async function markAllNotificationsRead(firebaseUid) {
-  await supabase
-    .from('user_notifications')
-    .update({ read: true })
-    .eq('user_id', firebaseUid)
-    .eq('read', false);
+  await supabase.rpc('mark_all_own_user_notifications_read', { p_uid: firebaseUid });
 }
 
 /* ── Delete notification ────────────────────────────────── */
 
-export async function deleteNotification(notificationId) {
-  await supabase
-    .from('user_notifications')
-    .delete()
-    .eq('id', notificationId);
+export async function deleteNotification(firebaseUid, notificationId) {
+  await supabase.rpc('delete_own_user_notification', { p_uid: firebaseUid, p_id: notificationId });
 }
 
 export async function deleteAllNotifications(firebaseUid) {
-  await supabase
-    .from('user_notifications')
-    .delete()
-    .eq('user_id', firebaseUid);
+  await supabase.rpc('delete_all_own_user_notifications', { p_uid: firebaseUid });
 }

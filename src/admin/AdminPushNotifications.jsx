@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Bell, Send, Users, User, CheckCircle2, Loader2, X, AlertTriangle, MessageCircle, Smartphone, Mail } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { createNotification, broadcastNotification } from '../lib/notifications';
+import { adminSendNotification, broadcastNotification } from '../lib/notifications';
 import StudentPicker from '../components/admin/StudentPicker';
 
 function getCallerUid() {
@@ -95,7 +95,7 @@ export default function AdminPushNotifications() {
       // Also write into user_notifications so it shows up in the student header bell
       // (in_app_notifications only feeds the admin history panel + Notifications page "In-App" tab)
       if (form.target === 'user') {
-        await createNotification(form.user_id.trim(), form.type, form.title.trim(), form.body.trim(), form.url.trim() || null);
+        await adminSendNotification(callerUid, form.user_id.trim(), form.type, form.title.trim(), form.body.trim(), form.url.trim() || null);
       } else {
         await broadcastNotification(callerUid, form.type, form.title.trim(), form.body.trim(), form.url.trim() || null);
       }

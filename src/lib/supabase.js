@@ -24,7 +24,7 @@ const supabaseAnon = import.meta.env.VITE_SUPABASE_ANON_KEY;
  * Returning null is normal and fine — signed-out visitors hit public reads,
  * and the request simply carries the anon key alone.
  */
-async function currentFirebaseIdToken() {
+export async function currentFirebaseIdToken() {
   try {
     const onAdminRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/admin');
     const primary  = onAdminRoute ? adminAuth : auth;
@@ -830,15 +830,19 @@ export async function deleteMonitoredSource(id) {
     null, 'Monitored source removed');
 }
 
-export async function deactivateExamNotification(id) {
-  const { error } = await supabase.from('exam_notifications').update({ is_active: false }).eq('id', id);
+// exam_notifications writes are admin-RPC-only since 20260924000000.
+export async function deactivateExamNotification(id, callerUid = null) {
+  const caller = callerUid ?? _getCallerUidFromSession();
+  const { error } = await supabase.rpc('admin_deactivate_exam_notification', { p_caller: caller, p_id: id });
   if (error) throw new Error(error.message);
   logChange(ENTITY.SYSTEM, id, ACTION.ARCHIVE,
     { after: { is_active: false } }, 'Exam notification deactivated');
 }
 
-export async function clearExamNotifications() {
-  await supabase.from('exam_notifications').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+export async function clearExamNotifications(callerUid = null) {
+  const caller = callerUid ?? _getCallerUidFromSession();
+  const { error } = await supabase.rpc('admin_clear_exam_notifications', { p_caller: caller });
+  if (error) throw new Error(error.message);
   logChange(ENTITY.SYSTEM, 'exam_notifications', ACTION.BULK_DELETE,
     null, 'All exam notifications cleared');
 }

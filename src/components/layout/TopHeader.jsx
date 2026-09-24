@@ -136,7 +136,7 @@ export default function TopHeader({ mobile = false }) {
                     onClick={() => { navigate('/parent'); setMenuOpen(false); }}
                     className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 transition-colors"
                   >
-                    <Users size={14} /> Share with Parent
+                    <Users size={14} /> My Progress Report
                   </button>
                   <button
                     onClick={() => { navigate('/help'); setMenuOpen(false); }}

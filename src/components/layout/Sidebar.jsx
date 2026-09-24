@@ -231,7 +231,7 @@ export default function Sidebar() {
                 { icon: User,        label: 'Profile',               path: '/profile'                },
                 { icon: Bell,        label: 'Notification Settings', path: '/profile#notifications'  },
                 { icon: CreditCard,  label: 'Plans & Billing',       path: '/pricing'                },
-                { icon: Users,       label: 'Share with Parent',     path: '/parent'                 },
+                { icon: Users,       label: 'My Progress Report',    path: '/parent'                 },
                 { icon: HelpCircle,  label: 'Help & Guide',          path: '/help'                   },
               ].map(({ icon: Icon, label, path }) => (
                 <button

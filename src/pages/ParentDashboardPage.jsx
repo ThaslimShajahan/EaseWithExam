@@ -3,7 +3,7 @@ import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   Users, Flame, Trophy, Zap, TrendingUp, TrendingDown, Minus,
-  BookOpen, Target, AlertTriangle, CheckCircle, Share2, Lock,
+  BookOpen, Target, AlertTriangle, CheckCircle, Lock,
 } from 'lucide-react';
 import { getUser, getTestSessions } from '../lib/supabase';
 import { getUserGamification, getLevelProgress, LEVEL_TITLES } from '../lib/gamification';
@@ -12,42 +12,15 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { formatExamLabel } from '../lib/categories';
 
-/* ── Token validation against parent_student_links ──────────── */
-async function validateParentToken(studentUid, token) {
-  if (!token) return false;
-  const { data } = await supabase
-    .from('parent_student_links')
-    .select('id')
-    .eq('student_uid', studentUid)
-    .eq('link_token', token)
-    .eq('is_active', true)
-    .maybeSingle();
-  return !!data;
-}
-
-/* ── Generate a shareable link with token ────────────────────── */
-export async function makeParentShareLink(firebaseUid) {
-  // Upsert a link_token for this student
-  const { data, error } = await supabase
-    .from('parent_student_links')
-    .upsert(
-      { student_uid: firebaseUid, is_active: true },
-      { onConflict: 'student_uid', ignoreDuplicates: false }
-    )
-    .select('link_token')
-    .single();
-  if (error || !data) return `${window.location.origin}/parent/${firebaseUid}`;
-  return `${window.location.origin}/parent/${firebaseUid}?token=${data.link_token}`;
-}
-
-async function copyLink(uid) {
-  const url = await makeParentShareLink(uid);
-  if (navigator.share) {
-    navigator.share({ title: 'My EaseWithExam Progress', url }).catch(() => {});
-  } else {
-    navigator.clipboard.writeText(url).catch(() => {});
-  }
-}
+/* ── Parent sharing: DISABLED (2026-09-24) ─────────────────────
+ * parent_student_links was anon-readable/writable (any visitor could create
+ * a link naming themselves as a student's parent, which get_own_user trusts),
+ * and the share-link flow never actually worked — nothing ever set
+ * parent_uid, so a parent's getUser() was always refused. Migration
+ * 20260924000000 locks the table with no replacement RPCs. The feature stays
+ * off until it is rebuilt with expiring single-use links and a way for the
+ * student to see and remove a linked parent (docs/ACTION_ITEMS_FOR_YOU.md).
+ * A student's OWN progress view below still works. */
 
 /* ── Trend icon ──────────────────────────────────────────── */
 function Trend({ pct }) {
@@ -171,12 +144,8 @@ export default function ParentDashboardPage() {
     if (!targetUid) { setLoading(false); return; }
 
     const load = async () => {
-      // Enforce token gate for external parent views
-      if (!isOwnView) {
-        if (!token) { setTokenInvalid(true); setLoading(false); return; }
-        const valid = await validateParentToken(targetUid, token).catch(() => false);
-        if (!valid)  { setTokenInvalid(true); setLoading(false); return; }
-      }
+      // Parent (non-own) views are disabled — see the note at the top.
+      if (!isOwnView) { setTokenInvalid(true); setLoading(false); return; }
 
       try {
         // Fetch the profile first — getTestSessions needs its target_exam to
@@ -205,9 +174,9 @@ export default function ParentDashboardPage() {
         <div className="h-16 w-16 rounded-full bg-red-50 flex items-center justify-center">
           <Lock size={28} className="text-red-400" />
         </div>
-        <h2 className="text-lg font-bold text-slate-900">Access Denied</h2>
+        <h2 className="text-lg font-bold text-slate-900">Parent view is unavailable</h2>
         <p className="text-sm text-slate-500 max-w-xs">
-          This link is invalid or has expired. Ask the student to share a fresh link from their Profile page.
+          Sharing progress with parents is temporarily turned off while we rebuild it. Shared links no longer open.
         </p>
       </div>
     );
@@ -266,18 +235,10 @@ export default function ParentDashboardPage() {
         <div>
           <div className="flex items-center gap-2">
             <Users size={18} className="text-primary-500" />
-            <h2 className="text-xl font-bold text-slate-900">Parent Dashboard</h2>
+            <h2 className="text-xl font-bold text-slate-900">Progress Report</h2>
           </div>
           <p className="text-sm text-slate-500 mt-0.5">Monitoring: <span className="font-semibold text-slate-700">{name}</span></p>
         </div>
-        {currentUser && (
-          <button
-            onClick={() => copyLink(currentUser.uid)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary-50 text-primary-600 text-xs font-semibold hover:bg-primary-100 transition-colors border border-primary-200"
-          >
-            <Share2 size={13} /> Share link
-          </button>
-        )}
       </motion.div>
 
       {/* Plan badge */}
@@ -365,7 +326,7 @@ export default function ParentDashboardPage() {
 
       {/* Share note */}
       <p className="text-[10px] text-slate-400 text-center pb-4">
-        This page is accessible to anyone with the share link. Only the student's progress is shown — no personal data beyond their name.
+        Sharing this page with a parent is coming back soon.
       </p>
     </div>
   );
