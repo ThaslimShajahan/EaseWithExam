@@ -38,7 +38,19 @@ Mark an item DONE only once it is deployed **and** verified live.
        `quota_config`, `stream_configs`, `subjects`
    - Also: `expire_subscriptions()` and `send_expiry_reminders()` are anon-executable.
 
-2. **Push keys + Android FCM gap. Web Push has never delivered: no VAPID keys in `platform_settings`** (found
+2. **Daily Mini Test: save the attempt automatically when the last question is answered**
+   (owner, 2026-09-25; queued after security pass 2).
+   - Why: `daily_challenge_attempts` was empty because no student ever pressed "Finish
+     challenge". Each answer is revealed as it's picked, so after Q5 the test looks done.
+     As a result **no results, XP or streaks are ever recorded** for Daily Mini Tests.
+   - Do: when the last unanswered question is answered, call `saveChallengeAnswer`
+     automatically (same RPC, `save_daily_challenge_attempt`). Keep the current
+     behaviour: save first, show the score only once it's stored, visible error plus
+     "Try saving again" on failure, and XP/notification only after a successful save.
+   - Verify with a throwaway account that the attempt row, XP and notification all
+     appear without pressing any button, and that a forced save failure shows the retry.
+
+3. **Push keys + Android FCM gap. Web Push has never delivered: no VAPID keys in `platform_settings`** (found
     2026-09-24). `send-push` returns 500 "VAPID keys not found in platform_settings" for
     every call, so no push has ever been sent, even though 3 students have saved web push
     subscriptions (the client has `VITE_VAPID_PUBLIC_KEY`, so subscribing works).
@@ -53,24 +65,24 @@ Mark an item DONE only once it is deployed **and** verified live.
       private key out of `platform_settings` (a table) into an edge-function secret.
     - Owner confirmed 2026-09-24: **the old VAPID private key is not available**, so the 3
       existing web subscriptions must re-subscribe after new keys are set.
-3. **Students Online Now + new-registration notifications.** Owner's original prompt, with
+4. **Students Online Now + new-registration notifications.** Owner's original prompt, with
    these decisions: record the event **at signup** (the list shows "onboarding pending");
    toast, bell and email fire **when onboarding completes**; email **info@acenzos.com
    only**; owner tests Android personally. Design constraints: `verified_uid()`, not
    `auth.uid()`; no role grants as a gate; the admin feed goes through an admin-only RPC
    plus polling, not Realtime.
 
-4. **Guardrails**: content rules checker, fake-student Playwright walkthrough, security
+5. **Guardrails**: content rules checker, fake-student Playwright walkthrough, security
    tripwire, `npm run predeploy` gate, and a "report a problem" button. Owner's prompt of
    2026-09-24, **including its gate**: do not start until the 2026-09-24 security fix
    (done), the exam→subject fix (done) and Online Now + registration notifications
-   (item 3) are all deployed and verified.
+   (item 4) are all deployed and verified.
    - Also fix the flaky `ExpiryBadge.test.js` "drops to hours" test (seen failing once on
      2026-09-25 under full-suite load, passing 3/3 alone). It builds a timestamp exactly
      23h ahead, and `formatCountdown` reads the clock a few ms later, so `floor` gives 22.
      Use fake timers. It must not flake once `npm test` gates deploys.
 
-5. **Android APK on-device check. Status: BUILT, NOT YET TESTED ON DEVICE** (owner
+6. **Android APK on-device check. Status: BUILT, NOT YET TESTED ON DEVICE** (owner
    deferred the check 2026-09-24).
    - The APK is `easewithexam-android/android/app/build/outputs/apk/debug/app-debug.apk`
      (debug build, 2026-09-24 21:06 IST). It bundles `index-VTBEZITE.js`, the same bundle as
@@ -87,10 +99,10 @@ Mark an item DONE only once it is deployed **and** verified live.
      Test fails to load or save**, and subject pickers use the old rules. **Rebuild before
      testing:** plain `npm run build`, then `npm run sync` in `easewithexam-android`, then
      `gradlew.bat assembleDebug`.
-   - Every later web fix needs a rebuild again (the heartbeat and report button, items 3
-     and 4).
+   - Every later web fix needs a rebuild again (the Daily Mini Test auto-save, the heartbeat
+     and the report button: items 2, 4 and 5).
 
-## 📚 NEXT CONTENT TASK — load CBSE Class 9 English into the knowledge base (2026-09-25)
+## 📚 NEXT CONTENT TASK (OWNER'S) — load CBSE Class 9 English properly through Content Intake (2026-09-25)
 
 The owner believed its 8 content jobs were enqueued but `--work` was never run. **Checked
 read-only 2026-09-25: that is not the case.** `content_jobs` has **0 rows in total**, for
