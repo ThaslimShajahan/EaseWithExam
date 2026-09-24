@@ -4,6 +4,35 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-09-24 — Security fix: five anon-open tables locked, checkout identity verified (deploys 2026.09.24.1 + .2)
+
+**Found while scoping the Online Now / registration-notification features.** Proven live with the public anon key and no login: `notification_prefs` (phone and WhatsApp numbers, push keys) and `user_notifications` (all 49 rows) were readable, and all five of `user_notifications`, `notification_prefs`, `exam_notifications`, `plan_config` and `parent_student_links` accepted anonymous writes. The proof was a NULL insert that was rejected only by NOT NULL (`23502`), while the locked control table returned `42501`. The dangerous ones:
+- `plan_config`: `create-razorpay-order` charges `plan_config.price_paise` when it is set, so anyone could reprice a plan.
+- `parent_student_links`: `get_own_user` trusts it for parent access, so anyone could self-authorise to a student's profile.
+- `user_notifications`: it was on Realtime, so anyone could subscribe to every student's notification inserts.
+
+**Also found:** `create-razorpay-order` never checked `payments_enabled`, despite a comment saying it did. It trusted `firebase_uid` from the request body, and 3 orders from 2 real non-admin students existed (none paid; all at the correct catalogue price plus GST).
+
+**Shipped:**
+- **Migration `20260924000000`:** drops the open policies and revokes direct access. Adds own-row RPCs (`assert_verified_self`) and admin RPCs (`assert_verified_admin`) for notifications and prefs. The prefs upsert only accepts whitelisted columns and refuses anything else. `exam_notifications` and `plan_config` keep public read access. `parent_student_links` is locked with no replacement. `user_notifications` is off the Realtime publication.
+- **New `payment_order_preflight` RPC:** takes identity from `verified_uid()`, enforces `payments_enabled` (fail-closed), keeps `verification_1rs` superadmin-only on the verified identity, and uses admin-set price rows only.
+- **`create-razorpay-order` v16:** forwards the client's Firebase ID token (header `x-firebase-id-token`) to that RPC and ignores the body uid.
+- **Frontend:**
+  - `notifications.js` uses RPCs throughout; the 18 student call sites are unchanged.
+  - The bell polls every 30s while visible and on focus, and refreshes instantly on the new `ewe:notif-created` event. The toast reads the shared feed.
+  - Admin push and exam-watch screens use the admin RPCs. Checkout sends the token.
+  - **Parent sharing is disabled** (owner decision). The share flow had never actually worked, because nothing set `parent_uid`. Nav renamed "My Progress Report"; privacy policy wording updated.
+
+**Regression, fixed the same day (`2026.09.24.2`, migration `20260924010000`):** the first version of `upsert_own_notification_prefs` passed NULL for columns the caller didn't send. So every call without `email_enabled` failed with `23502`, for existing rows too, because NOT NULL is checked before `ON CONFLICT`. Push on/off, the WhatsApp toggle and FCM registration were broken 15:22–15:29 UTC. It was caught by the post-deploy verification, and no real student's prefs row was touched in that window.
+
+**Verified live:** `scripts/verify-20260924-lockdown.mjs` gave 35 passed, 0 failed, 1 known pre-existing gap across both halves (anon, cross-student, student-vs-admin, whitelist and link validation, checkout without or with a forged token, the superadmin plan, new-account signup still working, own-notification lifecycle, admin send, prefs save, public reads). Checkout records the verified buyer even when the body claims the admin's uid. A separate flag test showed checkout returning 403 with `payments_enabled` off; the flag was off for under a second and is back ON. The throwaway accounts are deleted from the DB and Firebase.
+
+**Pre-existing gap found during verification:** Web Push has never delivered. `platform_settings` has no VAPID keys, so `send-push` returns 500. Native FCM has no delivery path at all. This is queue item 3a in ACTION_ITEMS.
+
+**Android:** the APK bundles the old web build, so its bell, notification settings and checkout break against the new RPCs until it is rebuilt (queue item 2).
+
+---
+
 ## 2026-09-17 — Native OTP sign-in hang fixed, WhatsApp Alerts hidden, native auth screen redesign deployed
 
 Owner tested the Android app's phone-OTP sign-in on a real emulator: after entering the code, the progress bar showed then nothing happened — no error, no crash, no navigation. Investigated with logcat rather than guessing: the native `@capacitor-firebase/authentication` plugin's `confirmVerificationCode()` succeeded in under a second (`signInWithCredential succeeded.`), but its own `idTokenChange` event fired to "No listeners found for event idTokenChange" — the native sign-in only ever touched the native Android layer. `AuthContext.jsx`'s `currentUser` (and therefore `App.jsx`'s `RequireNoAuth` gate) is driven entirely by the Firebase **JS SDK's** `onAuthStateChanged(auth, ...)`, which the native sign-in never updates — so a genuinely successful sign-in left the user stuck on the sign-in screen forever.

@@ -13,9 +13,25 @@ investigate read-only, report, **wait for owner approval** before any migration 
 both-halves verification, deploy per `docs/DEPLOY.md`, `deploy_log` entry, update this file.
 Mark an item DONE only once it is deployed **and** verified live.
 
-1. **Security fix — notifications, plan_config, parent_student_links, create-razorpay-order.**
-   Status: *approved, deploying* (migration `20260924000000`, owner-approved 2026-09-24).
-   DONE when verified.
+1. ✅ **DONE 2026-09-24. Security fix: notifications, plan_config, parent_student_links,
+   create-razorpay-order.** Deployed and verified live: deploy `2026.09.24.1` (bundle
+   `index-VTBEZITE.js`, commit `b5f117e`, migration `20260924000000`,
+   `create-razorpay-order` v16), plus DB hotfix `2026.09.24.2` (migration `20260924010000`).
+   - Verification: `scripts/verify-20260924-lockdown.mjs` against live gave **35 passed, 0
+     failed, 1 known pre-existing gap** (Web Push, see 3a). A separate flag test also
+     passed: with `payments_enabled` off, checkout returns 403. The flag was off for under a
+     second and is confirmed back **ON**.
+   - The throwaway accounts `qa-tmp-sec0924-a/-b` are deleted from the DB (9 rows) and from
+     Firebase. Their **2 unpaid test orders** (`order_TfvHjizuu17Bj4`,
+     `order_TfvMOoSu7YUUlL`) still exist on Razorpay's side, which has no delete API. They
+     are harmless; ignore them in the dashboard.
+   - **Regression shipped and fixed the same day:** from 15:22 to 15:29 UTC,
+     `upsert_own_notification_prefs` failed with `23502` on every call without
+     `email_enabled` (push on/off, WhatsApp toggle, native FCM registration). No real
+     student's prefs row was touched in that window. Fixed by `20260924010000`.
+   - Backups: `C:\Users\THASLIM\ewe-db-backups\2026-09-24-pre-20260924000000\` (table data,
+     policies and grants, verify logs) and `~/deploy-backups/webroot-2026-09-24-152213.tar.gz`
+     on the VPS.
    - Locks `user_notifications` (and removes it from Realtime; the bell now polls),
      `notification_prefs`, `exam_notifications`, `plan_config` and `parent_student_links`,
      all of which the anon key could read and/or write (proven live 2026-09-24).
@@ -38,6 +54,19 @@ Mark an item DONE only once it is deployed **and** verified live.
    APK, reinstall. Steps are in the item-2 report in the session log / CHANGELOG. This is
    also required later for items 4, 5 and 6 (heartbeat, exam→subject fix, report button).
 
+3a. **Web Push has never delivered: no VAPID keys in `platform_settings`** (found
+    2026-09-24). `send-push` returns 500 "VAPID keys not found in platform_settings" for
+    every call, so no push has ever been sent, even though 3 students have saved web push
+    subscriptions (the client has `VITE_VAPID_PUBLIC_KEY`, so subscribing works).
+    - **Native Android (FCM) has the same gap, and a worse one:** no edge function or DB
+      function delivers to `push_fcm_token` at all. The app only stores tokens (0 stored so
+      far). Delivery needs an FCM HTTP v1 path (service-account auth), which doesn't exist
+      yet.
+    - Plan when we get here: generate a VAPID key pair locally. The **owner sets the private
+      key themselves via CLI; it is never pasted in chat**. Note: the existing 3
+      subscriptions are bound to the current public key, so if the matching private key
+      can't be recovered, those students must re-subscribe after the switch. Also move the
+      private key out of `platform_settings` (a table) into an edge-function secret.
 3. **Security pass 2.**
    - `send-email`, `send-push` and `whatsapp-alert` must verify the caller's Firebase token
      instead of trusting `caller_uid` from the request body. Today anyone who knows an admin
