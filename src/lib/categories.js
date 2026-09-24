@@ -35,8 +35,6 @@ const FALLBACK_CATEGORIES = {
   'SSC CGL':      { label: 'SSC CGL',     type: 'competitive', group: 'Government', subjects: [] },
   'Olympiad':     { label: 'Olympiad',    type: 'competitive', group: 'Academic', subjects: [] },
 
-  'Class 6':  { label: 'Class 6',  type: 'school', group: 'Middle School', subjects: [] },
-  'Class 7':  { label: 'Class 7',  type: 'school', group: 'Middle School', subjects: [] },
   'Class 8':  { label: 'Class 8',  type: 'school', group: 'Middle School', subjects: [] },
   'Class 9':  { label: 'Class 9',  type: 'school', group: 'Middle School', subjects: [] },
   'Class 10': { label: 'Class 10', type: 'school', group: 'High School', subjects: [] },
@@ -48,32 +46,24 @@ const FALLBACK_CATEGORIES = {
   'State Board': { label: 'State Board', type: 'board', group: 'State Board', subjects: [] },
   'Kerala State': { label: 'Kerala State', type: 'board', group: 'Kerala State', subjects: [] },
 
-  'CBSE Class 6':  { label: 'CBSE Class 6',  type: 'school', group: 'CBSE', subjects: [] },
-  'CBSE Class 7':  { label: 'CBSE Class 7',  type: 'school', group: 'CBSE', subjects: [] },
   'CBSE Class 8':  { label: 'CBSE Class 8',  type: 'school', group: 'CBSE', subjects: [] },
   'CBSE Class 9':  { label: 'CBSE Class 9',  type: 'school', group: 'CBSE', subjects: [] },
   'CBSE Class 10': { label: 'CBSE Class 10', type: 'school', group: 'CBSE', subjects: [] },
   'CBSE Class 11': { label: 'CBSE Class 11', type: 'school', group: 'CBSE', subjects: [] },
   'CBSE Class 12': { label: 'CBSE Class 12', type: 'school', group: 'CBSE', subjects: [] },
 
-  'ICSE Class 6':  { label: 'ICSE Class 6',  type: 'school', group: 'ICSE', subjects: [] },
-  'ICSE Class 7':  { label: 'ICSE Class 7',  type: 'school', group: 'ICSE', subjects: [] },
   'ICSE Class 8':  { label: 'ICSE Class 8',  type: 'school', group: 'ICSE', subjects: [] },
   'ICSE Class 9':  { label: 'ICSE Class 9',  type: 'school', group: 'ICSE', subjects: [] },
   'ICSE Class 10': { label: 'ICSE Class 10', type: 'school', group: 'ICSE', subjects: [] },
   'ICSE Class 11': { label: 'ICSE Class 11', type: 'school', group: 'ICSE', subjects: [] },
   'ICSE Class 12': { label: 'ICSE Class 12', type: 'school', group: 'ICSE', subjects: [] },
 
-  'State Board Class 6':  { label: 'State Board Class 6',  type: 'school', group: 'State Board', subjects: [] },
-  'State Board Class 7':  { label: 'State Board Class 7',  type: 'school', group: 'State Board', subjects: [] },
   'State Board Class 8':  { label: 'State Board Class 8',  type: 'school', group: 'State Board', subjects: [] },
   'State Board Class 9':  { label: 'State Board Class 9',  type: 'school', group: 'State Board', subjects: [] },
   'State Board Class 10': { label: 'State Board Class 10', type: 'school', group: 'State Board', subjects: [] },
   'State Board Class 11': { label: 'State Board Class 11', type: 'school', group: 'State Board', subjects: [] },
   'State Board Class 12': { label: 'State Board Class 12', type: 'school', group: 'State Board', subjects: [] },
 
-  'Kerala State Class 6':  { label: 'Kerala State Class 6',  type: 'school', group: 'Kerala State', subjects: [] },
-  'Kerala State Class 7':  { label: 'Kerala State Class 7',  type: 'school', group: 'Kerala State', subjects: [] },
   'Kerala State Class 8':  { label: 'Kerala State Class 8',  type: 'school', group: 'Kerala State', subjects: [] },
   'Kerala State Class 9':  { label: 'Kerala State Class 9',  type: 'school', group: 'Kerala State', subjects: [] },
   'Kerala State Class 10': { label: 'Kerala State Class 10', type: 'school', group: 'Kerala State', subjects: [] },
@@ -83,12 +73,14 @@ const FALLBACK_CATEGORIES = {
 
 const FALLBACK_EXAM_TYPE_GROUPS = [
   { label: 'Competitive', icon: '🏆', items: ['NEET', 'JEE Main', 'JEE Advanced', 'CUET', 'UPSC', 'SSC CGL', 'Olympiad'] },
-  { label: 'Classes',     icon: '📚', items: ['Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10', 'Class 11', 'Class 12'] },
+  { label: 'Classes',     icon: '📚', items: ['Class 8', 'Class 9', 'Class 10', 'Class 11', 'Class 12'] },
   { label: 'Boards',      icon: '🎓', items: ['CBSE', 'ICSE', 'State Board', 'Kerala State'] },
 ];
 
 const FALLBACK_BOARDS       = ['CBSE', 'ICSE', 'State Board', 'Kerala State'];
-const FALLBACK_CLASS_LEVELS = ['6', '7', '8', '9', '10', '11', '12'];
+// EaseWithExam serves Class 8–12 only (owner, 2026-09-25). Classes 6 and 7
+// must never be offered to a student; their exam_categories rows are inactive.
+const FALLBACK_CLASS_LEVELS = ['8', '9', '10', '11', '12'];
 
 // Live, mutable bindings — reassigned in place by loadCategories() once the
 // DB fetch resolves. Every importer sees the update automatically.

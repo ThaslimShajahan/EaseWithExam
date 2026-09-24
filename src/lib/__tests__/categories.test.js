@@ -68,6 +68,18 @@ describe('getSubjectsForExam', () => {
   });
 });
 
+describe('Class 8–12 only', () => {
+  // Owner, 2026-09-25: EaseWithExam serves Class 8–12. Class 6/7 must never
+  // reach a student picker (Practice's open selector renders CLASS_LEVELS).
+  it('offers no Class 6 or 7 anywhere in the fallbacks', () => {
+    expect(CLASS_LEVELS).toEqual(['8', '9', '10', '11', '12']);
+    expect(Object.keys(CATEGORIES).filter((k) => /Class [67]$/.test(k))).toEqual([]);
+    const classItems = EXAM_TYPE_GROUPS.find((g) => g.label === 'Classes')?.items ?? [];
+    expect(classItems).not.toContain('Class 6');
+    expect(classItems).not.toContain('Class 7');
+  });
+});
+
 describe('buildExamType does not guess', () => {
   it('returns null when neither a competitive target nor board+class resolves', () => {
     // Used to fall through to normalizeExamType(): 'NONE' became the exam

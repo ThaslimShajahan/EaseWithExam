@@ -19,7 +19,7 @@ import { invalidateAllowedSubjects } from '../lib/allowedSubjects';
  *
  * Board/class saves fan out into multiple exam_categories rows: a board save
  * writes the standalone board entry plus one board_class combo row per
- * existing class level (using the 6-10 or 11-12 subject tier as appropriate)
+ * class level 8-12 (using the 8-10 or 11-12 subject tier as appropriate)
  * — the admin only edits two subject lists per board, not every combo.
  */
 
@@ -246,7 +246,7 @@ export default function AdminCategorySettings() {
   }
 
   // A board fans out into: the standalone board row (union of both subject
-  // tiers) + one board_class row per class 6-12, using the 6-10 or 11-12 tier
+  // tiers) + one board_class row per class 8-12, using the 8-10 or 11-12 tier
   // as appropriate — so the admin edits two subject lists, not every
   // board+class combination by hand.
   async function saveBoard(form) {
@@ -258,7 +258,10 @@ export default function AdminCategorySettings() {
         board_key: form.key, group_label: form.label, subjects: unionSubjects, sort_order: form.id ? undefined : 200,
       });
 
-      const classLevels = ['6','7','8','9','10','11','12'];
+      // Class 8–12 only (owner, 2026-09-25). Listing 6–7 here would recreate —
+      // and via the upsert's is_active = true, silently RE-ACTIVATE — the
+      // deactivated Class 6/7 rows on every board save.
+      const classLevels = ['8','9','10','11','12'];
       for (const cl of classLevels) {
         const tierSubjects = Number(cl) <= 10 ? form.subjects8to10 : form.subjects11to12;
         const comboKey = `${form.key} Class ${cl}`;
@@ -516,7 +519,8 @@ function BoardForm({ existing, rows, onClose, onSave, saving, error, vocabulary 
   const [label, setLabel] = useState(existing?.label ?? '');
 
   // Seed the two subject tiers from any existing board_class combos for this board.
-  const combo8to10 = rows.find((r) => r.category_kind === 'board_class' && r.board_key === (existing?.board_key ?? existing?.exam_key) && Number(r.class_key) <= 10);
+  // Active Class 8–10 only — the list includes the deactivated Class 6/7 rows.
+  const combo8to10 = rows.find((r) => r.category_kind === 'board_class' && r.is_active && r.board_key === (existing?.board_key ?? existing?.exam_key) && Number(r.class_key) >= 8 && Number(r.class_key) <= 10);
   const combo11to12 = rows.find((r) => r.category_kind === 'board_class' && r.board_key === (existing?.board_key ?? existing?.exam_key) && Number(r.class_key) > 10);
 
   const [subjects8to10,  setSubjects8to10]  = useState(combo8to10?.subjects ?? existing?.subjects ?? []);
@@ -534,7 +538,7 @@ function BoardForm({ existing, rows, onClose, onSave, saving, error, vocabulary 
         <input className={FIELD_INPUT} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. CBSE Board" />
       </div>
       <div>
-        <label className={FIELD_LABEL}>Subjects — Classes 6 to 10</label>
+        <label className={FIELD_LABEL}>Subjects — Classes 8 to 10</label>
         <ChipInput value={subjects8to10} onChange={setSubjects8to10} placeholder="Add subject and press Enter…" vocabulary={vocabulary} />
       </div>
       <div>
@@ -543,7 +547,7 @@ function BoardForm({ existing, rows, onClose, onSave, saving, error, vocabulary 
       </div>
       <div className="flex items-start gap-2 bg-blue-900/20 border border-blue-700/20 rounded-xl p-3">
         <AlertTriangle size={13} className="text-blue-400 mt-0.5 shrink-0" />
-        <p className="text-xs text-blue-300 leading-relaxed">Saving this generates "{key || 'Board'} Class 6" through "Class 12" automatically using the tier above — you don't need to create those separately.</p>
+        <p className="text-xs text-blue-300 leading-relaxed">Saving this generates "{key || 'Board'} Class 8" through "Class 12" automatically using the tier above — you don't need to create those separately.</p>
       </div>
     </Modal>
   );
