@@ -9,6 +9,8 @@ import {
 import { ROLE_KEY } from './AdminGuard';
 import AdminGlobalSearch from './AdminGlobalSearch';
 import { supabase } from '../lib/supabase';
+import { AdminLiveFeedContext, useRegistrationFeed } from './hooks/useAdminLiveFeed';
+import { AdminLiveBell, AdminLiveToasts } from './AdminLiveBell';
 
 const isSuperAdmin = () => sessionStorage.getItem(ROLE_KEY) === 'superadmin';
 
@@ -39,6 +41,8 @@ export default function AdminLayout() {
   const superadmin  = isSuperAdmin();
   const [searchOpen,    setSearchOpen]    = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
+  // New-registration feed (bell + toasts), polled every 30s on every admin page.
+  const liveFeed = useRegistrationFeed();
 
   const nav = superadmin ? [...BASE_NAV, ...SUPER_NAV] : BASE_NAV;
 
@@ -79,6 +83,7 @@ export default function AdminLayout() {
   }
 
   return (
+    <AdminLiveFeedContext.Provider value={liveFeed}>
     <div className="portal-admin flex h-screen bg-slate-950 text-white overflow-hidden">
       {/* Sidebar */}
       <motion.aside
@@ -170,11 +175,14 @@ export default function AdminLayout() {
             <span>Search…</span>
             <kbd className="text-[9px] font-mono bg-white/5 px-1.5 py-0.5 rounded text-slate-600">⌘K</kbd>
           </button>
+          <AdminLiveBell />
         </div>
         <div className="flex-1 overflow-y-auto p-6">
           <Outlet />
         </div>
       </div>
+
+      <AdminLiveToasts />
 
       {/* Global search modal */}
       <AdminGlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
@@ -209,5 +217,6 @@ export default function AdminLayout() {
         )}
       </AnimatePresence>
     </div>
+    </AdminLiveFeedContext.Provider>
   );
 }

@@ -47,11 +47,15 @@ export async function getTodayChallenge(firebaseUid) {
 /* ── Save the student's answers ───────────────────────────── */
 // Throws on failure. The old version ignored supabase-js's returned `error`
 // (it doesn't throw) inside a bare catch, so a failed save was invisible.
+// Resolves to { saved, first_save, xp_awarded }. XP and the streak are awarded
+// by the server in the same transaction as the save, and only on the FIRST save
+// of an attempt — so they can't happen without a stored attempt, or twice.
 export async function saveChallengeAnswer(challengeId, firebaseUid, selectedOption, isCorrect) {
-  const { error } = await supabase.rpc('save_daily_challenge_attempt', {
+  const { data, error } = await supabase.rpc('save_daily_challenge_attempt', {
     p_uid: firebaseUid, p_challenge_id: challengeId, p_selected: selectedOption, p_is_correct: isCorrect,
   });
   if (error) throw new Error(error.message);
+  return data ?? { saved: true, first_save: false, xp_awarded: 0 };
 }
 
 /* ── Today's attempt by this student ──────────────────────── */

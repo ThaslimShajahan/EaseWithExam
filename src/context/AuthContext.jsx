@@ -18,6 +18,7 @@ import {
 import { Capacitor } from '@capacitor/core';
 import { auth } from '../firebase/config';
 import { getUser, upsertUser, updateUser, getSubscription, getUserByPhone } from '../lib/supabase';
+import { useHeartbeat } from '../hooks/useHeartbeat';
 
 const AuthContext = createContext(null);
 
@@ -498,6 +499,9 @@ export function AuthProvider({ children }) {
   };
 
   const isPremium = subscription?.isActive === true;
+
+  // Online Now: only once the users row exists (touch_last_seen updates it).
+  useHeartbeat(userProfile?.firebase_uid);
 
   const value = {
     currentUser, userProfile, subscription, isPremium,

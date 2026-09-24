@@ -104,6 +104,17 @@ export async function awardXP(firebaseUid, action) {
   }
 
   const row = typeof data === 'string' ? JSON.parse(data) : data;
+  const bonusActions = announceXpMilestones(firebaseUid, row, amount);
+  return { ...row, xp_earned: amount, streak_bonuses: bonusActions };
+}
+
+/**
+ * Streak / level-up notifications for an XP award that already happened.
+ * `row` is the updated user_gamification row, `amount` the XP just added.
+ * Used by awardXP() and by server-side awards (the Daily Mini Test save).
+ */
+export function announceXpMilestones(firebaseUid, row, amount) {
+  if (!row) return [];
   const bonusActions = [];
   if (row?.streak_days === 7)  bonusActions.push('streak_7_days');
   if (row?.streak_days === 30) bonusActions.push('streak_30_days');
@@ -133,7 +144,7 @@ export async function awardXP(firebaseUid, action) {
     ).catch(() => {});
   }
 
-  return { ...row, xp_earned: amount, streak_bonuses: bonusActions };
+  return bonusActions;
 }
 
 /* ── Increment activity counts ──────────────────────────── */

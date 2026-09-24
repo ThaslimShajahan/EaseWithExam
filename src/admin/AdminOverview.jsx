@@ -12,6 +12,7 @@ import {
   adminGetDoubtChats, adminGetPapers, adminGetKBCount,
   supabase,
 } from '../lib/supabase';
+import AdminOnlineNow from './AdminOnlineNow';
 
 const IST_DATE = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
 
@@ -133,6 +134,8 @@ export default function AdminOverview() {
         <h1 className="text-2xl font-bold text-white">Overview</h1>
         <p className="text-slate-400 text-sm mt-1">Platform-wide stats at a glance</p>
       </div>
+
+      <AdminOnlineNow />
 
       {/* Hero — primary daily action */}
       <motion.div

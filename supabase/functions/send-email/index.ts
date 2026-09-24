@@ -60,6 +60,11 @@ const CORS = {
 const SELF_TEMPLATES  = new Set(['welcome', 'paper_ready', 'subscription_active']);
 //   a verified admin: admin_broadcast only, to one student or to everyone.
 const ADMIN_TEMPLATES = new Set(['admin_broadcast']);
+//   internal only, and only ever to the fixed owner address below — the
+//   new-student alert queued by the users registration trigger (20260927000000).
+//   The recipient is never taken from the request.
+const ADMIN_ALERT_TEMPLATES = new Set(['admin_new_registration']);
+const ADMIN_ALERT_TO = 'info@acenzos.com';
 
 const SUPABASE_URL   = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_KEY    = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -171,6 +176,29 @@ async function renderTemplate(
 // past the edge function's execution time. Comfortably above any realistic
 // current student count; raise if the platform genuinely grows past it.
 const BROADCAST_CAP = 2000;
+
+const esc = (v: unknown) => String(v ?? '').replace(/[&<>"']/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+function renderNewRegistration(data: Record<string, unknown>): { subject: string; html: string } {
+  const cls = data.classLevel ? `Class ${esc(data.classLevel)}` : 'class not set';
+  const board = data.board ? esc(data.board) : 'board not set';
+  const rows: [string, unknown][] = [
+    ['Name', data.name], ['Class', data.classLevel], ['Board', data.board],
+    ['Target exam', data.targetExam], ['Signed up with', data.authMethod], ['Registered', data.registeredAt],
+  ];
+  return {
+    subject: `New student: ${String(data.name ?? '(no name yet)').slice(0, 60)}, ${data.classLevel ? 'Class ' + data.classLevel : 'class not set'} ${data.board ?? ''}`.trim(),
+    html: `
+      <h1 style="margin:0 0 12px;font-size:20px;color:#0F172A;">New student registered</h1>
+      <p style="margin:0 0 12px;font-size:14px;color:#475569;">${esc(data.name)} just finished onboarding: ${cls}, ${board}.</p>
+      <table style="font-size:13px;color:#334155;border-collapse:collapse;">
+        ${rows.map(([k, v]) => `<tr><td style="padding:3px 12px 3px 0;color:#64748B;">${k}</td><td style="padding:3px 0;">${esc(v) || '—'}</td></tr>`).join('')}
+      </table>
+      ${button('Open the admin panel', `${SITE_URL}/admin`)}
+    `,
+  };
+}
 const RESEND_BATCH_SIZE = 100; // Resend's documented max per /emails/batch call
 
 async function buildEmailPayload(
@@ -194,11 +222,31 @@ serve(async (req) => {
   if (!caller) return json(401, { error: 'Sign in again to continue' });
 
   let reqBody: {
-    user_id?: string; template: string; data?: Record<string, unknown>; broadcast?: boolean;
+    user_id?: string; template: string; data?: Record<string, unknown>; broadcast?: boolean; admin_alert?: boolean;
   };
   try { reqBody = await req.json(); } catch { return json(400, { error: 'Invalid JSON' }); }
 
-  const { user_id, template, data = {}, broadcast } = reqBody;
+  const { user_id, template, data = {}, broadcast, admin_alert } = reqBody;
+
+  /* ── Owner alert: internal callers only, fixed recipient ── */
+  if (admin_alert || ADMIN_ALERT_TEMPLATES.has(template)) {
+    if (caller.kind !== 'internal') return json(403, { error: 'Unauthorized' });
+    if (!ADMIN_ALERT_TEMPLATES.has(template)) return json(400, { error: `Unknown template: ${template}` });
+    if (!RESEND_API_KEY) return json(503, { error: 'Email sending is not configured (RESEND_API_KEY missing)' });
+    const r = renderNewRegistration(data);
+    const resp = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8', 'Authorization': `Bearer ${RESEND_API_KEY}` },
+      body: JSON.stringify({ from: FROM_ADDRESS, to: ADMIN_ALERT_TO, subject: r.subject, html: layout(r.html, '') }),
+    });
+    if (!resp.ok) {
+      console.error('[send-email] admin alert Resend error:', resp.status, await resp.text().catch(() => ''));
+      return json(502, { error: 'Resend API error', status: resp.status });
+    }
+    const out = await resp.json().catch(() => ({}));
+    return json(200, { sent: true, admin_alert: true, id: out?.id });
+  }
+
   if (!template || (!user_id && !broadcast)) return json(400, { error: 'Missing required fields' });
 
   if (template !== 'admin_broadcast' && !DB_BACKED_TEMPLATES.has(template)) {

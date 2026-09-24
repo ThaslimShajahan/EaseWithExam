@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Zap, CheckCircle2, XCircle, RefreshCw, Trophy,
@@ -10,7 +10,7 @@ import {
   getTodayChallenge, generateDailyChallenge,
   saveChallengeAnswer, getTodayAttempt, DailyChallengeUnavailable,
 } from '../../lib/dailyChallenge';
-import { awardXP } from '../../lib/gamification';
+import { announceXpMilestones } from '../../lib/gamification';
 import { createNotification } from '../../lib/notifications';
 import MathText from '../ui/MathText';
 
@@ -207,6 +207,9 @@ export default function DailyChallenge() {
   const [answers,    setAnswers]    = useState({});   // { 0: 'A', 1: 'C', 2: '3.14' }
   const [revealed,   setRevealed]   = useState({});   // { 0: true, 1: true, ... }
   const [submitted,  setSubmitted]  = useState(false);
+  // One automatic save per loaded test. A failure leaves the error and the
+  // "Try saving again" button; it is never retried silently in a loop.
+  const autoSaveTried = useRef(false);
 
   const uid = currentUser?.uid;
   // The server picks the exam+subject from the profile, so a profile change
@@ -223,6 +226,7 @@ export default function DailyChallenge() {
   const loadChallenge = async () => {
     setLoading(true); setError(''); setUnavailable(''); setSaveError('');
     setCurIdx(0); setAnswers({}); setRevealed({}); setSubmitted(false);
+    autoSaveTried.current = false;
     try {
       let c = await getTodayChallenge(uid);
       if (!c) c = await generateDailyChallenge({ userId: uid });
@@ -286,8 +290,9 @@ export default function DailyChallenge() {
     // flip to the score screen immediately and swallow any save error in a
     // bare catch — a failed save looked exactly like a successful one.
     setSaving(true); setSaveError('');
+    let result;
     try {
-      await saveChallengeAnswer(challenge.id, uid, JSON.stringify(answers), allCorrect);
+      result = await saveChallengeAnswer(challenge.id, uid, JSON.stringify(answers), allCorrect);
     } catch (e) {
       setSaveError(`Couldn't save your answers: ${e.message}`);
       setSaving(false);
@@ -295,8 +300,10 @@ export default function DailyChallenge() {
     }
     setSaving(false);
     setSubmitted(true);
-    // Rewards are side effects of a saved attempt; their failure must not undo it.
-    awardXP(uid, 'daily_challenge').catch(() => {});
+    // XP + streak were awarded by the server inside the save itself (first save
+    // only). Here: only the notifications that go with a first save.
+    if (!result?.first_save) return;
+    announceXpMilestones(uid, result.gamification, result.xp_awarded);
     createNotification(
       uid,
       'daily_challenge',
@@ -307,6 +314,15 @@ export default function DailyChallenge() {
   };
 
   const allAnswered = total > 0 && Object.keys(answers).length >= total;
+
+  // Students never pressed "Finish challenge" — each answer is revealed as it
+  // is picked, so after the last one the test looks done. Save automatically
+  // the moment the last question is answered.
+  useEffect(() => {
+    if (!allAnswered || submitted || saving || autoSaveTried.current || !challenge) return;
+    autoSaveTried.current = true;
+    handleSubmit();
+  }, [allAnswered, submitted, saving, challenge]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!uid) return null;
 
