@@ -138,7 +138,7 @@ function QuestionSlide({ q, qNum, total, answer, onAnswer, revealed }) {
 }
 
 /* ── Score summary ────────────────────────────────────── */
-function ScoreSummary({ questions, answers, onRetake }) {
+function ScoreSummary({ questions, answers }) {
   let correct = 0;
   questions.forEach((q, i) => {
     const ans = answers[i];
@@ -186,12 +186,8 @@ function ScoreSummary({ questions, answers, onRetake }) {
         })}
       </div>
 
-      <button
-        onClick={onRetake}
-        className="w-full text-xs font-semibold text-primary-600 hover:text-primary-700 py-2 border border-primary-200 rounded-xl hover:bg-primary-50 transition-colors flex items-center justify-center gap-1"
-      >
-        <RefreshCw size={11} /> Generate new mini test
-      </button>
+      {/* One Daily Mini Test per day (owner decision 2026-09-25) — no retake. */}
+      <p className="text-center text-xs text-slate-500 py-2">Your next Daily Mini Test arrives tomorrow.</p>
     </motion.div>
   );
 }
@@ -253,16 +249,7 @@ export default function DailyChallenge() {
     } finally { setLoading(false); }
   };
 
-  const genNew = async () => {
-    setGenerating(true);
-    setChallenge(null); setCurIdx(0); setAnswers({}); setRevealed({}); setSubmitted(false);
-    setError(''); setUnavailable(''); setSaveError('');
-    try {
-      const c = await generateDailyChallenge({ userId: uid });
-      setChallenge(c);
-    } catch (e) { handleLoadError(e); }
-    finally { setGenerating(false); }
-  };
+
 
   /* Parse questions: mini-paper vs legacy single MCQ */
   const questions = (() => {
@@ -343,13 +330,6 @@ export default function DailyChallenge() {
             </p>
           </div>
         </div>
-        {!loading && !generating && (
-          <button onClick={genNew}
-            className="h-7 w-7 rounded-lg bg-amber-100 flex items-center justify-center text-amber-600 hover:bg-amber-200 transition-colors"
-            title="New test">
-            <RefreshCw size={12} />
-          </button>
-        )}
       </div>
 
       {/* Progress dots */}
@@ -375,7 +355,9 @@ export default function DailyChallenge() {
       ) : unavailable ? (
         <div className="flex flex-col items-center gap-2 py-4 text-center">
           <BookOpen size={28} className="text-amber-400" />
-          {unavailable === 'setup_required' ? (
+          {unavailable === 'done_today' ? (
+            <p className="text-sm text-slate-700 font-medium">You&apos;ve done today&apos;s Daily Mini Test — a new one arrives tomorrow.</p>
+          ) : unavailable === 'setup_required' ? (
             <>
               <p className="text-sm text-slate-700 font-medium">Choose your subjects to get a daily test</p>
               <Link to="/profile" className="inline-flex items-center min-h-[44px] px-4 text-xs text-primary-600 font-semibold hover:underline">
@@ -399,7 +381,7 @@ export default function DailyChallenge() {
           </button>
         </div>
       ) : submitted ? (
-        <ScoreSummary questions={questions} answers={answers} onRetake={genNew} />
+        <ScoreSummary questions={questions} answers={answers} />
       ) : questions.length > 0 ? (
         <AnimatePresence mode="wait">
           <motion.div

@@ -66,8 +66,8 @@ insert into public.ai_features (feature, audience, quota_buckets, needs_subject,
   ('question-gen-embed',              'student', '{ai_questions,paper_generations}', false, '{embeddings}', '{text-embedding-3-small}', 'sub-call: textbook retrieval'),
   ('flashcards',                      'student', '{ai_questions}',                   true,  '{chat}',       '{gpt-4o,gpt-4o-mini}', null),
   ('important-qa-gen',                'student', '{ai_questions}',                   true,  '{chat}',       '{gpt-4o,gpt-4o-mini}', null),
-  ('chapter-notes-gen',               'student', '{ai_questions}',                   true,  '{chat}',       '{gpt-4o,gpt-4o-mini}', 'PROPOSED bucket (was uncharged) — owner to approve'),
-  ('daily-challenge',                 'student', '{ai_questions}',                   true,  '{chat}',       '{gpt-4o,gpt-4o-mini}', 'PROPOSED bucket (was uncharged) — owner to approve'),
+  ('chapter-notes-gen',               'student', '{ai_questions}',                   true,  '{chat}',       '{gpt-4o,gpt-4o-mini}', 'owner-approved 2026-09-25: 1 ai_questions per set'),
+  ('daily-challenge',                 'student', '{ai_questions}',                   true,  '{chat}',       '{gpt-4o,gpt-4o-mini}', 'owner-approved 2026-09-25: 1 ai_questions; one test per student per day'),
   -- student, exam-level or free-form
   ('study-plan-gen',                  'student', '{ai_questions}',                   false, '{chat}',       '{gpt-4o,gpt-4o-mini}', null),
   ('summarizer',                      'student', '{ai_questions}',                   false, '{chat}',       '{gpt-4o,gpt-4o-mini}', null),
@@ -370,6 +370,113 @@ begin
   execute format('update daily_usage_quota set %I = coalesce(%I, 0) + $1 where user_id = $2 and usage_date = $3', p_field, p_field)
     using p_amount, p_uid, v_today;
   return jsonb_build_object('allowed', true, 'used', v_used + p_amount, 'limit', v_limit);
+end;
+$$;
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- 5. Daily Mini Test: exactly one per student per day (owner, 2026-09-25)
+-- ═════════════════════════════════════════════════════════════════════════
+-- Charges 1 ai_questions via begin_ai_action (the ai_features row for
+-- daily-challenge draws on ai_questions). The two functions below are the
+-- 20260925000000 versions with only the per-day rule changed.
+create or replace function public.pick_daily_challenge_subject(p_uid text)
+returns jsonb
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_ctx      jsonb;
+  v_subjects text[];
+  v_sources  text[];
+  v_with     text[];
+  v_pool     text[];
+  v_last     text;
+  v_pick     text;
+  v_any_setup boolean := false;
+begin
+  -- One Daily Mini Test per student per IST day (owner decision 2026-09-25):
+  -- once today's exists there is nothing to pick, so nothing gets charged.
+  perform public.assert_verified_self(p_uid);
+  if exists (select 1 from public.daily_challenges where user_id = p_uid and challenge_date = public._ist_today()) then
+    return jsonb_build_object('status', 'done_today');
+  end if;
+
+  for v_ctx in select x from jsonb_array_elements(public.allowed_subjects_for_caller(p_uid)) x loop
+    if (v_ctx->>'needs_setup')::boolean then v_any_setup := true; continue; end if;
+    v_subjects := array(select jsonb_array_elements_text(v_ctx->'subjects'));
+    if cardinality(v_subjects) = 0 then continue; end if;
+    v_sources := array(select jsonb_array_elements_text(v_ctx->'content_sources'));
+
+    v_with := array(select s from unnest(v_subjects) s
+                     where exists (select 1 from public.knowledge_base kb
+                                    where kb.subject = s and kb.exam_type = any (v_sources)));
+    v_pool := case when cardinality(v_with) > 0 then v_with else v_subjects end;
+
+    select subject into v_last from public.daily_challenge_history
+     where user_id = p_uid and challenge_date < public._ist_today()
+     order by challenge_date desc limit 1;
+    if cardinality(v_pool) > 1 and v_last = any (v_pool) then
+      v_pool := array_remove(v_pool, v_last);
+    end if;
+
+    v_pick := v_pool[1 + floor(random() * cardinality(v_pool))::int];
+    return jsonb_build_object(
+      'status',          'ok',
+      'exam_type',       v_ctx->>'exam_type',
+      'subject',         v_pick,
+      'has_content',     v_pick = any (v_with),
+      'content_sources', v_ctx->'content_sources');
+  end loop;
+
+  return jsonb_build_object('status', case when v_any_setup then 'setup_required' else 'no_subjects' end);
+end;
+$$;
+
+create or replace function public.save_daily_challenge(
+  p_uid text, p_exam_type text, p_subject text, p_chapter text, p_questions jsonb
+) returns public.daily_challenges
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_row     public.daily_challenges;
+  v_chapter text := nullif(btrim(left(coalesce(p_chapter, ''), 200)), '');
+  v_q       jsonb;
+begin
+  perform public.assert_exam_subject_allowed(p_uid, p_exam_type, p_subject);
+
+  if p_questions is null or jsonb_typeof(p_questions) <> 'array'
+     or jsonb_array_length(p_questions) not between 1 and 10 then
+    raise exception 'p_questions must be an array of 1-10 questions' using errcode = '22023';
+  end if;
+  for v_q in select * from jsonb_array_elements(p_questions) loop
+    if jsonb_typeof(v_q) <> 'object'
+       or coalesce(btrim(v_q->>'q'), '') = '' or coalesce(btrim(v_q->>'answer'), '') = '' then
+      raise exception 'Every question needs non-empty q and answer' using errcode = '22023';
+    end if;
+  end loop;
+
+  -- ONE per student per IST day, free and premium alike (owner decision
+  -- 2026-09-25; was up to 6 regenerations). A second save is refused, and the
+  -- caller's begin_ai_action charge is refunded by the client on failure.
+  if exists (select 1 from public.daily_challenges
+              where user_id = p_uid and challenge_date = public._ist_today()) then
+    raise exception 'Today''s Daily Mini Test already exists' using errcode = '54000';
+  end if;
+
+  insert into public.daily_challenges
+    (user_id, challenge_date, exam_type, subject, question, options, correct_answer, explanation, chapter)
+  values
+    (p_uid, public._ist_today(), p_exam_type, p_subject,
+     'Daily ' || p_exam_type || ' · ' || p_subject || ' · ' || coalesce(v_chapter, 'Mixed'),
+     p_questions, 'paper', '', coalesce(v_chapter, p_subject))
+  returning * into v_row;
+
+  insert into public.daily_challenge_history (user_id, subject, topic, challenge_date)
+  values (p_uid, p_subject, coalesce(v_chapter, p_subject), public._ist_today())
+  on conflict (user_id, challenge_date) do update set subject = excluded.subject, topic = excluded.topic;
+
+  return v_row;
 end;
 $$;
 

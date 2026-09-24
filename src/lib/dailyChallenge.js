@@ -3,9 +3,9 @@ import { chatComplete } from './aiProxy';
 import { fetchSubjectContext } from './questionGen';
 import { beginAiAction, endAiAction } from './aiActions';
 
-// PROPOSED (owner to approve, 2026-09-25): the Daily Mini Test was uncharged.
-// 1 ai_questions per generated test — the dashboard generates one automatically,
-// so charging the full 5 would silently take a quarter of a free student's day.
+// Owner decision 2026-09-25: ONE Daily Mini Test per student per day (free and
+// premium alike), charging 1 ai_questions. The server enforces the one-per-day
+// rule (pick_daily_challenge_subject / save_daily_challenge).
 const DAILY_TEST_QUOTA = 1;
 
 /*
@@ -27,10 +27,10 @@ const DAILY_TEST_QUOTA = 1;
 /** Thrown for states the UI must render honestly, never paper over. */
 export class DailyChallengeUnavailable extends Error {
   constructor(status) {
-    super(status === 'setup_required'
-      ? 'Complete your subject selection to get a daily test.'
+    super(status === 'setup_required' ? 'Complete your subject selection to get a daily test.'
+      : status === 'done_today'       ? "You have done today's Daily Mini Test — a new one arrives tomorrow."
       : 'Daily tests for your exam are coming soon.');
-    this.status = status;   // 'setup_required' | 'no_subjects'
+    this.status = status;   // 'setup_required' | 'no_subjects' | 'done_today'
   }
 }
 
