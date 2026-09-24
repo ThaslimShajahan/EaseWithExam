@@ -20,6 +20,7 @@ import PaywallModal from '../components/ui/PaywallModal';
 import { getSubjectsForExam, normalizeExamType, buildExamType, getExamLabel, EXAM_TYPE_GROUPS, BOARDS, CLASS_LEVELS } from '../lib/categories';
 import { useStudentSubjects } from '../hooks/useStudentSubjects';
 import SubjectSetupPrompt from '../components/ui/SubjectSetupPrompt';
+import SubjectsComingSoon from '../components/ui/SubjectsComingSoon';
 import { getFeatureFlag, FLAGS } from '../lib/featureFlags';
 import { saveWrongAnswers, saveCorrectAnswers } from '../lib/errorNotebook';
 
@@ -183,7 +184,7 @@ function ConfigForm({ subject, setSubject, examType, setExamType, topic, setTopi
     || (selBoard && selClass ? `${selBoard} Class ${selClass}` : selClass ? `Class ${selClass}` : selBoard ?? '');
   // Scoped to the student's own subjects. 'Mixed' is appended after scoping —
   // it is a mode, not a subject, and must survive whatever the scoping returns.
-  const { subjects: liveSubjects, needsSetup } = useStudentSubjects(examType, selClass ?? init.cls);
+  const { subjects: liveSubjects, needsSetup, loading: subjectsLoading } = useStudentSubjects(examType, selClass ?? init.cls);
   const subjects = [...liveSubjects, 'Mixed'];
 
   // Keep the selected subject valid whenever the exam changes or the live list loads.
@@ -192,6 +193,12 @@ function ConfigForm({ subject, setSubject, examType, setExamType, topic, setTopi
   }, [liveSubjects]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (needsSetup) return <SubjectSetupPrompt toolName="Practice question generation" />;
+  // An exam with no allowed subject (none loaded, all hidden, or not one of the
+  // student's own exams) gets the honest empty state — 'Mixed' alone must not
+  // stand in for a subject list, it would mix whatever retrieval finds.
+  if (subjectsLoading || !liveSubjects.length) {
+    return <SubjectsComingSoon toolName="Practice question generation" loading={subjectsLoading} unresolved={!examType} />;
+  }
 
   return (
     <div className="space-y-5">
@@ -816,7 +823,9 @@ export default function PracticeGeneratorPage({ embedded = false }) {
   const { currentUser, userProfile, isPremium } = useAuth();
 
   const profileExam    = buildExamType(userProfile?.target_exam, userProfile?.syllabus, userProfile?.class_level);
-  const defaultSubject = getSubjectsForExam(profileExam)[0] ?? 'Biology';
+  // No invented default: an unresolved exam has no subjects, and the server-scoped
+  // picker (useStudentSubjects) replaces this as soon as it loads.
+  const defaultSubject = getSubjectsForExam(profileExam)[0] ?? '';
 
   const [examType,    setExamType]  = useState(profileExam);
   const [subject,     setSubject]   = useState(defaultSubject);

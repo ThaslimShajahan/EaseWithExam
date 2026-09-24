@@ -18,63 +18,67 @@
  */
 
 import { supabase } from './supabase';
+import { setContentSources } from './examMapping';
 
-const SCHOOL_SUBJECTS_8_10  = ['Mathematics', 'Science', 'Social Studies', 'English', 'Hindi'];
-const SCHOOL_SUBJECTS_11_12 = ['Physics', 'Chemistry', 'Biology', 'Mathematics', 'English', 'Economics', 'Accountancy', 'Business Studies', 'Computer Science'];
-
+// STRUCTURE ONLY — no subject lists (removed 2026-09-25). The exam→subject
+// mapping lives in ONE place: exam_categories.subjects (+ hidden_subjects), read
+// by the server (allowed_subjects_for_caller) and by loadCategories() below. A
+// second hardcoded copy here is how "JEE Advanced · English" happened: a list
+// that silently disagreed with the admin-set one. Before the DB loads, an exam
+// has NO subjects — pickers show nothing / "coming soon", never a guess.
 const FALLBACK_CATEGORIES = {
-  'NEET':         { label: 'NEET UG',     type: 'competitive', group: 'Medical',      subjects: ['Physics', 'Chemistry', 'Biology'] },
-  'JEE Main':     { label: 'JEE',         type: 'competitive', group: 'Engineering',  subjects: ['Physics', 'Chemistry', 'Mathematics'] },
-  'JEE Advanced': { label: 'JEE Adv.',    type: 'competitive', group: 'Engineering',  subjects: ['Physics', 'Chemistry', 'Mathematics'] },
-  'CUET':         { label: 'CUET',        type: 'competitive', group: 'University',   subjects: ['Physics', 'Chemistry', 'Biology', 'Mathematics', 'English', 'Economics', 'History', 'Political Science'] },
-  'UPSC':         { label: 'UPSC CSE',    type: 'competitive', group: 'Government',   subjects: ['History', 'Geography', 'Polity', 'Economics', 'Science & Technology', 'Environment', 'Current Affairs'] },
-  'SSC CGL':      { label: 'SSC CGL',     type: 'competitive', group: 'Government',   subjects: ['Quantitative Aptitude', 'English', 'General Awareness', 'Reasoning'] },
-  'Olympiad':     { label: 'Olympiad',    type: 'competitive', group: 'Academic',     subjects: ['Physics', 'Chemistry', 'Biology', 'Mathematics', 'Astronomy'] },
+  'NEET':         { label: 'NEET UG',     type: 'competitive', group: 'Medical', subjects: [] },
+  'JEE Main':     { label: 'JEE',         type: 'competitive', group: 'Engineering', subjects: [] },
+  'JEE Advanced': { label: 'JEE Adv.',    type: 'competitive', group: 'Engineering', subjects: [] },
+  'CUET':         { label: 'CUET',        type: 'competitive', group: 'University', subjects: [] },
+  'UPSC':         { label: 'UPSC CSE',    type: 'competitive', group: 'Government', subjects: [] },
+  'SSC CGL':      { label: 'SSC CGL',     type: 'competitive', group: 'Government', subjects: [] },
+  'Olympiad':     { label: 'Olympiad',    type: 'competitive', group: 'Academic', subjects: [] },
 
-  'Class 6':  { label: 'Class 6',  type: 'school', group: 'Middle School',  subjects: SCHOOL_SUBJECTS_8_10 },
-  'Class 7':  { label: 'Class 7',  type: 'school', group: 'Middle School',  subjects: SCHOOL_SUBJECTS_8_10 },
-  'Class 8':  { label: 'Class 8',  type: 'school', group: 'Middle School',  subjects: SCHOOL_SUBJECTS_8_10 },
-  'Class 9':  { label: 'Class 9',  type: 'school', group: 'Middle School',  subjects: SCHOOL_SUBJECTS_8_10 },
-  'Class 10': { label: 'Class 10', type: 'school', group: 'High School',    subjects: [...SCHOOL_SUBJECTS_8_10, 'Sanskrit'] },
-  'Class 11': { label: 'Class 11', type: 'school', group: 'Senior School',  subjects: SCHOOL_SUBJECTS_11_12 },
-  'Class 12': { label: 'Class 12', type: 'school', group: 'Senior School',  subjects: SCHOOL_SUBJECTS_11_12 },
+  'Class 6':  { label: 'Class 6',  type: 'school', group: 'Middle School', subjects: [] },
+  'Class 7':  { label: 'Class 7',  type: 'school', group: 'Middle School', subjects: [] },
+  'Class 8':  { label: 'Class 8',  type: 'school', group: 'Middle School', subjects: [] },
+  'Class 9':  { label: 'Class 9',  type: 'school', group: 'Middle School', subjects: [] },
+  'Class 10': { label: 'Class 10', type: 'school', group: 'High School', subjects: [] },
+  'Class 11': { label: 'Class 11', type: 'school', group: 'Senior School', subjects: [] },
+  'Class 12': { label: 'Class 12', type: 'school', group: 'Senior School', subjects: [] },
 
-  'CBSE':        { label: 'CBSE Board',  type: 'board', group: 'National Board', subjects: ['Mathematics', 'Science', 'English', 'Hindi', 'Social Studies', 'Physics', 'Chemistry', 'Biology', 'Computer Science'] },
-  'ICSE':        { label: 'ICSE',        type: 'board', group: 'National Board', subjects: ['Mathematics', 'Physics', 'Chemistry', 'Biology', 'English', 'History & Civics', 'Geography', 'Computer Applications'] },
-  'State Board': { label: 'State Board', type: 'board', group: 'State Board',    subjects: ['Mathematics', 'Science', 'English', 'Hindi', 'Social Studies', 'Physics', 'Chemistry', 'Biology'] },
-  'Kerala State': { label: 'Kerala State', type: 'board', group: 'Kerala State', subjects: ['Mathematics', 'Science', 'English', 'Hindi', 'Social Studies', 'Physics', 'Chemistry', 'Biology'] },
+  'CBSE':        { label: 'CBSE Board',  type: 'board', group: 'National Board', subjects: [] },
+  'ICSE':        { label: 'ICSE',        type: 'board', group: 'National Board', subjects: [] },
+  'State Board': { label: 'State Board', type: 'board', group: 'State Board', subjects: [] },
+  'Kerala State': { label: 'Kerala State', type: 'board', group: 'Kerala State', subjects: [] },
 
-  'CBSE Class 6':  { label: 'CBSE Class 6',  type: 'school', group: 'CBSE', subjects: SCHOOL_SUBJECTS_8_10 },
-  'CBSE Class 7':  { label: 'CBSE Class 7',  type: 'school', group: 'CBSE', subjects: SCHOOL_SUBJECTS_8_10 },
-  'CBSE Class 8':  { label: 'CBSE Class 8',  type: 'school', group: 'CBSE', subjects: SCHOOL_SUBJECTS_8_10 },
-  'CBSE Class 9':  { label: 'CBSE Class 9',  type: 'school', group: 'CBSE', subjects: SCHOOL_SUBJECTS_8_10 },
-  'CBSE Class 10': { label: 'CBSE Class 10', type: 'school', group: 'CBSE', subjects: [...SCHOOL_SUBJECTS_8_10, 'Sanskrit'] },
-  'CBSE Class 11': { label: 'CBSE Class 11', type: 'school', group: 'CBSE', subjects: SCHOOL_SUBJECTS_11_12 },
-  'CBSE Class 12': { label: 'CBSE Class 12', type: 'school', group: 'CBSE', subjects: SCHOOL_SUBJECTS_11_12 },
+  'CBSE Class 6':  { label: 'CBSE Class 6',  type: 'school', group: 'CBSE', subjects: [] },
+  'CBSE Class 7':  { label: 'CBSE Class 7',  type: 'school', group: 'CBSE', subjects: [] },
+  'CBSE Class 8':  { label: 'CBSE Class 8',  type: 'school', group: 'CBSE', subjects: [] },
+  'CBSE Class 9':  { label: 'CBSE Class 9',  type: 'school', group: 'CBSE', subjects: [] },
+  'CBSE Class 10': { label: 'CBSE Class 10', type: 'school', group: 'CBSE', subjects: [] },
+  'CBSE Class 11': { label: 'CBSE Class 11', type: 'school', group: 'CBSE', subjects: [] },
+  'CBSE Class 12': { label: 'CBSE Class 12', type: 'school', group: 'CBSE', subjects: [] },
 
-  'ICSE Class 6':  { label: 'ICSE Class 6',  type: 'school', group: 'ICSE', subjects: ['Mathematics', 'Physics', 'Chemistry', 'Biology', 'English', 'History & Civics'] },
-  'ICSE Class 7':  { label: 'ICSE Class 7',  type: 'school', group: 'ICSE', subjects: ['Mathematics', 'Physics', 'Chemistry', 'Biology', 'English', 'History & Civics'] },
-  'ICSE Class 8':  { label: 'ICSE Class 8',  type: 'school', group: 'ICSE', subjects: ['Mathematics', 'Physics', 'Chemistry', 'Biology', 'English', 'History & Civics'] },
-  'ICSE Class 9':  { label: 'ICSE Class 9',  type: 'school', group: 'ICSE', subjects: ['Mathematics', 'Physics', 'Chemistry', 'Biology', 'English', 'History & Civics'] },
-  'ICSE Class 10': { label: 'ICSE Class 10', type: 'school', group: 'ICSE', subjects: ['Mathematics', 'Physics', 'Chemistry', 'Biology', 'English', 'History & Civics', 'Geography', 'Computer Applications'] },
-  'ICSE Class 11': { label: 'ICSE Class 11', type: 'school', group: 'ICSE', subjects: SCHOOL_SUBJECTS_11_12 },
-  'ICSE Class 12': { label: 'ICSE Class 12', type: 'school', group: 'ICSE', subjects: SCHOOL_SUBJECTS_11_12 },
+  'ICSE Class 6':  { label: 'ICSE Class 6',  type: 'school', group: 'ICSE', subjects: [] },
+  'ICSE Class 7':  { label: 'ICSE Class 7',  type: 'school', group: 'ICSE', subjects: [] },
+  'ICSE Class 8':  { label: 'ICSE Class 8',  type: 'school', group: 'ICSE', subjects: [] },
+  'ICSE Class 9':  { label: 'ICSE Class 9',  type: 'school', group: 'ICSE', subjects: [] },
+  'ICSE Class 10': { label: 'ICSE Class 10', type: 'school', group: 'ICSE', subjects: [] },
+  'ICSE Class 11': { label: 'ICSE Class 11', type: 'school', group: 'ICSE', subjects: [] },
+  'ICSE Class 12': { label: 'ICSE Class 12', type: 'school', group: 'ICSE', subjects: [] },
 
-  'State Board Class 6':  { label: 'State Board Class 6',  type: 'school', group: 'State Board', subjects: SCHOOL_SUBJECTS_8_10 },
-  'State Board Class 7':  { label: 'State Board Class 7',  type: 'school', group: 'State Board', subjects: SCHOOL_SUBJECTS_8_10 },
-  'State Board Class 8':  { label: 'State Board Class 8',  type: 'school', group: 'State Board', subjects: SCHOOL_SUBJECTS_8_10 },
-  'State Board Class 9':  { label: 'State Board Class 9',  type: 'school', group: 'State Board', subjects: SCHOOL_SUBJECTS_8_10 },
-  'State Board Class 10': { label: 'State Board Class 10', type: 'school', group: 'State Board', subjects: [...SCHOOL_SUBJECTS_8_10, 'Sanskrit'] },
-  'State Board Class 11': { label: 'State Board Class 11', type: 'school', group: 'State Board', subjects: SCHOOL_SUBJECTS_11_12 },
-  'State Board Class 12': { label: 'State Board Class 12', type: 'school', group: 'State Board', subjects: SCHOOL_SUBJECTS_11_12 },
+  'State Board Class 6':  { label: 'State Board Class 6',  type: 'school', group: 'State Board', subjects: [] },
+  'State Board Class 7':  { label: 'State Board Class 7',  type: 'school', group: 'State Board', subjects: [] },
+  'State Board Class 8':  { label: 'State Board Class 8',  type: 'school', group: 'State Board', subjects: [] },
+  'State Board Class 9':  { label: 'State Board Class 9',  type: 'school', group: 'State Board', subjects: [] },
+  'State Board Class 10': { label: 'State Board Class 10', type: 'school', group: 'State Board', subjects: [] },
+  'State Board Class 11': { label: 'State Board Class 11', type: 'school', group: 'State Board', subjects: [] },
+  'State Board Class 12': { label: 'State Board Class 12', type: 'school', group: 'State Board', subjects: [] },
 
-  'Kerala State Class 6':  { label: 'Kerala State Class 6',  type: 'school', group: 'Kerala State', subjects: SCHOOL_SUBJECTS_8_10 },
-  'Kerala State Class 7':  { label: 'Kerala State Class 7',  type: 'school', group: 'Kerala State', subjects: SCHOOL_SUBJECTS_8_10 },
-  'Kerala State Class 8':  { label: 'Kerala State Class 8',  type: 'school', group: 'Kerala State', subjects: SCHOOL_SUBJECTS_8_10 },
-  'Kerala State Class 9':  { label: 'Kerala State Class 9',  type: 'school', group: 'Kerala State', subjects: SCHOOL_SUBJECTS_8_10 },
-  'Kerala State Class 10': { label: 'Kerala State Class 10', type: 'school', group: 'Kerala State', subjects: [...SCHOOL_SUBJECTS_8_10, 'Sanskrit'] },
-  'Kerala State Class 11': { label: 'Kerala State Class 11', type: 'school', group: 'Kerala State', subjects: SCHOOL_SUBJECTS_11_12 },
-  'Kerala State Class 12': { label: 'Kerala State Class 12', type: 'school', group: 'Kerala State', subjects: SCHOOL_SUBJECTS_11_12 },
+  'Kerala State Class 6':  { label: 'Kerala State Class 6',  type: 'school', group: 'Kerala State', subjects: [] },
+  'Kerala State Class 7':  { label: 'Kerala State Class 7',  type: 'school', group: 'Kerala State', subjects: [] },
+  'Kerala State Class 8':  { label: 'Kerala State Class 8',  type: 'school', group: 'Kerala State', subjects: [] },
+  'Kerala State Class 9':  { label: 'Kerala State Class 9',  type: 'school', group: 'Kerala State', subjects: [] },
+  'Kerala State Class 10': { label: 'Kerala State Class 10', type: 'school', group: 'Kerala State', subjects: [] },
+  'Kerala State Class 11': { label: 'Kerala State Class 11', type: 'school', group: 'Kerala State', subjects: [] },
+  'Kerala State Class 12': { label: 'Kerala State Class 12', type: 'school', group: 'Kerala State', subjects: [] },
 };
 
 const FALLBACK_EXAM_TYPE_GROUPS = [
@@ -150,7 +154,7 @@ async function _fetchAndApply() {
     const [{ data, error }, subjectsRes] = await Promise.all([
       supabase
         .from('exam_categories')
-        .select('exam_key, label, category_kind, board_key, class_key, group_label, subjects, sort_order')
+        .select('exam_key, label, category_kind, board_key, class_key, group_label, subjects, hidden_subjects, content_sources, sort_order')
         .eq('is_active', true)
         .order('sort_order'),
       supabase.from('subjects').select('name, content_bearing, kind'),
@@ -168,14 +172,21 @@ async function _fetchAndApply() {
     if (error || !data?.length) return; // keep hardcoded fallback
 
     const categories = {};
+    const contentSources = {};
     for (const row of data) {
       categories[row.exam_key] = {
         label:    row.label,
         type:     row.category_kind === 'competitive' ? 'competitive' : (row.category_kind === 'board' ? 'board' : 'school'),
         group:    row.group_label,
         subjects: row.subjects ?? [],
+        // Hidden from STUDENTS for this exam (admin toggle). Kept in `subjects`
+        // so admin tooling still sees them; student surfaces get their list
+        // from the server's allowed_subjects_for_caller, which removes them.
+        hidden:   row.hidden_subjects ?? [],
       };
+      if (row.content_sources?.length) contentSources[row.exam_key] = row.content_sources;
     }
+    setContentSources(contentSources);
 
     const boards = data.filter((r) => r.category_kind === 'board').map((r) => r.board_key ?? r.exam_key);
     const classLevels = [...new Set(data.filter((r) => r.category_kind === 'class').map((r) => r.class_key).filter(Boolean))]
@@ -207,7 +218,11 @@ async function _fetchAndApply() {
  * display, and validating a stored selection.
  */
 export function getSubjectsForExam(examType, { includeNonContent = false } = {}) {
-  const all = CATEGORIES[examType]?.subjects ?? ['Mathematics', 'Science', 'English'];
+  // Unknown exam → no subjects. This used to fall back to Maths/Science/English,
+  // the same fail-open list that produced "JEE Advanced · English".
+  // ADMIN-SIDE list: includes subjects hidden from students. Student surfaces
+  // must use lib/allowedSubjects.js (server-decided) instead.
+  const all = CATEGORIES[examType]?.subjects ?? [];
   if (includeNonContent || NON_CONTENT_SUBJECTS.size === 0) return all;
   return all.filter((s) => !NON_CONTENT_SUBJECTS.has(s));
 }
@@ -428,7 +443,11 @@ export function getExamContexts(profile) {
  */
 export function buildExamType(targetExam, syllabus, classLevel) {
   const profile = { target_exam: targetExam, syllabus, class_level: classLevel };
+  // null when nothing resolves — callers must show "set up your exam", never
+  // guess. The old final fallback, normalizeExamType(targetExam), turned a
+  // missing target into 'NEET' and target 'NONE' into the exam 'NONE'
+  // (3 live Daily Mini Tests were labelled "NONE", 2026-09-24).
   return getCompetitiveExamType(profile)
       ?? getSchoolExamType(profile)
-      ?? normalizeExamType(targetExam);
+      ?? null;
 }

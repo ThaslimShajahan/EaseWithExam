@@ -1,108 +1,100 @@
 import { supabase } from './supabase';
 import { chatComplete } from './aiProxy';
+import { fetchSubjectContext } from './questionGen';
 
-// IST calendar date — avoids UTC midnight triggering wrong day in India
-const todayKey = () =>
-  new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+/*
+ * Daily Mini Test — since 2026-09-25 (migration 20260925000000) the SERVER
+ * decides the exam and subject and re-checks them on save:
+ *
+ *   pick_daily_challenge_subject  chooses an allowed (exam, subject) for this
+ *                                 verified student, preferring subjects with
+ *                                 loaded content
+ *   save_daily_challenge          refuses any pair outside the student's
+ *                                 allowed list and builds the label itself
+ *
+ * This file used to pick from its own hardcoded list, where 'JEE Advanced'
+ * matched no branch and fell through to ['Mathematics','Science','English'] —
+ * the "JEE Advanced · English" test a student posted publicly. The tables are
+ * RPC-only now, so nothing here can write a subject the server hasn't allowed.
+ */
 
-/* ── Fetch today's challenge for a user ───────────────────── */
-// examType (optional) is the student's CURRENT buildExamType() — a challenge
-// generated earlier under a since-changed profile (different class/board/exam)
-// is stale and must not be returned, or the student sees mismatched content
-// for the rest of the day; the caller will regenerate a fresh one instead.
-export async function getTodayChallenge(firebaseUid, examType = null) {
-  const today = todayKey();
-
-  /* 1. Try user-specific challenge */
-  const { data: userRow } = await supabase
-    .from('daily_challenges')
-    .select('*')
-    .eq('user_id', firebaseUid)
-    .eq('challenge_date', today)
-    .maybeSingle();
-
-  if (userRow && (!examType || userRow.exam_type === examType)) return userRow;
-
-  /* 2. Fall back to global challenge for today */
-  const { data: globalRow } = await supabase
-    .from('daily_challenges')
-    .select('*')
-    .is('user_id', null)
-    .eq('challenge_date', today)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (globalRow && (!examType || globalRow.exam_type === examType)) return globalRow;
-  return null;
+/** Thrown for states the UI must render honestly, never paper over. */
+export class DailyChallengeUnavailable extends Error {
+  constructor(status) {
+    super(status === 'setup_required'
+      ? 'Complete your subject selection to get a daily test.'
+      : 'Daily tests for your exam are coming soon.');
+    this.status = status;   // 'setup_required' | 'no_subjects'
+  }
 }
 
-/* ── Save answer attempt ──────────────────────────────────── */
+/* ── Today's challenge for this student (or null) ─────────── */
+// Server-filtered: a test whose exam+subject is no longer allowed (profile
+// changed, or an admin hid the subject) is not returned, so the caller
+// generates a fresh, allowed one instead.
+export async function getTodayChallenge(firebaseUid) {
+  const { data, error } = await supabase.rpc('get_today_daily_challenge', { p_uid: firebaseUid });
+  if (error) throw new Error(error.message);
+  return data?.id ? data : null;   // composite RPCs return an all-null row for "none"
+}
+
+/* ── Save the student's answers ───────────────────────────── */
+// Throws on failure. The old version ignored supabase-js's returned `error`
+// (it doesn't throw) inside a bare catch, so a failed save was invisible.
 export async function saveChallengeAnswer(challengeId, firebaseUid, selectedOption, isCorrect) {
-  await supabase.from('daily_challenge_attempts').upsert({
-    challenge_id:    challengeId,
-    user_id:         firebaseUid,
-    selected_option: selectedOption,
-    is_correct:      isCorrect,
-  }, { onConflict: 'challenge_id,user_id' });
+  const { error } = await supabase.rpc('save_daily_challenge_attempt', {
+    p_uid: firebaseUid, p_challenge_id: challengeId, p_selected: selectedOption, p_is_correct: isCorrect,
+  });
+  if (error) throw new Error(error.message);
 }
 
-/* ── Get today's attempt by this user ─────────────────────── */
+/* ── Today's attempt by this student ──────────────────────── */
 export async function getTodayAttempt(challengeId, firebaseUid) {
   if (!challengeId || !firebaseUid) return null;
-  const { data } = await supabase
-    .from('daily_challenge_attempts')
-    .select('selected_option, is_correct')
-    .eq('challenge_id', challengeId)
-    .eq('user_id', firebaseUid)
-    .maybeSingle();
-  return data ?? null;
+  const { data, error } = await supabase.rpc('get_own_daily_challenge_attempt', {
+    p_uid: firebaseUid, p_challenge_id: challengeId,
+  });
+  if (error) throw new Error(error.message);
+  return data?.[0] ?? null;
 }
 
-/* ── Fetch recently seen challenge topics for this user ──── */
+/* ── Recently used topics (to avoid repeats) ──────────────── */
 async function getRecentTopics(userId) {
-  if (!userId) return [];
   try {
     const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const { data } = await supabase.rpc('get_recent_challenge_topics', { p_uid: userId, p_cutoff: cutoff });
-    return (data ?? []).map(r => `${r.subject}: ${r.topic}`);
-  } catch { return []; }
+    return (data ?? []).map((r) => `${r.subject}: ${r.topic}`);
+  } catch { return []; }   // a hint only — never block generation on it
 }
 
-async function recordChallengeHistory(userId, subject, topic) {
-  if (!userId) return;
-  try {
-    await supabase.rpc('upsert_challenge_history', {
-      p_uid:     userId,
-      p_subject: subject,
-      p_topic:   topic,
-      p_date:    todayKey(),
-    });
-  } catch { /* non-critical */ }
-}
+/* ── Generate today's 5-question mini paper ───────────────── */
+export async function generateDailyChallenge({ userId }) {
+  if (!userId) throw new Error('Sign in to get a daily test.');
 
-/* ── Generate a 5-question mini paper ────────────────────── */
-export async function generateDailyChallenge({ examType = 'NEET', subject, userId = null } = {}) {
-  const today = todayKey();
-  const subList = subject ? [subject] : (
-    examType === 'NEET'     ? ['Biology', 'Physics', 'Chemistry'] :
-    examType === 'JEE Main' ? ['Physics', 'Chemistry', 'Mathematics'] :
-    examType.includes('Class') || examType.includes('CBSE')
-      ? ['Physics', 'Chemistry', 'Mathematics', 'Biology'] :
-    ['Mathematics', 'Science', 'English']
-  );
-  const chosenSubject = subList[Math.floor(Math.random() * subList.length)];
+  // 1. The server picks an allowed exam + subject.
+  const { data: pick, error: pickErr } = await supabase.rpc('pick_daily_challenge_subject', { p_uid: userId });
+  if (pickErr) throw new Error(pickErr.message);
+  if (pick?.status !== 'ok') throw new DailyChallengeUnavailable(pick?.status ?? 'no_subjects');
+  const { exam_type: examType, subject, has_content: hasContent } = pick;
+
+  // 2. Ground it in loaded textbook content when the server says there is some
+  //    (for NEET/JEE that includes CBSE Class 11/12 NCERT — owner decision).
+  const extracts = hasContent ? await fetchSubjectContext(subject, examType).catch(() => []) : [];
 
   const recentTopics = await getRecentTopics(userId);
-  const avoidHint = recentTopics.length > 0
+  const avoidHint = recentTopics.length
     ? `\n\nAVOID repeating these recently used topics: ${recentTopics.join('; ')}. Pick a DIFFERENT chapter.`
     : '';
+  const sourceBlock = extracts.length
+    ? `\n\nBase EVERY question on these textbook extracts (the student's own syllabus). Do not go beyond them:\n${
+        extracts.map((t, i) => `--- Extract ${i + 1} ---\n${t}`).join('\n')}`
+    : `\n\nStay strictly within the ${subject} syllabus for ${examType}.`;
 
-  const prompt = `Generate a 5-question daily mini test for ${examType} — subject: ${chosenSubject}.${avoidHint}
+  const prompt = `Generate a 5-question daily mini test for ${examType} — subject: ${subject}. Every question must be a ${subject} question.${sourceBlock}${avoidHint}
 Mix question types:
 - Q1, Q2, Q3: MCQ (single correct, 4 options A/B/C/D)
 - Q4: Assertion-Reason (options exactly: A: Both A&R true and R is correct explanation; B: Both true but R is not correct explanation; C: A is true R is false; D: A is false)
-- Q5: Numerical (integer/decimal answer, opts must be [])
+- Q5: Numerical (integer/decimal answer, opts must be []). If ${subject} has no numerical content, make Q5 a fifth MCQ instead.
 
 All questions must be based on NCERT syllabus, realistic ${examType} difficulty. Use $...$ for LaTeX.
 
@@ -147,70 +139,15 @@ Return ONLY valid JSON:
 
   const raw = JSON.parse(resp.choices[0].message.content);
 
-  // Store questions array in options field; mark with sentinel correct_answer="paper"
-  const row = {
-    user_id:        userId,
-    challenge_date: today,
-    exam_type:      examType,
-    subject:        chosenSubject,
-    question:       `Daily ${examType} · ${chosenSubject} · ${raw.chapter || 'Mixed'}`,
-    options:        raw.questions || [],   // JSONB array of question objects
-    correct_answer: 'paper',              // sentinel: tells UI this is a mini paper
-    explanation:    '',
-    chapter:        raw.chapter || chosenSubject,
-  };
-
-  const { data, error } = await supabase
-    .from('daily_challenges')
-    .insert(row)
-    .select()
-    .single();
-
-  if (error) throw error;
-
-  // Track topic to avoid repetition in future challenges
-  recordChallengeHistory(userId, chosenSubject, raw.chapter || chosenSubject);
-
+  // 3. The server re-checks the pair, validates the questions, builds the label
+  //    and records history. A refusal surfaces as an error, never a silent save.
+  const { data, error } = await supabase.rpc('save_daily_challenge', {
+    p_uid:       userId,
+    p_exam_type: examType,
+    p_subject:   subject,
+    p_chapter:   raw.chapter || null,
+    p_questions: raw.questions || [],
+  });
+  if (error) throw new Error(error.message);
   return data;
 }
-
-/* ── SQL migration (run once in Supabase) ─────────────────── */
-export const DAILY_CHALLENGE_SQL = `
--- Daily challenges table
-CREATE TABLE IF NOT EXISTS daily_challenges (
-  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id        text,              -- null = global challenge
-  challenge_date date NOT NULL,
-  exam_type      text,
-  subject        text,
-  question       text NOT NULL,
-  options        jsonb,
-  correct_answer text,
-  explanation    text,
-  chapter        text,
-  difficulty     text DEFAULT 'Medium',
-  created_at     timestamptz DEFAULT now()
-);
-
--- Attempts table
-CREATE TABLE IF NOT EXISTS daily_challenge_attempts (
-  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  challenge_id    uuid REFERENCES daily_challenges(id),
-  user_id         text NOT NULL,
-  selected_option text,
-  is_correct      boolean,
-  attempted_at    timestamptz DEFAULT now(),
-  UNIQUE(challenge_id, user_id)
-);
-
--- Enable RLS
-ALTER TABLE daily_challenges        ENABLE ROW LEVEL SECURITY;
-ALTER TABLE daily_challenge_attempts ENABLE ROW LEVEL SECURITY;
-
--- Allow anon read (public daily challenge)
-CREATE POLICY "read daily challenges" ON daily_challenges FOR SELECT USING (true);
-CREATE POLICY "insert daily challenges" ON daily_challenges FOR INSERT WITH CHECK (true);
-CREATE POLICY "read attempts" ON daily_challenge_attempts FOR SELECT USING (true);
-CREATE POLICY "upsert attempts" ON daily_challenge_attempts FOR INSERT WITH CHECK (true);
-CREATE POLICY "update attempts" ON daily_challenge_attempts FOR UPDATE USING (true);
-`;

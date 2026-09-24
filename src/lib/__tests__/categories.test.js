@@ -19,12 +19,13 @@ import {
 } from '../categories';
 
 describe('CATEGORIES', () => {
-  it('has correct subjects for NEET', () => {
-    expect(CATEGORIES['NEET'].subjects).toEqual(['Physics', 'Chemistry', 'Biology']);
-  });
-
-  it('has correct subjects for JEE Main', () => {
-    expect(CATEGORIES['JEE Main'].subjects).toEqual(['Physics', 'Chemistry', 'Mathematics']);
+  // The exam→subject mapping lives ONLY in exam_categories (2026-09-25). A
+  // second hardcoded copy silently disagreed with it and put English on a
+  // JEE Advanced Daily Mini Test. Before the DB loads, no exam has subjects.
+  it('carries no hardcoded subject lists before the DB loads', () => {
+    Object.entries(CATEGORIES).forEach(([key, cat]) => {
+      expect(cat.subjects, key).toEqual([]);
+    });
   });
 
   it('marks competitive exams with type "competitive"', () => {
@@ -43,30 +44,37 @@ describe('CATEGORIES', () => {
     expect(CATEGORIES['Class 12'].type).toBe('school');
   });
 
-  it('every entry has a label, type, group, and subjects array', () => {
+  it('every entry has a label, type, group, and a subjects array (empty until loaded)', () => {
     Object.entries(CATEGORIES).forEach(([key, cat]) => {
       expect(cat.label, key).toBeTruthy();
       expect(cat.type, key).toMatch(/^(competitive|board|school)$/);
       expect(cat.group, key).toBeTruthy();
       expect(Array.isArray(cat.subjects), key).toBe(true);
-      expect(cat.subjects.length, key).toBeGreaterThan(0);
     });
   });
 });
 
 describe('getSubjectsForExam', () => {
-  it('returns subjects for a known exam', () => {
-    expect(getSubjectsForExam('NEET')).toEqual(['Physics', 'Chemistry', 'Biology']);
+  it('returns NO subjects for an unknown exam — never a guessed default', () => {
+    // Used to return ['Mathematics', 'Science', 'English'] — the fail-open
+    // list behind "JEE Advanced · English".
+    expect(getSubjectsForExam('UNKNOWN_EXAM')).toEqual([]);
+    expect(getSubjectsForExam(null)).toEqual([]);
   });
 
-  it('returns a default array for an unknown exam', () => {
-    expect(getSubjectsForExam('UNKNOWN_EXAM')).toEqual(['Mathematics', 'Science', 'English']);
+  it('returns no subjects for a known exam until exam_categories has loaded', () => {
+    expect(getSubjectsForExam('JEE Advanced')).toEqual([]);
+    expect(getSubjectsForExam('JEE Advanced')).not.toContain('English');
   });
+});
 
-  it('handles CBSE board', () => {
-    const subjects = getSubjectsForExam('CBSE');
-    expect(subjects).toContain('Mathematics');
-    expect(subjects).toContain('Science');
+describe('buildExamType does not guess', () => {
+  it('returns null when neither a competitive target nor board+class resolves', () => {
+    // Used to fall through to normalizeExamType(): 'NONE' became the exam
+    // "NONE" (3 live Daily Mini Tests) and a missing target became 'NEET'.
+    expect(buildExamType('NONE', null, null)).toBeNull();
+    expect(buildExamType(undefined, undefined, undefined)).toBeNull();
+    expect(buildExamType('NONE', 'CBSE', 'REPEATER')).toBeNull();
   });
 });
 

@@ -10,6 +10,7 @@ import { createNotification } from '../lib/notifications';
 import { getAllChapters } from '../lib/syllabus';
 import { buildExamType, getSchoolExamType, getExamLabel } from '../lib/categories';
 import { resolveStudentSubjects } from '../lib/studentSubjects';
+import { fetchAllowedSubjects, filterAllowed } from '../lib/allowedSubjects';
 import SubjectSetupPrompt from '../components/ui/SubjectSetupPrompt';
 import {
   getChapterProgress, upsertChapter, initChapterProgress, computeProgress,
@@ -150,7 +151,10 @@ export default function SyllabusTrackerPage() {
         classLevel:      userProfile?.class_level,
       });
       setNeedsSetup(scoped.needsSetup);
-      const subs = scoped.subjects;
+      // Narrowed to the SERVER's allowed list for this exam (hidden and
+      // no-content subjects removed) BEFORE progress rows are initialised below.
+      const contexts = await fetchAllowedSubjects(uid, userProfile);
+      const subs = filterAllowed(contexts, examType, scoped.subjects);
       setSyllabus(live);
       setSubjects(subs);
       setActiveSubject((prev) => (prev && subs.includes(prev) ? prev : subs[0]));

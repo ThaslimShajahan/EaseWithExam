@@ -1,61 +1,39 @@
-import { useMemo } from 'react';
-import { useAuth } from '../context/AuthContext';
-import { getSubjectsForExam, getExamType } from '../lib/categories';
-import { resolveStudentSubjectsForExam } from '../lib/studentSubjects';
+import { useAllowedSubjects, contextFor } from '../lib/allowedSubjects';
 
 /**
- * The subject list a student should see, scoped to their own selection.
+ * The subject list a student should see for one exam.
  *
- * Two independent bugs fixed here on 2026-08-14, chasing a report of
- * "I picked my subjects at onboarding, Exam Center / Practice Generator /
- * other tools still say I need to set them up, and Profile has no subject
- * editor to fix it from" (true — Profile's subject/board fields are
- * read-only; there is currently no self-service path once this fires).
+ * Since 2026-09-25 this is the SERVER's answer (allowed_subjects_for_caller),
+ * not a client-side computation. The rules it applies are the same ones that
+ * used to live here and in lib/studentSubjects.js — competitive exams use
+ * their fixed list; school classes reconcile strictly against the stored
+ * selection; Class 11–12 with no selection needs setup (see the 2026-08-14
+ * history in lib/studentSubjects.js for why each rule exists) — plus two the
+ * client never had: subjects an admin hid for this exam, and subjects with no
+ * content, are removed. Doing it on the server means the Daily Mini Test's
+ * save RPC enforces exactly the list every picker shows.
  *
- * BUG 1 — competitive exam types (NEET, JEE Main, ...) were run through the
- * same board/school reconciliation, which always finds the student's extra
- * school-only subjects (English, Mathematics, ...) "missing" from the
- * competitive exam's fixed catalog and always blocks. See
- * resolveStudentSubjectsForExam's own doc comment in lib/studentSubjects.js
- * for the full reasoning and the real profile this was confirmed against.
+ * Returns { subjects, isScoped, needsSetup, loading, notAllowed }:
+ *   loading     — first answer not in yet; don't render "no subjects"
+ *   needsSetup  — show the subject-setup prompt, never a guessed list
+ *   notAllowed  — this exam isn't one of the student's own (e.g. a stale or
+ *                 unresolved exam); show "coming soon"/setup, not a picker
  *
- * BUG 2 — the board catalog to reconcile against defaulted to content-
- * bearing subjects only (excludes Malayalam, Arabic, Urdu, Syriac, Physical
- * Education, Fine Arts, Home Science — real onboarding choices the platform
- * doesn't have content for yet). Fixed via getSubjectsForExam(examType,
- * { includeNonContent: true }) — the full catalog onboarding itself offers,
- * which is exactly what this comparison should use (see that function's own
- * doc comment).
- *
- * getSubjectsForExam/getExamType are live module bindings populated once at
- * app boot (see lib/categories.js) — no separate loading state needed here.
- *
- * Returns an object, not an array, because callers must handle `needsSetup` —
- * rendering `subjects` alone would show an empty picker to a student whose
- * selection is missing, which is the failure this exists to prevent. The shape
- * is deliberately awkward to ignore.
- *
- *   { subjects, isScoped, needsSetup }
- *
- * Decision logic lives in lib/studentSubjects.js so it stays unit-testable
- * without React; this hook only supplies its inputs.
+ * `classLevel` is accepted for call-site compatibility; the server derives
+ * the class from the student's own profile.
  */
+// eslint-disable-next-line no-unused-vars
 export function useStudentSubjects(examType, classLevel = null) {
-  const { userProfile } = useAuth();
+  const { contexts, loading } = useAllowedSubjects();
+  const ctx = contextFor(contexts, examType);
 
-  // Callers usually already derive a class level for their exam type; fall back
-  // to the profile's own so a screen cannot accidentally scope against nothing.
-  const cls = classLevel ?? userProfile?.class_level ?? null;
-
-  const boardSubjects = useMemo(
-    () => getSubjectsForExam(examType, { includeNonContent: true }),
-    [examType],
-  );
-  const isCompetitive = useMemo(() => getExamType(examType) === 'competitive', [examType]);
-  const profileSubjects = userProfile?.subjects;
-
-  return useMemo(
-    () => resolveStudentSubjectsForExam({ profileSubjects, boardSubjects, classLevel: cls, isCompetitive }),
-    [profileSubjects, boardSubjects, cls, isCompetitive],
-  );
+  if (loading) return { subjects: [], isScoped: true, needsSetup: false, loading: true, notAllowed: false };
+  if (!ctx)    return { subjects: [], isScoped: true, needsSetup: false, loading: false, notAllowed: true };
+  return {
+    subjects:   ctx.needs_setup ? [] : ctx.subjects,
+    isScoped:   true,
+    needsSetup: !!ctx.needs_setup,
+    loading:    false,
+    notAllowed: false,
+  };
 }

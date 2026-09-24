@@ -1,5 +1,22 @@
-import { describe, it, expect } from 'vitest';
-import { examTypesFor, borrowsCorpus } from '../examMapping';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { examTypesFor, borrowsCorpus, setContentSources } from '../examMapping';
+
+// Same values migration 20260925000000 seeds into exam_categories.content_sources,
+// which lib/categories.js hands to setContentSources() at boot.
+const SEEDED = {
+  'NEET':         ['CBSE Class 11', 'CBSE Class 12'],
+  'JEE Main':     ['CBSE Class 11', 'CBSE Class 12'],
+  'JEE Advanced': ['CBSE Class 11', 'CBSE Class 12'],
+};
+beforeEach(() => setContentSources(SEEDED));
+
+describe('before exam_categories has loaded', () => {
+  it("reads only the exam's own tag — narrower, never wider", () => {
+    setContentSources({});
+    expect(examTypesFor('NEET')).toEqual(['NEET']);
+    expect(borrowsCorpus('NEET')).toBe(false);
+  });
+});
 
 describe('examTypesFor', () => {
   it('returns null for a missing exam type, so the RPC treats it as no filter', () => {

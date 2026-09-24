@@ -5,13 +5,13 @@ import {
   ArrowRight, ArrowLeft, BookOpen, Send,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { Link } from 'react-router-dom';
 import {
   getTodayChallenge, generateDailyChallenge,
-  saveChallengeAnswer, getTodayAttempt,
+  saveChallengeAnswer, getTodayAttempt, DailyChallengeUnavailable,
 } from '../../lib/dailyChallenge';
 import { awardXP } from '../../lib/gamification';
 import { createNotification } from '../../lib/notifications';
-import { buildExamType } from '../../lib/categories';
 import MathText from '../ui/MathText';
 
 const OPT_LETTERS = ['A', 'B', 'C', 'D'];
@@ -203,23 +203,33 @@ export default function DailyChallenge() {
   const [loading,    setLoading]    = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error,      setError]      = useState('');
+  // 'setup_required' | 'no_subjects' | '' — an honest empty state, never a guess
+  const [unavailable, setUnavailable] = useState('');
+  const [saveError,  setSaveError]  = useState('');
+  const [saving,     setSaving]     = useState(false);
   const [curIdx,     setCurIdx]     = useState(0);
   const [answers,    setAnswers]    = useState({});   // { 0: 'A', 1: 'C', 2: '3.14' }
   const [revealed,   setRevealed]   = useState({});   // { 0: true, 1: true, ... }
   const [submitted,  setSubmitted]  = useState(false);
 
-  const examType = buildExamType(userProfile?.target_exam, userProfile?.syllabus, userProfile?.class_level);
-
   const uid = currentUser?.uid;
+  // The server picks the exam+subject from the profile, so a profile change
+  // (exam, board, class, subjects) must re-load today's test.
+  const profileKey = [userProfile?.target_exam, userProfile?.syllabus, userProfile?.class_level, (userProfile?.subjects ?? []).join('|')].join('/');
 
-  useEffect(() => { if (uid) loadChallenge(); }, [uid]); // eslint-disable-line
+  useEffect(() => { if (uid) loadChallenge(); }, [uid, profileKey]); // eslint-disable-line
+
+  const handleLoadError = (e) => {
+    if (e instanceof DailyChallengeUnavailable) { setUnavailable(e.status); return; }
+    setError(e?.message || 'Failed to load');
+  };
 
   const loadChallenge = async () => {
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setUnavailable(''); setSaveError('');
     setCurIdx(0); setAnswers({}); setRevealed({}); setSubmitted(false);
     try {
-      let c = await getTodayChallenge(uid, examType);
-      if (!c) c = await generateDailyChallenge({ examType, userId: uid });
+      let c = await getTodayChallenge(uid);
+      if (!c) c = await generateDailyChallenge({ userId: uid });
       setChallenge(c);
 
       // Restore previous attempt if any
@@ -239,19 +249,18 @@ export default function DailyChallenge() {
         }
       }
     } catch (e) {
-      const msg = e?.message || '';
-      setError(msg.includes('does not exist') || msg.includes('42P01')
-        ? 'setup_needed' : (msg || 'Failed to load'));
+      handleLoadError(e);
     } finally { setLoading(false); }
   };
 
   const genNew = async () => {
     setGenerating(true);
-    setChallenge(null); setCurIdx(0); setAnswers({}); setRevealed({}); setSubmitted(false); setError('');
+    setChallenge(null); setCurIdx(0); setAnswers({}); setRevealed({}); setSubmitted(false);
+    setError(''); setUnavailable(''); setSaveError('');
     try {
-      const c = await generateDailyChallenge({ examType, userId: uid });
+      const c = await generateDailyChallenge({ userId: uid });
       setChallenge(c);
-    } catch (e) { setError(e.message); }
+    } catch (e) { handleLoadError(e); }
     finally { setGenerating(false); }
   };
 
@@ -280,24 +289,34 @@ export default function DailyChallenge() {
   };
 
   const handleSubmit = async () => {
-    setSubmitted(true);
     const allCorrect = questions.every((q, i) => {
       const ans = answers[i];
       if (q.type === 'Numerical')
         return Math.abs(parseFloat(ans) - parseFloat(q.answer)) < 0.01;
       return (ans ?? '').toUpperCase() === (q.answer ?? '').toUpperCase();
     });
+    // Save FIRST and only show the result once it is stored. This used to
+    // flip to the score screen immediately and swallow any save error in a
+    // bare catch — a failed save looked exactly like a successful one.
+    setSaving(true); setSaveError('');
     try {
       await saveChallengeAnswer(challenge.id, uid, JSON.stringify(answers), allCorrect);
-      await awardXP(uid, 'daily_challenge');
-      createNotification(
-        uid,
-        'daily_challenge',
-        allCorrect ? 'Daily challenge — perfect score!' : 'Daily challenge completed',
-        `You answered ${questions.length} question${questions.length > 1 ? 's' : ''} and earned 20 XP.`,
-        '/dashboard',
-      ).catch(() => {});
-    } catch {}
+    } catch (e) {
+      setSaveError(`Couldn't save your answers: ${e.message}`);
+      setSaving(false);
+      return;
+    }
+    setSaving(false);
+    setSubmitted(true);
+    // Rewards are side effects of a saved attempt; their failure must not undo it.
+    awardXP(uid, 'daily_challenge').catch(() => {});
+    createNotification(
+      uid,
+      'daily_challenge',
+      allCorrect ? 'Daily challenge — perfect score!' : 'Daily challenge completed',
+      `You answered ${questions.length} question${questions.length > 1 ? 's' : ''} and earned 20 XP.`,
+      '/dashboard',
+    ).catch(() => {});
   };
 
   const allAnswered = total > 0 && Object.keys(answers).length >= total;
@@ -353,9 +372,24 @@ export default function DailyChallenge() {
       {/* Content */}
       {(loading || generating) ? (
         <Skeleton />
-      ) : error === 'setup_needed' ? (
-        <div className="text-xs text-amber-700 bg-amber-50 rounded-xl px-3 py-2.5 border border-amber-200 font-medium">
-          Daily challenge needs a one-time database setup. Run <code>daily_challenges.sql</code> in Supabase SQL Editor.
+      ) : unavailable ? (
+        <div className="flex flex-col items-center gap-2 py-4 text-center">
+          <BookOpen size={28} className="text-amber-400" />
+          {unavailable === 'setup_required' ? (
+            <>
+              <p className="text-sm text-slate-700 font-medium">Choose your subjects to get a daily test</p>
+              <Link to="/profile" className="inline-flex items-center min-h-[44px] px-4 text-xs text-primary-600 font-semibold hover:underline">
+                Choose my subjects
+              </Link>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-slate-700 font-medium">Daily tests for your exam are coming soon</p>
+              <p className="text-xs text-slate-500 max-w-xs">
+                We&apos;re still adding study material for your exam — we won&apos;t fill the gap with another exam&apos;s questions.
+              </p>
+            </>
+          )}
         </div>
       ) : error ? (
         <div className="space-y-2">
@@ -421,13 +455,16 @@ export default function DailyChallenge() {
           ) : (
             <button
               onClick={handleSubmit}
-              disabled={!allAnswered}
+              disabled={!allAnswered || saving}
               className="flex items-center gap-1 px-4 py-1.5 text-xs font-bold rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 transition-colors"
             >
-              <Send size={11} /> Finish challenge
+              <Send size={11} /> {saving ? 'Saving…' : saveError ? 'Try saving again' : 'Finish challenge'}
             </button>
           )}
         </div>
+      )}
+      {saveError && !submitted && (
+        <p role="alert" className="text-xs text-red-600 font-medium">{saveError}</p>
       )}
     </motion.div>
   );

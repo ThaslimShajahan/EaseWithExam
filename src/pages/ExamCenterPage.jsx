@@ -18,6 +18,7 @@ import { createNotification } from '../lib/notifications';
 
 import { useStudentSubjects } from '../hooks/useStudentSubjects';
 import SubjectSetupPrompt from '../components/ui/SubjectSetupPrompt';
+import SubjectsComingSoon from '../components/ui/SubjectsComingSoon';
 import { useSyllabusChapters } from '../hooks/useSyllabusChapters';
 import { buildExamType, isRelevantToStudent } from '../lib/categories';
 
@@ -96,8 +97,10 @@ function GenerateModal({ onClose, onStarted }) {
 
   // Student's own subjects. A mock test offered in a subject they do not take
   // is a wasted attempt against their quota.
-  const { subjects: subjectList, needsSetup } = useStudentSubjects(examType);
-  const [subject,    setSubject]    = useState(subjectList[0] || 'Physics');
+  const { subjects: subjectList, needsSetup, loading: subjectsLoading } = useStudentSubjects(examType);
+  // No invented default ('Physics' used to be one) — an empty list renders the
+  // coming-soon state below instead of a form.
+  const [subject,    setSubject]    = useState(subjectList[0] || '');
   const [difficulty, setDiff]       = useState('Mixed');
   const [chapters,   setChapters]   = useState([]);
   const [error,      setError]      = useState('');
@@ -170,6 +173,22 @@ function GenerateModal({ onClose, onStarted }) {
       >
         <div className="bg-white rounded-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
           <SubjectSetupPrompt toolName="Generating a paper" />
+        </div>
+      </motion.div>
+    );
+  }
+
+  // Server says: no allowed subject for this exam (none loaded yet, all hidden
+  // by an admin, or no resolvable exam). Never fall back to a guessed subject.
+  if (subjectsLoading || !subjectList.length) {
+    return (
+      <motion.div
+        className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4"
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        onClick={onClose}
+      >
+        <div className="bg-white rounded-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+          <SubjectsComingSoon toolName="Generating a paper" loading={subjectsLoading} unresolved={!examType} />
         </div>
       </motion.div>
     );

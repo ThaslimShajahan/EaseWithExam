@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import { buildExamType, getSchoolExamType } from '../../lib/categories';
 import { useStudentSubjects } from '../../hooks/useStudentSubjects';
 import SubjectSetupPrompt from '../ui/SubjectSetupPrompt';
+import SubjectsComingSoon from '../ui/SubjectsComingSoon';
 import { getStudyChapters } from '../../lib/syllabus';
 import { getCachedImportantQA, generateImportantQA } from '../../lib/questionGen';
 import { checkQuota, incrementQuota } from '../../lib/quota';
@@ -146,7 +147,7 @@ export default function ImportantQAPage() {
   // Scoped to the student's OWN subjects, not the board catalogue — this screen
   // is where the leak was reported (a Class 12 Science student offered
   // Accountancy, Psychology, Political Science).
-  const { subjects, needsSetup } = useStudentSubjects(examType, classLevel);
+  const { subjects, needsSetup, loading: subjectsLoading } = useStudentSubjects(examType, classLevel);
 
   const [subject,     setSubject]     = useState(null);
   const [chapter,     setChapter]     = useState(null);
@@ -155,7 +156,9 @@ export default function ImportantQAPage() {
   const [error,       setError]       = useState('');
   const [showPaywall, setShowPaywall] = useState(false);
 
-  const activeSubject = subject || subjects[0] || null;
+  // A remembered pick that is no longer allowed (e.g. an admin just hid it)
+  // falls back to the first allowed subject, never stays selected.
+  const activeSubject = (subject && subjects.includes(subject) ? subject : subjects[0]) || null;
 
   const openChapter = async (chapterName) => {
     setChapter(chapterName);
@@ -192,6 +195,9 @@ export default function ImportantQAPage() {
   // 11-12 with no stream selection. Shown INSTEAD of the picker, never above an
   // unscoped catalogue — see SubjectSetupPrompt for why.
   if (needsSetup) return <SubjectSetupPrompt toolName="Important Q&A" />;
+  if (subjectsLoading || !subjects.length) {
+    return <SubjectsComingSoon toolName="Important Q&A" loading={subjectsLoading} />;
+  }
 
   return (
     <div className="space-y-5">

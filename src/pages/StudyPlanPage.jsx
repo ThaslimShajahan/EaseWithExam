@@ -12,9 +12,11 @@ import { checkQuota, incrementQuota } from '../lib/quota';
 import { awardXP } from '../lib/gamification';
 import { createNotification } from '../lib/notifications';
 import { addManualTask } from '../lib/dailyTasks';
+import { fetchAllowedSubjects } from '../lib/allowedSubjects';
 import { CATEGORIES, buildExamType } from '../lib/categories';
 import { useStudentSubjects } from '../hooks/useStudentSubjects';
 import SubjectSetupPrompt from '../components/ui/SubjectSetupPrompt';
+import SubjectsComingSoon from '../components/ui/SubjectsComingSoon';
 import HubPageHeader from '../components/ui/HubPageHeader';
 
 const SUBJECT_PALETTE = {
@@ -73,7 +75,7 @@ function GoalForm({ onGenerate, defaultExamType = 'NEET' }) {
 
   // The student's own subjects — a study plan built around subjects they do not
   // take is worse than no plan.
-  const { subjects, needsSetup } = useStudentSubjects(examType);
+  const { subjects, needsSetup, loading: subjectsLoading } = useStudentSubjects(examType);
 
   const toggleSubject = (s) =>
     setWeakSubjects((prev) =>
@@ -84,6 +86,9 @@ function GoalForm({ onGenerate, defaultExamType = 'NEET' }) {
   const canSubmit = examDate && examDate > today;
 
   if (needsSetup) return <SubjectSetupPrompt toolName="Your study plan" />;
+  if (subjectsLoading || !subjects.length) {
+    return <SubjectsComingSoon toolName="Your study plan" loading={subjectsLoading} unresolved={!examType} />;
+  }
 
   return (
     <motion.div
@@ -512,9 +517,15 @@ export default function StudyPlanPage() {
     const topics = todayDay.topics || [todayDay.topic || todayDay.task || 'Study'];
     const hrs = todayDay.hours || 2;
     const durPerTopic = Math.round((hrs * 60) / topics.length);
+    // The subject comes from AI-written plan text, so it's checked against the
+    // server's allowed list for this student; anything else becomes a generic
+    // 'Study' task rather than a subject the student doesn't take.
+    const contexts = await fetchAllowedSubjects(currentUser.uid, userProfile).catch(() => []);
+    const allowed  = new Set(contexts.flatMap((c) => (c.needs_setup ? [] : c.subjects)));
+    const subject  = allowed.has(todayDay.subject) ? todayDay.subject : 'Study';
     for (const topic of topics) {
       await addManualTask(currentUser.uid, {
-        subject: todayDay.subject || 'Study',
+        subject,
         topic,
         duration_min: durPerTopic,
         task_type: /practice|questions/i.test(todayDay.task) ? 'practice'

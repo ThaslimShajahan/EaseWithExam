@@ -10,7 +10,9 @@ import { useAuth } from '../context/AuthContext';
 import { getAllChapters } from '../lib/syllabus';
 import { buildExamType, getExamLabel } from '../lib/categories';
 import { resolveStudentSubjects } from '../lib/studentSubjects';
+import { useAllowedSubjects, filterAllowed } from '../lib/allowedSubjects';
 import SubjectSetupPrompt from '../components/ui/SubjectSetupPrompt';
+import SubjectsComingSoon from '../components/ui/SubjectsComingSoon';
 import { generateFlashcards, getFlashcards, getFlashcardSummary, reviewFlashcard } from '../lib/flashcards';
 import { checkQuota, incrementQuota } from '../lib/quota';
 import { createNotification } from '../lib/notifications';
@@ -193,13 +195,20 @@ function ChapterList({ uid, examType, classLevel, userProfile, onSelectChapter }
   // Scoped to the student's own subjects. The board list here comes from the
   // loaded syllabus object rather than useSyllabusSubjects, so the shared
   // resolver is used directly — same rule, different input source.
-  const { subjects, needsSetup } = useMemo(
+  const { subjects: scopedSubjects, needsSetup } = useMemo(
     () => resolveStudentSubjects({
       profileSubjects: userProfile?.subjects,
       boardSubjects:   Object.keys(syllabus),
       classLevel,
     }),
     [userProfile?.subjects, syllabus, classLevel],
+  );
+  // Then narrowed to what the SERVER allows for this exam — removes subjects an
+  // admin hid for this exam and subjects with no content.
+  const { contexts, loading: allowedLoading } = useAllowedSubjects();
+  const subjects = useMemo(
+    () => filterAllowed(contexts, examType, scopedSubjects),
+    [contexts, examType, scopedSubjects],
   );
 
   const { data: summary = [] } = useQuery({
@@ -211,11 +220,12 @@ function ChapterList({ uid, examType, classLevel, userProfile, onSelectChapter }
   const summaryMap = useMemo(() => Object.fromEntries(summary.map((s) => [s.chapter_key, s])), [summary]);
 
   const q = search.trim().toLowerCase();
+  // Always limited to the allowed `subjects` — the no-search branch used to
+  // return the whole syllabus, so scoping only applied while typing a search.
   const filteredSyllabus = useMemo(() => {
-    if (!q) return syllabus;
     const out = {};
     for (const subject of subjects) {
-      const matches = (syllabus[subject] || []).filter((ch) => ch.name.toLowerCase().includes(q));
+      const matches = (syllabus[subject] || []).filter((ch) => !q || ch.name.toLowerCase().includes(q));
       if (matches.length) out[subject] = matches;
     }
     return out;
@@ -230,7 +240,7 @@ function ChapterList({ uid, examType, classLevel, userProfile, onSelectChapter }
     });
   };
 
-  if (loadingSyl) {
+  if (loadingSyl || allowedLoading) {
     return (
       <div className="flex justify-center py-12">
         <EweSpinner size="sm" />
@@ -245,13 +255,7 @@ function ChapterList({ uid, examType, classLevel, userProfile, onSelectChapter }
   if (needsSetup) return <SubjectSetupPrompt toolName="Flashcards" />;
 
   if (subjects.length === 0) {
-    return (
-      <div className="text-center py-12 text-slate-400">
-        <BookOpen size={28} className="mx-auto mb-2 text-slate-300" />
-        <p className="text-sm font-medium">No chapters found for your profile.</p>
-        <p className="text-xs mt-1">Ask your teacher to add syllabus chapters in the admin panel.</p>
-      </div>
-    );
+    return <SubjectsComingSoon toolName="Flashcards" unresolved={!examType} />;
   }
 
   return (

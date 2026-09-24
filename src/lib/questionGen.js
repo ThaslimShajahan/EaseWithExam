@@ -838,9 +838,12 @@ async function fetchKBChunks(subject, topicHints, { examType = null, contentType
   }
   if (import.meta.env.DEV) console.log(`[fetchKBChunks] keyword path (embedding=${embedding ? 'ok but 0 results' : 'null'}, subject=${subject})`);
 
-  // Keyword fallback
+  // Keyword fallback. Scoped to the same exam_types as the semantic path — it
+  // used to filter by subject only, so a Class 8 query that missed semantically
+  // could be answered from Class 12 (or another board's) chunks.
   let q = supabase.from('knowledge_base').select('content, subject');
   if (subject !== 'Mixed') q = q.eq('subject', subject);
+  if (examType) q = q.in('exam_type', examTypesFor(examType));
   const { data } = await q.limit(50);
   const chunks = (data || []).map((c) => c.content);
   if (!topicHints?.trim() || !chunks.length) return chunks.slice(0, 15);
@@ -854,6 +857,19 @@ async function fetchKBChunks(subject, topicHints, { examType = null, contentType
   }));
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, 15).map((c) => c.text);
+}
+
+/**
+ * Loaded textbook extracts for one subject of one exam (its content_sources
+ * included — e.g. NEET reads CBSE Class 11/12), for callers outside this file
+ * such as the Daily Mini Test. Question-worthy content types first; an empty
+ * array means "nothing loaded", which the caller must treat as such.
+ */
+export async function fetchSubjectContext(subject, examType, max = 6) {
+  if (!subject || !examType) return [];
+  const typed = await fetchKBChunks(subject, '', { examType, contentTypes: QUESTION_SEED_TYPES });
+  const rows  = typed.length ? typed : await fetchKBChunks(subject, '', { examType });
+  return rows.slice(0, max);
 }
 
 /* ── Fetch real, verbatim lesson text for literature/language papers ── */

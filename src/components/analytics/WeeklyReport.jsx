@@ -28,11 +28,12 @@ async function loadWeeklyData(uid, weekStart) {
       .eq('firebase_uid', uid)
       .gte('created_at', weekStart.toISOString())
       .lt('created_at', weekEnd.toISOString()),
-    supabase.from('daily_challenge_attempts')
-      .select('is_correct, attempted_at')
-      .eq('user_id', uid)
-      .gte('attempted_at', weekStart.toISOString())
-      .lt('attempted_at', weekEnd.toISOString()),
+    // RPC-only since 20260925000000. The old direct query selected
+    // `attempted_at`, a column that never existed (it's created_at), so this
+    // count was always silently empty.
+    supabase.rpc('get_own_daily_challenge_attempts', {
+      p_uid: uid, p_from: weekStart.toISOString(), p_to: weekEnd.toISOString(),
+    }),
     supabase.from('user_gamification').select('xp, streak_days').eq('user_id', uid).maybeSingle(),
   ]);
 

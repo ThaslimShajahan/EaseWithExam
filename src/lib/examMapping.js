@@ -32,15 +32,18 @@
  */
 
 /**
- * Corpus an exam draws on beyond its own tag. Class 12 is listed even though
- * NOTHING is loaded under it yet: an empty extra filter value costs nothing, and
- * this is the single place that has to change when Class 12 lands.
+ * Corpus an exam draws on beyond its own tag. Since 2026-09-25 this is DATA,
+ * not code: exam_categories.content_sources (admin-editable, and read by the
+ * server's pick_daily_challenge_subject too, so client and server can't
+ * disagree). lib/categories.js fills it at boot via setContentSources(); until
+ * then an exam reads only its own tag — narrower, never wider.
  */
-const CORPUS_FALLBACK = {
-  'NEET':         ['CBSE Class 11', 'CBSE Class 12'],
-  'JEE Main':     ['CBSE Class 11', 'CBSE Class 12'],
-  'JEE Advanced': ['CBSE Class 11', 'CBSE Class 12'],
-};
+let CORPUS_FALLBACK = {};
+
+/** Called by lib/categories.js with { examKey: [otherExamType, ...] }. */
+export function setContentSources(map) {
+  CORPUS_FALLBACK = { ...(map ?? {}) };
+}
 
 /**
  * Returns the exam_type values a read should match, or null for "no filter".

@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Trophy, GraduationCap, Plus, Pencil, Trash2, X, Save,
-  Loader2, CheckCircle2, AlertTriangle,
+  Loader2, CheckCircle2, AlertTriangle, Eye, EyeOff,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { logChange, ENTITY, ACTION } from '../lib/changelog';
 import { refreshCategories } from '../lib/categories';
+import { invalidateAllowedSubjects } from '../lib/allowedSubjects';
 
 /**
  * Admin-editable board/class/subject/competitive-exam catalog — the single
@@ -117,9 +118,11 @@ function Section({ icon: Icon, title, subtitle, onAdd, children }) {
             <p className="text-xs text-slate-500">{subtitle}</p>
           </div>
         </div>
-        <button onClick={onAdd} className="flex items-center gap-1.5 text-xs font-bold text-primary-300 bg-primary-900/30 border border-primary-700/30 hover:bg-primary-900/50 px-3 py-1.5 rounded-xl transition-colors">
-          <Plus size={12} /> Add
-        </button>
+        {onAdd && (
+          <button onClick={onAdd} className="flex items-center gap-1.5 text-xs font-bold text-primary-300 bg-primary-900/30 border border-primary-700/30 hover:bg-primary-900/50 px-3 py-1.5 rounded-xl transition-colors">
+            <Plus size={12} /> Add
+          </button>
+        )}
       </div>
       <div className="space-y-1.5">{children}</div>
     </div>
@@ -330,6 +333,18 @@ export default function AdminCategorySettings() {
         ))}
       </Section>
 
+      <SubjectVisibility
+        rows={rows}
+        vocabulary={vocabulary}
+        callerUid={callerUid}
+        onChanged={(updated, msg) => {
+          setRows((prev) => prev.map((r) => (r.exam_key === updated.exam_key ? updated : r)));
+          invalidateAllowedSubjects();
+          refreshCategories();
+          setToast(msg);
+        }}
+      />
+
       {/* Competitive exam modal */}
       {modal?.kind === 'competitive' && (
         <CompetitiveForm existing={modal.existing} onClose={() => setModal(null)} onSave={saveCompetitive} saving={saving} error={error} vocabulary={vocabulary} />
@@ -375,6 +390,93 @@ export default function AdminCategorySettings() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+/* ── Subject visibility for students (per exam / class) ────────── */
+/**
+ * Hide or show a subject for ONE exam or board+class (e.g. hide Hindi for
+ * CBSE Class 8 but keep it for CBSE Class 10). Backed by
+ * exam_categories.hidden_subjects via admin_set_subject_hidden, which checks
+ * the admin server-side and writes the audit row in the same transaction.
+ *
+ * Hidden = the server's allowed_subjects_for_caller drops it, so it vanishes
+ * from every student picker, the Daily Mini Test and published tests, and
+ * save_daily_challenge refuses it. Nothing is deleted: the subject stays in
+ * the exam's list (so admins keep seeing it here and in content tooling) and
+ * all its content stays loaded — showing it again restores everything.
+ *
+ * Subjects marked "no content" in the Subjects screen are never shown to
+ * students regardless, so they render here as fixed, not as a toggle.
+ */
+function SubjectVisibility({ rows, vocabulary, callerUid, onChanged }) {
+  const [busy,  setBusy]  = useState('');   // `${exam_key}|${subject}` being saved
+  const [error, setError] = useState('');
+
+  const noContent = new Set(vocabulary.filter((v) => v.content_bearing === false).map((v) => v.name));
+  const targets = rows
+    .filter((r) => r.is_active && (r.category_kind === 'competitive' || r.category_kind === 'board_class'))
+    .sort((a, b) => (a.category_kind === b.category_kind ? 0 : a.category_kind === 'competitive' ? -1 : 1)
+      || String(a.board_key ?? '').localeCompare(String(b.board_key ?? ''))
+      || Number(a.class_key ?? 0) - Number(b.class_key ?? 0));
+
+  async function toggle(row, subject, hide) {
+    const key = `${row.exam_key}|${subject}`;
+    setBusy(key); setError('');
+    const { data, error: err } = await supabase.rpc('admin_set_subject_hidden', {
+      p_caller: callerUid, p_exam_key: row.exam_key, p_subject: subject, p_hidden: hide,
+    });
+    setBusy('');
+    if (err) { setError(`${row.exam_key} · ${subject}: ${err.message}`); return; }
+    onChanged(data, `${subject} ${hide ? 'hidden from' : 'shown to'} ${row.exam_key} students.`);
+  }
+
+  return (
+    <Section icon={Eye} title="Subject visibility for students"
+      subtitle="Per exam or class. Hidden subjects disappear from every student screen and the Daily Mini Test; content is kept, and showing the subject again restores it. Every change is audited.">
+      {error && (
+        <p role="alert" className="flex items-center gap-1.5 text-xs text-red-400 px-1">
+          <AlertTriangle size={13} /> {error}
+        </p>
+      )}
+      {targets.length === 0 ? <p className="text-xs text-slate-600 italic px-1">No active exams.</p> : targets.map((r) => {
+        const hidden = new Set(r.hidden_subjects ?? []);
+        return (
+          <div key={r.id} className="rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2.5">
+            <p className="text-sm font-semibold text-white mb-2">{r.label}</p>
+            <div className="flex flex-wrap gap-2">
+              {(r.subjects ?? []).map((s) => {
+                const key = `${r.exam_key}|${s}`;
+                if (noContent.has(s)) {
+                  return (
+                    <span key={s} title="Marked 'no content' in Subjects — never shown to students"
+                      className="inline-flex items-center gap-1.5 min-h-[44px] px-3 rounded-xl border border-white/5 text-xs text-slate-600">
+                      {s} · no content
+                    </span>
+                  );
+                }
+                const isHidden = hidden.has(s);
+                return (
+                  <button key={s} type="button" disabled={!!busy}
+                    onClick={() => toggle(r, s, !isHidden)}
+                    aria-pressed={!isHidden}
+                    title={isHidden ? `Hidden from ${r.exam_key} students — tap to show` : `Shown to ${r.exam_key} students — tap to hide`}
+                    className={[
+                      'inline-flex items-center gap-1.5 min-h-[44px] px-3 rounded-xl border text-xs font-medium transition-colors disabled:opacity-60',
+                      isHidden
+                        ? 'border-amber-500/30 bg-amber-500/10 text-amber-300 line-through decoration-amber-400/60'
+                        : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20',
+                    ].join(' ')}>
+                    {busy === key ? <Loader2 size={13} className="animate-spin" /> : isHidden ? <EyeOff size={13} /> : <Eye size={13} />}
+                    {s}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </Section>
   );
 }
 
