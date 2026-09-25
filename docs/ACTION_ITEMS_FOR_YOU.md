@@ -15,12 +15,10 @@ Mark an item DONE only once it is deployed **and** verified live.
 
 1. **✅ Security pass 2: DONE 2026-09-25 (deploy `2026.09.25.1`).** Details are in
    `docs/CHANGELOG.md`. Verified live with `scripts/verify-20260925-security-pass-2.mjs`,
-   per part and both halves. **Two small follow-ups remain before this item is fully closed:**
-   - **ai-proxy hotfix (fixed locally, NOT deployed, needs owner OK):** a student calling
-     an admin-only AI feature is refused, but with **401 "Sign in again"** instead of
-     **403**. PostgREST answers every `42501` with 401 for the anon role. The student is
-     still denied; only the message is wrong. Deploy command:
-     `npx supabase functions deploy ai-proxy --use-api`, then re-run check B3.
+   per part and both halves.
+   - ✅ ai-proxy hotfix DONE (deploy `2026.09.25.2`): admin-only feature → 403, and every
+     error body is `{error:{message,code}}` so even stale pages show a readable message
+     (see "Live 401 incident" below). Verified: `scripts/verify-20260925-fixA.mjs`, 7/7.
    - **pdf-proxy GET of `ncert.nic.in` fails** with "Connection reset by peer" from the
      Supabase edge (probably blocks non-Indian IPs). The fetch code is unchanged by this
      pass, so this is pre-existing. The proxy itself works: a public https PDF gives 200.
@@ -38,11 +36,47 @@ Mark an item DONE only once it is deployed **and** verified live.
      - `get_published_tests_for_student(p_uid)` identity check: **not part of this pass;
        still open.**
 
-1a. **URGENT: rebuild the Android APK.** Since `2026.09.25.1`, `ai-proxy` refuses calls
-    without a Firebase token or without a server-charged action. The APK's bundled build
-    sends neither, so **every AI feature fails on the APK** (Practice, Flashcards, Veda chat,
-    Study Plan, Exam Center and more). XP, test results and the Daily Mini Test also
-    changed. See item 6 for the rebuild steps. This moves ahead of item 6's on-device check.
+1a. **Rebuild the Android APK — NOT urgent** (owner 2026-09-25: the APK is only on the
+    owner's phone; no student has it). Since `2026.09.25.1` its bundled build can't use
+    any AI feature (no Firebase token, no server-charged action); since `2026.09.25.2` it
+    at least shows "EaseWithExam has been updated… update the app" instead of "AI proxy
+    error 401". Rebuild steps: item 6.
+
+1f. **✅ Live "AI proxy error 401" incident — resolved 2026-09-25.** A student at 06:06–06:14
+    IST got 21 refusals (Generate Questions ×14, Daily Mini Test ×6, chapter notes ×1).
+    Root cause: a page opened BEFORE the 02:04 IST security deploy and resumed without
+    reloading (0 `ai_actions` rows in the window = pre-deploy code; the current bundle
+    was verified working for every student AI feature, 8 of them driven live).
+    Fixed by: `2026.09.25.2` (ai-proxy tells old pages "please reload"), and
+    `2026.09.25.3` (version check + "A new version is available — tap to reload",
+    one token refresh + retry on 401 session_expired).
+
+1g. **Owner checks still open for `2026.09.25.3`:**
+    - Look at Admin → Overview: Students Online Now panel, recent registrations, the
+      bell counter and a toast (a toast appears when a student finishes onboarding while
+      the admin page is open). Verified at the RPC level, not visually: the admin panel's
+      passcode screen was not bypassed for an automated test.
+    - A real heartbeat from the **Android app** (after the APK rebuild) — the web heartbeat
+      is verified live.
+    - **Google sign-in (COOP warning):** try a real Google sign-in on desktop Chrome and
+      on mobile Chrome/Safari; report whether it lands signed in or falls back to a
+      redirect. The console "COOP would block window.closed" comes from Google's popup,
+      not our headers. If redirect sign-in fails, the fix is serving Firebase's auth
+      handler from www.easewithexam.com (a bigger change).
+
+1h. **Follow-ups found in this release (not started):**
+    - **XP can still be farmed:** `award_xp_atomic` is callable directly by a student for
+      their own row (1–500 per call). The Daily Mini Test no longer relies on it from the
+      browser, but other XP sources do. Design server-side awards per action.
+    - The admin passcode is a browser-side gate only; every admin RPC checks the Firebase
+      token server-side (`assert_verified_admin`), which is what actually protects data.
+      Fine as is — noted so nobody treats the passcode as a server control.
+    - Quota refusals (`54000`) arrive as HTTP 500 from PostgREST (the client reads the
+      code, so students see the right message; only logs/console show "500").
+    - GA no longer runs in the Android app (the app has no consent banner). Add an in-app
+      consent prompt if app analytics are wanted.
+    - `cookie_banner_enabled` must stay `true`: with the banner off nobody can consent,
+      so GA and the Pixel never load.
 
 1b. **Rebuild WhatsApp alerts** (owner decision 2026-09-25: disabled entirely for now).
     `whatsapp-alert` returns **410 `{disabled: true}`** for every caller, and the admin UI
@@ -71,10 +105,11 @@ Mark an item DONE only once it is deployed **and** verified live.
     $0. The rest were single calls on 08-18, 08-30, 09-11, 09-13 and 09-15, plus 11 calls
     on 09-23 between 14:38 and 15:05 UTC. Total: 15,696 prompt and 32,333 completion
     tokens, all gpt-4o, **about $0.36**. Most likely a real student on a cached old bundle
-    rather than abuse (unproven). `ai-proxy` now refuses calls with no feature, so nothing
+    rather than abuse (unproven). **Mechanism found 2026-09-25:** since 2026-08-15 no service worker could install (404.html in the precache), so browsers that installed one before then kept serving a pre-2026-08-16 bundle, which sends no feature name. Fixed in 2026.09.25.3; a stale browser was shown to pick up the new bundle after one reload (scripts/verify-sw-upgrade.mjs). `ai-proxy` now refuses calls with no feature, so nothing
     to do unless it recurs.
 
-2. **Daily Mini Test: save the attempt automatically when the last question is answered**
+2. **✅ DONE (`2026.09.25.3`, verified live: saved without pressing Finish, +20 XP, AI questions
+   not charged). Daily Mini Test: save the attempt automatically when the last question is answered**
    (owner, 2026-09-25; queued after security pass 2).
    - Why: `daily_challenge_attempts` was empty because no student ever pressed "Finish
      challenge". Each answer is revealed as it's picked, so after Q5 the test looks done.
@@ -101,7 +136,8 @@ Mark an item DONE only once it is deployed **and** verified live.
       private key out of `platform_settings` (a table) into an edge-function secret.
     - Owner confirmed 2026-09-24: **the old VAPID private key is not available**, so the 3
       existing web subscriptions must re-subscribe after new keys are set.
-4. **Students Online Now + new-registration notifications.** Owner's original prompt, with
+4. **✅ DONE (`2026.09.25.3`; verified live, both halves — owner visual check in 1g). Students
+   Online Now + new-registration notifications.** Owner's original prompt, with
    these decisions: record the event **at signup** (the list shows "onboarding pending");
    toast, bell and email fire **when onboarding completes**; email **info@acenzos.com
    only**; owner tests Android personally. Design constraints: `verified_uid()`, not

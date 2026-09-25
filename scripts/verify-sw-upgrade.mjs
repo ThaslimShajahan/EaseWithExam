@@ -49,11 +49,17 @@ if (mode === 'prepare') {
   const first = await bundleOf();
   // The browser checks sw.js on navigation; the new worker installs, then
   // (skipWaiting + clientsClaim) takes over. Wait for that, then reload.
-  await page.waitForFunction(async () => {
-    const r = await navigator.serviceWorker.getRegistration();
-    return !!r?.active && !r.installing && !r.waiting && navigator.serviceWorker.controller?.state === 'activated';
-  }, null, { timeout: 90000, polling: 1000 }).catch(() => {});
-  await page.waitForTimeout(5000);
+  // Wait for the NEW worker to take control (controllerchange) — checking
+  // "nothing is installing" is already true before the update starts, which
+  // is how the first version of this check reloaded too early. A cold install
+  // downloads ~150 files.
+  const tookOver = await page.evaluate(() => new Promise((resolve) => {
+    navigator.serviceWorker.addEventListener('controllerchange', () => resolve(true), { once: true });
+    navigator.serviceWorker.getRegistration().then((r) => r?.update()).catch(() => {});
+    setTimeout(() => resolve(false), 240000);
+  }));
+  console.log('new worker took control:', tookOver);
+  await page.waitForTimeout(2000);
   await page.reload({ waitUntil: 'load' });
   await page.waitForTimeout(2000);
   const after = await bundleOf();

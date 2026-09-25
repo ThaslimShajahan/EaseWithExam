@@ -40,7 +40,8 @@ if (!sr.ok) throw new Error('sign-in failed');
 const rpc = (fn, args) => fetch(`${env.VITE_SUPABASE_URL}/rest/v1/rpc/${fn}`, {
   method: 'POST', headers: { apikey: env.VITE_SUPABASE_ANON_KEY, Authorization: `Bearer ${s.idToken}`, 'Content-Type': 'application/json' },
   body: JSON.stringify(args) });
-const up = await rpc('upsert_own_user', { p_uid: uid, p_fields: { auth_method: 'phone', display_name: 'QA Throwaway', onboarding_completed: true, target_exam: 'NONE', syllabus: 'CBSE', class_level: '8' } });
+const fresh = process.argv.includes('--fresh');   // brand-new account: the app itself creates the users row (real signup)
+const up = fresh ? { status: 'skipped (--fresh)' } : await rpc('upsert_own_user', { p_uid: uid, p_fields: { auth_method: 'phone', display_name: 'QA Throwaway', onboarding_completed: true, target_exam: 'NONE', syllabus: 'CBSE', class_level: '8' } });
 console.log('profile upsert:', up.status);
 
 const now = Date.now();
@@ -158,6 +159,73 @@ if (step === 'sweep') {
     if (!mine.length) console.log('    (no AI traffic)');
     console.log('    on-screen error:', onScreenErr ?? '(none)');
   }
+}
+
+if (step === 'onboard') {
+  // A brand-new sign-in (use --fresh): the app creates the users row, then
+  // walks the onboarding screens. Picks CBSE / Class 8 when offered.
+  await page.goto(`${SITE}/dashboard`, { waitUntil: 'load' });
+  await page.waitForTimeout(6000);
+  console.log('landed on:', page.url());
+  const picked = new Set();
+  for (let i = 0; i < 12; i++) {
+    const info = await page.evaluate(() => ({
+      h: [...document.querySelectorAll('h1,h2,h3')].map((x) => x.innerText.trim()).filter(Boolean).slice(0, 3).join(' / '),
+      buttons: [...document.querySelectorAll('button')].filter((b) => b.offsetParent && !b.disabled).map((b) => b.textContent.trim().replace(/\s+/g, ' ')).filter(Boolean),
+    }));
+    console.log(`step ${i}: [${info.h}] buttons: ${info.buttons.slice(0, 18).join(' | ')}`);
+    await shot('onb-' + i);
+    if (!/onboarding/.test(page.url())) break;
+    if (!picked.has(info.h)) {
+      const pick = info.buttons.find((b) => /^CBSE/.test(b)) ?? info.buttons.find((b) => /^Class 8$/.test(b));
+      if (pick) {
+        picked.add(info.h);
+        await page.locator('button').filter({ hasText: pick }).first().click();
+        await page.waitForTimeout(2500);
+        continue;   // choosing an option may advance the step on its own
+      }
+    }
+    const next = ['Finish', 'Get Started', "Let's go", 'Continue', 'Next', 'Skip'].map((t) => info.buttons.find((b) => b.startsWith(t))).find(Boolean);
+    if (!next) { console.log('no next button — stopping'); break; }
+    await page.getByRole('button', { name: next }).first().click();
+    await page.waitForTimeout(3000);
+  }
+  console.log('final url:', page.url());
+}
+
+if (step === 'dmt') {
+  // Daily Mini Test on the dashboard: answer every question, NEVER press
+  // "Finish challenge", and record whether the attempt was saved by itself.
+  const saves = [];
+  page.on('request', (req) => { if (req.url().includes('/rpc/save_daily_challenge_attempt')) saves.push(req); });
+  await page.goto(`${SITE}/dashboard`, { waitUntil: 'load' });
+  const card = page.locator('div').filter({ has: page.getByText('Daily Mini Test', { exact: true }) }).last();
+  await page.getByText(/^Q1\//).first().waitFor({ timeout: 150000 }).catch(() => {});
+  let finishClicked = false;
+  for (let q = 0; q < 10; q++) {
+    const label = await page.getByText(/^Q\d+\/\d+/).first().textContent().catch(() => null);
+    if (!label) break;
+    const [cur, total] = label.match(/\d+/g).map(Number);
+    const num = page.locator('input[type=number]').first();
+    if (await num.isVisible().catch(() => false)) {
+      await num.fill('1');
+      await page.getByRole('button', { name: 'Lock' }).first().click();
+    } else {
+      await page.locator('button').filter({ hasText: /^A\./ }).first().click();
+    }
+    await page.waitForTimeout(800);
+    if (cur >= total) break;
+    await page.getByRole('button', { name: /^Next/ }).first().click();
+    await page.waitForTimeout(800);
+  }
+  await page.waitForTimeout(6000);
+  await shot('dmt-after');
+  const text = await page.evaluate(() => document.body.innerText);
+  const statuses = await Promise.all(saves.map(async (r) => (await r.response())?.status() ?? 'none'));
+  console.log('save_daily_challenge_attempt requests:', statuses.length, 'statuses:', statuses.join(','));
+  console.log('"Finish challenge" pressed by the test:', finishClicked);
+  console.log('score shown:', /Perfect|correct|Score|\d+\s*\/\s*\d+/.test(text), '| still showing Finish button:', /Finish challenge/.test(text), '| error:', /Couldn't save/.test(text));
+  void card;
 }
 
 if (step === 'explore') {

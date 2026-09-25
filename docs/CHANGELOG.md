@@ -4,6 +4,71 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-09-25 — Release 2026.09.25.3: Students Online Now, registration alerts, free Daily Mini Test with auto-save, service-worker fix, consent-gated GA + Meta Pixel, update prompt
+
+Deploy order: migration `20260927000000` → edge function `send-email` (v25) → bundle `index-Ckp_N93q.js` (05:08:56 UTC). This order (migration → edge functions → bundle) is now a written rule in `docs/DEPLOY.md`. Backups: `ewe-db-backups/2026-09-25-release-3/` and `webroot-2026-09-25-050704.tar.gz`. Rollback: `supabase/rollback/20260927000000_rollback.sql`. Commits `8615463` and `8981d61`.
+
+**Students Online Now + registrations:**
+- `users.last_seen_at` / `last_seen_platform`. `touch_last_seen(platform)` takes no uid, so it can only update the caller's own row. It is called every 60 s while the page is visible, on web and in the Android app.
+- A `registration_events` row is written by a trigger at signup, showing "onboarding pending".
+- When onboarding completes, the admin bell and toast fire, and one email goes to info@acenzos.com. The email is sent by `pg_net` → `send-email` using the internal secret and a template only the platform itself can send. Signup never waits on it or fails because of it.
+- `admin_get_online_students`, `admin_get_recent_registrations` and `admin_mark_registrations_seen` all check `assert_verified_admin` and have PUBLIC execute revoked. The admin panel polls every 30 s.
+
+**Daily Mini Test:**
+- It saves automatically when the last question is answered.
+- XP and the streak are awarded inside the save, on the first save only.
+- It no longer uses the AI-questions allowance (owner decision). It has its own free `daily_test` bucket: one test per day, at most 3 generation attempts per day, and 10 AI calls per attempt.
+
+**Service worker:**
+- `404.html` was in the precache but has returned a real 404 since 2026-08-15, so every install failed. Browsers that installed a service worker before that date have been frozen on an old app ever since. That explains the 55 AI calls without a feature name, and it is the likely route for any stale page.
+- Removed the runtime caching of Supabase REST responses (per-student data in Cache Storage) and the day-long cache of any third-party script.
+- `scripts/check-precache.mjs` now runs after every deploy.
+
+**Meta Pixel + GA:**
+- The prerender's headless browser was saving the Pixel's runtime-injected scripts into the shipped HTML, with `domain=127.0.0.1`. That caused "fbq is not defined", "setting 'execStart'" and PageViews fired without consent.
+- Trackers now never load under automation, and the prerender strips them and refuses to write a page that still has one.
+- GA4 and the Pixel load only after **Accept** on the new Accept/Decline banner. `gtag.js` is no longer in `index.html`.
+- An explicit Accept on the old banner is honoured.
+
+**Stale pages:**
+- `/version.json` is compared with the running build when the tab regains focus and every 15 minutes. A mismatch shows "A new version of EaseWithExam is available — tap to reload".
+- An ai-proxy 401 `session_expired` triggers one forced Firebase token refresh and a retry.
+
+**Verified live (throwaway students, all deleted from 12 tables and Firebase; 0 left in Online Now):**
+- **Real signup through the live UI:** onboarding Class 8 CBSE → the event is recorded at signup, `onboarded_at` is set when onboarding finishes, and the owner email returned send-email 200 `{sent:true}`. The web heartbeat was recorded.
+- **Both halves, `scripts/verify-20260925-release-3.mjs`, 11/11:**
+  - Students get 42501 from the admin functions, including when claiming the admin uid.
+  - A student can't write another student's `last_seen`, and a heartbeat with no token is refused.
+  - The admin sees online / today / week counts and both registrations as unread on the bell.
+  - A student at 20/20 AI questions can still start the Daily Mini Test.
+- **Daily Mini Test in the browser:** the attempt saved (200) without pressing Finish; +20 XP, streak 1; `ai_questions_used` stayed 0.
+- **Consent, `scripts/verify-consent-trackers.mjs`, 6/6:**
+  - Nothing loads before a choice or after Decline.
+  - After Accept, the Pixel fires `PageView` (domain `www.easewithexam.com`) and GA sends `page_view`, with no errors.
+  - Trackers load by themselves for a returning visitor who accepted, and never for an automated browser.
+- **Stale service worker:** a real Chromium profile holding the old worker and bundle `index-D9mdYHZf.js` ran `index-Ckp_N93q.js` after one reload.
+- **Update banner:** hidden when the version is unchanged, shown for a newer build, and tapping it reloads.
+- **Deploy checks:** 154/154 precached URLs return 200, no tracker tags in any HTML page, and the prerendered titles and canonicals are correct.
+- **Not verified live:** the admin panel UI itself (it is behind the admin passcode, which I did not bypass) and the token-refresh retry (unit-tested only).
+
+---
+
+## 2026-09-25 — Hotfix 2026.09.25.2: ai-proxy readable errors (stale pages told to reload)
+
+A student got "AI proxy error 401" 21 times at 06:06–06:14 IST. Root cause: a page loaded before the 02:04 IST security deploy and resumed without reloading. It ran old code that sends no Firebase token and never opens a charged action (0 `ai_actions` rows in that window).
+
+The current bundle was verified working live for Practice, Flashcards, Important Q&A, Study Plan, Summarizer, Podcast, Exam Center, Doubt chat and the Daily Mini Test (`scripts/qa-live-ai-e2e.mjs`, a new harness that drives the live site as a throwaway via an IndexedDB-seeded Firebase session).
+
+Every client ever shipped shows `error.message`, but ai-proxy replied `{error: "<text>"}`, so they all fell back to the raw status. ai-proxy (v26, deployed alone) now replies `{error: {message, code}}`:
+- no token (only pre-2026-09-25 pages): "EaseWithExam has been updated. Please reload the page…"
+- invalid token: "Your session has expired…"
+- no charged action: "Couldn't start this request…"
+- admin-only feature: 403, not 401
+
+Verified 7/7 with `scripts/verify-20260925-fixA.mjs`, including loading the actual pre-deploy bundle in a browser: it now shows the reload message on screen.
+
+---
+
 ## 2026-09-25 — Security pass 2: verified callers for every edge function, ai-proxy allowlist + server-side quota, remaining tables locked (deploy 2026.09.25.1)
 
 One deploy, three parts, each with its own rollback script in `supabase/rollback/`. Commits `6890dbc` and `21ef7db`. Deployed 20:33:30–20:34:26 UTC, with 0 students active in the prior 15 minutes. Backups are in `ewe-db-backups/2026-09-25-pre-security-pass-2/` (28 files) and `webroot-2026-09-24-203122.tar.gz`.
