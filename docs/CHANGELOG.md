@@ -4,6 +4,22 @@ Running log of changes made to this project, newest first. One file, appended to
 
 ---
 
+## 2026-09-25 — Release 2026.09.25.4: admin feed shows mobile/email when a student has no name; readable board names
+
+Deployed 05:33:20 UTC. Order: migration `20260927010000` → `send-email` v26 → bundle `index-CmL-Kzbq.js`. Owner said to deploy with one student recently online; their last heartbeat was 05:28:04, before the deploy started. Rollback: `supabase/rollback/20260927010000_rollback.sql` and `webroot-2026-09-25-053257.tar.gz`. Commit `93245d8`.
+
+- **Name fallback:** name → mobile number (phone signups) → email (Google signups) → "Unnamed student". It applies to Online Now, Recent registrations, the bell, the toast and the owner alert email. The full number is shown on admin screens only.
+  - `admin_get_online_students` and `admin_get_recent_registrations` now also return `phone_number` and `email`. Both are still behind `assert_verified_admin`, and `users` remains unreadable to students.
+- **Board names:** one helper, `src/lib/displayLabels.js` (`boardLabel`, `examLabel`, `studentDisplayName`), used by every admin screen that shows a board ("Kerala State", not "KERALA_STATE"). Titles come from the onboarding option catalogue.
+  - The owner email looks up the same catalogue table on the database side.
+- **Verified live, `scripts/verify-20260925-release-4.mjs`, 6/6:**
+  - A student calling either function gets 42501, including when claiming the admin uid; no token also gets 42501.
+  - The admin gets `phone_number` for a nameless phone signup.
+  - That signup's alert email was accepted (send-email 200).
+  - Throwaway deleted (DB + Firebase). 155/155 precached URLs return 200; no tracker tags; canonicals correct.
+
+---
+
 ## 2026-09-25 — Release 2026.09.25.3: Students Online Now, registration alerts, free Daily Mini Test with auto-save, service-worker fix, consent-gated GA + Meta Pixel, update prompt
 
 Deploy order: migration `20260927000000` → edge function `send-email` (v25) → bundle `index-Ckp_N93q.js` (05:08:56 UTC). This order (migration → edge functions → bundle) is now a written rule in `docs/DEPLOY.md`. Backups: `ewe-db-backups/2026-09-25-release-3/` and `webroot-2026-09-25-050704.tar.gz`. Rollback: `supabase/rollback/20260927000000_rollback.sql`. Commits `8615463` and `8981d61`.
