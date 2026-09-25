@@ -30,6 +30,21 @@ const ANON_KEY             = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
 
 const KNOWN_ROUTES = new Set(['chat', 'embeddings', 'tts', 'images']);
 
+// Every error body is { error: { message, code }, code }. Every client bundle
+// ever shipped — including ones still open in a tab from before a deploy, and
+// the Android APK — shows `error.message` when present and otherwise a raw
+// "AI proxy error <status>". So the message here IS what a student reads.
+const errorResponse = (status: number, message: string, code: string, detail?: string) =>
+  new Response(JSON.stringify({ error: { message, code, ...(detail ? { detail } : {}) }, code }), {
+    status, headers: { ...CORS, 'Content-Type': 'application/json' },
+  });
+
+// No x-firebase-id-token at all: only a copy of the app from before security
+// pass 2 (2026-09-25) does this — every current bundle always sends it.
+const MSG_OUTDATED = 'EaseWithExam has been updated. Please reload the page to continue (in the Android app: close and reopen it, or update the app).';
+const MSG_SESSION  = 'Your session has expired. Please sign in again.';
+const MSG_NO_ACTION = "Couldn't start this request. Please try again.";
+
 /**
  * Ask the database whether this verified caller may make this call. The
  * caller's own Firebase token is forwarded, so identity is Supabase's check.
@@ -38,10 +53,10 @@ const KNOWN_ROUTES = new Set(['chat', 'embeddings', 'tts', 'images']);
  */
 async function authorize(idToken: string, feature: string | null, route: string, model: string | null):
   Promise<{ uid: string } | { refuse: Response }> {
-  const refuse = (status: number, error: string, code: string) => ({
-    refuse: new Response(JSON.stringify({ error, code }), { status, headers: { ...CORS, 'Content-Type': 'application/json' } }),
+  const refuse = (status: number, message: string, code: string, detail?: string) => ({
+    refuse: errorResponse(status, message, code, detail),
   });
-  if (!idToken) return refuse(401, 'Sign in again to continue', 'unauthenticated');
+  if (!idToken) return refuse(401, MSG_OUTDATED, 'client_outdated');
 
   const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/ai_proxy_authorize`, {
     method: 'POST',
@@ -52,12 +67,12 @@ async function authorize(idToken: string, feature: string | null, route: string,
   if (r.ok && j?.uid) return { uid: String(j.uid) };
 
   const msg = String(j?.message ?? 'Not allowed');
-  if (j?.code === '54000') return refuse(403, msg, 'no_active_quota');
+  if (j?.code === '54000') return refuse(403, MSG_NO_ACTION, 'no_active_quota', msg);
   if (j?.code === '22023') return refuse(400, msg, 'not_allowed');
   // PostgREST answers every 42501 with 401 for the anon role (which is every
   // caller here), so r.status cannot tell "bad token" from "not your feature".
   // Only the unverified-caller message means the token itself is the problem.
-  if (/unverified caller/.test(msg) || (r.status === 401 && j?.code !== '42501')) return refuse(401, 'Sign in again to continue', 'unauthenticated');
+  if (/unverified caller/.test(msg) || (r.status === 401 && j?.code !== '42501')) return refuse(401, MSG_SESSION, 'session_expired');
   return refuse(403, msg, 'forbidden');
 }
 
@@ -110,9 +125,7 @@ Deno.serve(async (req: Request) => {
   try {
     const apiKey = Deno.env.get('OPENAI_API_KEY');
     if (!apiKey) {
-      return new Response(JSON.stringify({ error: 'OPENAI_API_KEY not configured' }), {
-        status: 500, headers: { ...CORS, 'Content-Type': 'application/json' },
-      });
+      return errorResponse(500, 'AI is temporarily unavailable. Please try again later.', 'not_configured');
     }
 
     // Route: ?route=images for DALL-E, ?route=embeddings for text-embedding,
@@ -128,9 +141,7 @@ Deno.serve(async (req: Request) => {
       : 'https://api.openai.com/v1/chat/completions';
     const routeTag = route === 'images' ? 'images' : route === 'embeddings' ? 'embeddings' : route === 'tts' ? 'tts' : 'chat';
     if (route !== null && !KNOWN_ROUTES.has(route)) {
-      return new Response(JSON.stringify({ error: 'Unknown route', code: 'not_allowed' }), {
-        status: 400, headers: { ...CORS, 'Content-Type': 'application/json' },
-      });
+      return errorResponse(400, 'Unknown route', 'not_allowed');
     }
 
     // Forward the exact OpenAI request body from the client, MINUS the
@@ -230,8 +241,6 @@ Deno.serve(async (req: Request) => {
       prompt_tokens: null, completion_tokens: null, total_tokens: null,
       duration_ms: Date.now() - startedAt, error: String(err).slice(0, 500),
     });
-    return new Response(JSON.stringify({ error: String(err) }), {
-      status: 500, headers: { ...CORS, 'Content-Type': 'application/json' },
-    });
+    return errorResponse(500, 'Something went wrong. Please try again.', 'internal', String(err).slice(0, 300));
   }
 });
