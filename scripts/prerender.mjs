@@ -99,7 +99,19 @@ for (const route of ROUTES) {
     { timeout: 5000 },
   ).catch(() => problems.push(`${route}: canonical never reached ${expected} within 5s`));
 
+  // Third-party scripts injected at RUNTIME must never be saved into the
+  // shipped HTML. 2026-09-25: the Meta Pixel's fbevents.js and its config
+  // script (domain=127.0.0.1) were baked into every prerendered page, ran
+  // before fbq existed on real visits ("fbq is not defined", "setting
+  // 'execStart'") and fired without consent. The trackers now refuse to load
+  // under automation (src/lib/consent.js); this strips anything that slips
+  // through, and the check below refuses to write a page that still has one.
+  await page.evaluate(() => {
+    document.querySelectorAll('script[src*="connect.facebook.net"], script[src*="googletagmanager.com"], script[src*="google-analytics.com"]')
+      .forEach((s) => s.remove());
+  });
   const html = await page.content();
+  if (/connect\.facebook\.net|googletagmanager\.com\/gtag\/js/.test(html)) problems.push(`${route}: a tracker script is still in the saved HTML`);
   const title = await page.title();
   const canonical = await page.evaluate(() => document.head.querySelector('link[rel="canonical"]')?.href ?? null);
   const robots = await page.evaluate(() => document.head.querySelector('meta[name="robots"]')?.content ?? null);

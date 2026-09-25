@@ -9,7 +9,8 @@ const DEFAULTS = {
   // logo (see components/ui/VedaAvatar.jsx).
   ewe_avatar_url:         '',
   cookie_banner_enabled:  'false',
-  cookie_banner_text:     'We use cookies to improve your experience. By continuing, you agree to our use of cookies.',
+  // No "by continuing you agree": nothing that tracks loads until Accept (src/lib/consent.js).
+  cookie_banner_text:     'We use cookies for analytics and to measure our ads. They are only set if you accept.',
   // Redber chat support — gates the "Chat with us" link on HelpPage, which
   // opens /support (SupportPage.jsx), a full page, not a floating bubble.
   // Off by default — added 2026-08-19, not turned on until checked live.

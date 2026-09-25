@@ -3,9 +3,26 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import { visualizer } from 'rollup-plugin-visualizer';
 
+// One id per build. Baked into the bundle as __BUILD_ID__ and written to
+// dist/version.json; the running app compares the two to notice it is out of
+// date after a deploy (src/lib/versionCheck.js).
+const BUILD_ID = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14) + '-' + Math.random().toString(36).slice(2, 6);
+
+function versionFilePlugin() {
+  return {
+    name: 'ewe-version-file',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ build: BUILD_ID }) });
+    },
+  };
+}
+
 export default defineConfig({
+  define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
   plugins: [
     react(),
+    versionFilePlugin(),
     VitePWA({
       registerType: 'autoUpdate',
       // Without this, `npm run dev` never registers a service worker at all
@@ -40,22 +57,25 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,svg}'],
+        // 404.html is served WITH status 404 by nginx (a real 404 page, since
+        // 2026-08-15). Workbox refuses to precache a non-200, so including it
+        // made every service-worker install fail — returning visitors stayed
+        // on whatever old app their previous service worker had cached.
+        // scripts/check-precache.mjs checks every precached URL returns 200
+        // after each deploy (docs/DEPLOY.md).
+        globIgnores: ['404.html', 'version.json'],
         importScripts: ['/push-handler.js'],
         runtimeCaching: [
+          // Only third-party FONTS are cached at runtime; the app's own files
+          // are precached (versioned by build hash). Removed 2026-09-25:
+          //  - a NetworkFirst cache of Supabase REST responses — per-student
+          //    data sitting in the browser's Cache Storage;
+          //  - a CacheFirst for ANY https .js/.css — it pinned third-party
+          //    scripts (gtag.js, the Meta Pixel's fbevents.js) for a day.
           {
-            // Cache Supabase API responses for 2 minutes
-            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\//,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'supabase-api',
-              expiration: { maxAgeSeconds: 120, maxEntries: 50 },
-            },
-          },
-          {
-            // Cache app shell indefinitely (versioned by build hash)
-            urlPattern: /^https:\/\/.*\.(js|css|woff2?)$/,
+            urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\//,
             handler: 'CacheFirst',
-            options: { cacheName: 'static-assets', expiration: { maxAgeSeconds: 86400 } },
+            options: { cacheName: 'fonts', expiration: { maxAgeSeconds: 30 * 86400, maxEntries: 30 } },
           },
         ],
       },

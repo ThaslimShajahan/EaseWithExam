@@ -25,6 +25,10 @@ const hasFbq = () => typeof window !== 'undefined' && typeof window.fbq === 'fun
  */
 export function initMetaPixel() {
   if (!import.meta.env.PROD) return;
+  // Only src/lib/consent.js calls this, after Accept. The webdriver check is a
+  // second guard: the prerender's headless browser must never inject the
+  // Pixel, or its <script> tags get saved into the shipped HTML.
+  if (typeof navigator !== 'undefined' && navigator.webdriver) return;
   if (hasFbq()) return; // StrictMode/HMR re-entry guard
 
   /* eslint-disable */

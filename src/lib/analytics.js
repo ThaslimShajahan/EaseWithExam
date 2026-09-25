@@ -14,13 +14,19 @@
  * the first — so there is exactly one sender and no double count.
  *
  * Google Search Console is verified separately and needs nothing in the bundle.
+ *
+ * CONSENT (2026-09-25): gtag.js itself is now loaded by src/lib/consent.js,
+ * only after the visitor presses Accept. Until then these functions send
+ * nothing and queue nothing — a queued pre-consent page_view would otherwise
+ * be flushed the moment the tag loads.
  */
+import { hasTrackingConsent } from './consent';
 
 /** True once the gtag stub from index.html exists. It is defined synchronously
  *  by the inline script, well before React mounts, so this is really asking
  *  "was the tag left in the page?" — false in tests and in any build where the
  *  snippet was stripped, which is why every function below tolerates it. */
-const hasGtag = () => typeof window !== 'undefined' && typeof window.gtag === 'function';
+const hasGtag = () => typeof window !== 'undefined' && typeof window.gtag === 'function' && hasTrackingConsent();
 
 export const isAnalyticsEnabled = () => hasGtag();
 

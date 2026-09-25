@@ -290,3 +290,122 @@ end;
 $$;
 revoke all on function public.save_daily_challenge_attempt(text, uuid, text, boolean) from public;
 grant execute on function public.save_daily_challenge_attempt(text, uuid, text, boolean) to anon;
+
+-- ═══ 5. Daily Mini Test no longer counts against AI questions ═══════════════
+-- Owner decision 2026-09-25: one free Daily Mini Test per student per day, for
+-- free and premium alike; it must not use the ai_questions allowance (a free
+-- student who did one 20-question Practice set lost that day's test).
+--
+-- New action bucket 'daily_test'. It charges nothing to daily_usage_quota.
+-- Instead:
+--   - refused once today's Daily Mini Test exists (the one-per-day rule that
+--     save_daily_challenge / pick_daily_challenge_subject already enforce);
+--   - at most 3 daily_test actions per student per IST day, so a failing
+--     generation can be retried but the free bucket can't be farmed for AI
+--     calls (each action also allows only 10 proxy calls, not the usual 200).
+-- 'ai_questions' stays accepted for daily-challenge until every open page has
+-- the new bundle (the old bundle still charges ai_questions for it).
+create or replace function public.begin_ai_action(
+  p_uid text, p_bucket text, p_amount integer default 1,
+  p_exam_type text default null, p_subject text default null
+) returns json
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare
+  v_field text; v_limit integer; v_used integer; v_today date := public._ist_today(); v_id uuid;
+  v_labels jsonb := '{"ai_questions":"AI questions","veda_messages":"EWE messages","paper_evaluations":"paper evaluations","podcasts":"podcasts","paper_generations":"full papers","daily_test":"Daily Mini Test"}';
+begin
+  perform public.assert_verified_self(p_uid);
+  if p_bucket is null or not (v_labels ? p_bucket) then
+    raise exception 'Unknown quota bucket: %', coalesce(p_bucket, '(none)') using errcode = '22023';
+  end if;
+  if p_amount is null or p_amount < 1 or p_amount > 500 then
+    raise exception 'Invalid amount' using errcode = '22023';
+  end if;
+  if p_exam_type is not null or p_subject is not null then
+    perform public._assert_action_scope(p_uid, p_exam_type, p_subject);
+  end if;
+
+  -- Admins are exempt: an action is still recorded (so proxy calls tie back
+  -- to it) but nothing is charged.
+  if exists (select 1 from public.admins where uid = p_uid and is_active) then
+    insert into public.ai_actions (user_id, bucket, amount, exam_type, subject, usage_date)
+    values (p_uid, p_bucket, 0, p_exam_type, p_subject, v_today) returning id into v_id;
+    return json_build_object('action_id', v_id, 'exempt', true);
+  end if;
+
+  if p_bucket = 'daily_test' then
+    if exists (select 1 from public.daily_challenges
+                where user_id = p_uid and challenge_date = v_today) then
+      raise exception 'Today''s Daily Mini Test already exists' using errcode = '54000',
+        hint = json_build_object('bucket', 'daily_test', 'reason', 'done_today')::text;
+    end if;
+    -- Serialise per student so two tabs can't both pass the count below.
+    perform pg_advisory_xact_lock(hashtext('daily_test:' || p_uid));
+    if (select count(*) from public.ai_actions
+         where user_id = p_uid and bucket = 'daily_test' and usage_date = v_today) >= 3 then
+      raise exception 'Daily Mini Test could not be generated today — please try again tomorrow' using errcode = '54000',
+        hint = json_build_object('bucket', 'daily_test', 'reason', 'retries_used')::text;
+    end if;
+    insert into public.ai_actions (user_id, bucket, amount, exam_type, subject, usage_date, max_calls)
+    values (p_uid, 'daily_test', 1, p_exam_type, p_subject, v_today, 10) returning id into v_id;
+    return json_build_object('action_id', v_id, 'exempt', false, 'free', true);
+  end if;
+
+  v_field := p_bucket || '_used';
+  v_limit := public._quota_limit(p_uid, p_bucket);
+
+  insert into public.daily_usage_quota (user_id, usage_date) values (p_uid, v_today)
+  on conflict (user_id, usage_date) do nothing;
+  execute format('select coalesce(%I, 0) from public.daily_usage_quota where user_id = $1 and usage_date = $2 for update', v_field)
+    into v_used using p_uid, v_today;
+
+  if v_limit <> -1 and v_used + p_amount > v_limit then
+    raise exception 'Daily limit reached for %: used % of %', v_labels->>p_bucket, v_used, v_limit
+      using errcode = '54000', hint = json_build_object('used', v_used, 'limit', v_limit, 'bucket', p_bucket)::text;
+  end if;
+
+  execute format('update public.daily_usage_quota set %I = coalesce(%I, 0) + $1 where user_id = $2 and usage_date = $3', v_field, v_field)
+    using p_amount, p_uid, v_today;
+
+  insert into public.ai_actions (user_id, bucket, amount, exam_type, subject, usage_date)
+  values (p_uid, p_bucket, p_amount, p_exam_type, p_subject, v_today) returning id into v_id;
+
+  return json_build_object('action_id', v_id, 'exempt', false, 'used', v_used + p_amount, 'limit', v_limit);
+end;
+$$;
+
+create or replace function public.end_ai_action(p_uid text, p_action_id uuid, p_actual integer)
+returns json
+language plpgsql volatile security definer
+set search_path = public
+as $$
+declare v_a public.ai_actions; v_refund integer;
+begin
+  perform public.assert_verified_self(p_uid);
+  select * into v_a from public.ai_actions where id = p_action_id and user_id = p_uid for update;
+  if not found then raise exception 'Unknown action' using errcode = '22023'; end if;
+  if v_a.ended_at is not null then return json_build_object('refunded', 0, 'already_ended', true); end if;
+
+  v_refund := greatest(0, v_a.amount - greatest(0, coalesce(p_actual, 0)));
+  -- daily_test charges nothing to daily_usage_quota, so there is nothing to refund.
+  if v_refund > 0 and v_a.bucket <> 'daily_test' then
+    execute format('update public.daily_usage_quota set %I = greatest(0, coalesce(%I, 0) - $1) where user_id = $2 and usage_date = $3',
+                   v_a.bucket || '_used', v_a.bucket || '_used')
+      using v_refund, p_uid, v_a.usage_date;
+  end if;
+  if v_a.bucket = 'daily_test' then v_refund := 0; end if;
+  update public.ai_actions set ended_at = now() where id = p_action_id;
+  return json_build_object('refunded', v_refund);
+end;
+$$;
+
+-- The Daily Mini Test's AI calls: the generation itself, and the textbook
+-- retrieval embedding it runs first. 'daily_test' joins the known buckets.
+alter table public.ai_features drop constraint ai_features_buckets_known;
+alter table public.ai_features add constraint ai_features_buckets_known check (quota_buckets <@ array[
+  'ai_questions','veda_messages','paper_evaluations','podcasts','paper_generations','daily_test']::text[]);
+update public.ai_features set quota_buckets = array_append(quota_buckets, 'daily_test')
+ where feature in ('daily-challenge', 'question-gen-embed')
+   and not ('daily_test' = any (quota_buckets));

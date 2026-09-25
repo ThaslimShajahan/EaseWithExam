@@ -1,6 +1,7 @@
 // Every proxy call carries the caller's Firebase ID token (x-firebase-id-token);
 // ai-proxy authorises it server-side (security pass 2, 2026-09-25).
 import { edgeFunctionHeaders } from './firebaseToken';
+import { checkForUpdate } from './versionCheck';
 
 /**
  * AI Proxy — client wrapper for OpenAI chat completions.
@@ -26,6 +27,26 @@ import { edgeFunctionHeaders } from './firebaseToken';
 // doesn't work — the only real guarantee is removing the code path that references it.
 const USE_EDGE = import.meta.env.PROD || import.meta.env.VITE_USE_EDGE_FUNCTIONS === 'true';
 const PROXY_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-proxy`;
+
+/**
+ * Every ai-proxy request goes through here: it attaches the Firebase token
+ * (edgeFunctionHeaders), and if ai-proxy answers 401 session_expired it forces
+ * a fresh token and retries ONCE — a token that lapsed while the tab slept
+ * should never reach the student as an error. A refusal that survives the
+ * retry also triggers a version check, so an out-of-date page offers
+ * "A new version is available" instead of repeating the same failure.
+ * Non-401 responses are returned untouched (streams included).
+ */
+export async function proxyFetch(url, init) {
+  const send = async (forceRefresh) => fetch(url, { ...init, headers: await edgeFunctionHeaders({}, { forceRefresh }) });
+  let res = await send(false);
+  if (res.status === 401) {
+    const code = await res.clone().json().then((j) => j?.error?.code ?? j?.code).catch(() => null);
+    if (code === 'session_expired') res = await send(true);
+  }
+  if (res.status === 401 || res.status === 403) checkForUpdate({ force: true });
+  return res;
+}
 
 /* ── Timeout + retry ──────────────────────────────────────────────────
  *
@@ -294,9 +315,8 @@ export async function chatComplete(params, {
 } = {}) {
   const attempt = USE_EDGE
     ? async (sig) => {
-      const res = await fetch(PROXY_URL, {
+      const res = await proxyFetch(PROXY_URL, {
         method: 'POST',
-        headers: await edgeFunctionHeaders(),
         body: JSON.stringify({ ...params, _feature: feature, _caller_uid: callerUid }),
         signal: sig,
       });
@@ -415,9 +435,8 @@ export async function chatCompleteStream(params, { feature = null, callerUid = n
     return openai.chat.completions.create(body);
   }
 
-  const res = await fetch(PROXY_URL, {
+  const res = await proxyFetch(PROXY_URL, {
     method: 'POST',
-    headers: await edgeFunctionHeaders(),
     body: JSON.stringify({ ...body, _feature: feature, _caller_uid: callerUid }),
   });
   if (!res.ok) {
@@ -468,9 +487,8 @@ export async function generateImage(prompt, { size = '1024x1024', quality = 'sta
     const pick = (data) => responseFormat === 'b64_json' ? (data?.[0]?.b64_json ?? null) : (data?.[0]?.url ?? null);
 
     if (USE_EDGE) {
-      const res = await fetch(`${PROXY_URL}?route=images`, {
+      const res = await proxyFetch(`${PROXY_URL}?route=images`, {
         method: 'POST',
-        headers: await edgeFunctionHeaders(),
         body: JSON.stringify({ ...body, _feature: feature, _caller_uid: callerUid }),
       });
       if (!res.ok) return null;
@@ -498,9 +516,8 @@ export async function generateSpeech(text, { voice = 'alloy', feature = null, ca
   const body = { model: 'tts-1', voice, input: text };
 
   if (USE_EDGE) {
-    const res = await fetch(`${PROXY_URL}?route=tts`, {
+    const res = await proxyFetch(`${PROXY_URL}?route=tts`, {
       method: 'POST',
-      headers: await edgeFunctionHeaders(),
       body: JSON.stringify({ ...body, _feature: feature, _caller_uid: callerUid }),
     });
     if (!res.ok) {
@@ -523,9 +540,8 @@ export async function generateSpeech(text, { voice = 'alloy', feature = null, ca
 export async function embedText(text, { feature = null, callerUid = null } = {}) {
   try {
     if (USE_EDGE) {
-      const res = await fetch(`${PROXY_URL}?route=embeddings`, {
+      const res = await proxyFetch(`${PROXY_URL}?route=embeddings`, {
         method: 'POST',
-        headers: await edgeFunctionHeaders(),
         body: JSON.stringify({ model: 'text-embedding-3-small', input: text, _feature: feature, _caller_uid: callerUid }),
       });
       if (!res.ok) return null;
@@ -560,9 +576,8 @@ export async function embedTexts(texts, { feature = null, callerUid = null } = {
   const out = new Array(texts.length).fill(null);
   try {
     if (USE_EDGE) {
-      const res = await fetch(`${PROXY_URL}?route=embeddings`, {
+      const res = await proxyFetch(`${PROXY_URL}?route=embeddings`, {
         method: 'POST',
-        headers: await edgeFunctionHeaders(),
         body: JSON.stringify({ model: 'text-embedding-3-small', input: texts, _feature: feature, _caller_uid: callerUid }),
       });
       if (!res.ok) return out;

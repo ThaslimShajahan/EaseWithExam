@@ -21,10 +21,10 @@ import { supabase } from './supabase';
 import { notifyQuotaChanged } from './quota';
 
 export class QuotaExceededError extends Error {
-  constructor(message, { used = null, limit = null, bucket = null } = {}) {
+  constructor(message, { used = null, limit = null, bucket = null, reason = null } = {}) {
     super(message);
     this.name = 'QuotaExceededError';
-    this.used = used; this.limit = limit; this.bucket = bucket;
+    this.used = used; this.limit = limit; this.bucket = bucket; this.reason = reason;
   }
 }
 
@@ -39,12 +39,15 @@ export async function beginAiAction(uid, bucket, amount = 1, { examType = null, 
     if (error.code === '54000') {
       let detail = {};
       try { detail = JSON.parse(error.hint ?? '{}'); } catch { /* keep message only */ }
-      throw new QuotaExceededError(
-        `${error.message}. Upgrade to Premium for more, or try again tomorrow.`, detail);
+      // The free Daily Mini Test bucket has no paid tier to upgrade to.
+      const msg = detail.bucket === 'daily_test'
+        ? error.message
+        : `${error.message}. Upgrade to Premium for more, or try again tomorrow.`;
+      throw new QuotaExceededError(msg, detail);
     }
     throw new Error(error.message);
   }
-  if (!data?.exempt) notifyQuotaChanged(uid, `${bucket}_used`, amount);
+  if (!data?.exempt && !data?.free) notifyQuotaChanged(uid, `${bucket}_used`, amount);
   return { id: data?.action_id ?? null, bucket, amount, exempt: !!data?.exempt };
 }
 

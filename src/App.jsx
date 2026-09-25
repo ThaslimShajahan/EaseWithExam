@@ -3,10 +3,12 @@ import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import { useAuth } from './context/AuthContext';
 import { trackPageView } from './lib/analytics';
+import { CONSENT_EVENT } from './lib/consent';
 import { COACHING_MODULE_ENABLED } from './lib/moduleStatus';
 import AppShell from './components/layout/AppShell';
 import SkeletonLoader from './components/ui/SkeletonLoader';
 import PlatformChrome from './components/ui/PlatformChrome';
+import UpdateBanner from './components/ui/UpdateBanner';
 import MaintenanceGate from './components/ui/MaintenanceGate';
 
 /* ── Eagerly loaded (tiny, needed on first paint) ─────────── */
@@ -156,6 +158,12 @@ function usePageViews() {
   useEffect(() => {
     trackPageView(`${pathname}${search}`);
   }, [pathname, search]);
+  // The page on which the visitor presses Accept is counted once, then.
+  useEffect(() => {
+    const onConsent = (e) => { if (e.detail === 'granted') trackPageView(`${window.location.pathname}${window.location.search}`); };
+    window.addEventListener(CONSENT_EVENT, onConsent);
+    return () => window.removeEventListener(CONSENT_EVENT, onConsent);
+  }, []);
 }
 
 export default function App() {
@@ -163,6 +171,7 @@ export default function App() {
   return (
     <>
       <PlatformChrome />
+      <UpdateBanner />
       <Suspense fallback={<PageFallback />}>
       <MaintenanceGate>
       <Routes>

@@ -23,6 +23,24 @@ works while `ssh easewithexamdeploy@31.97.67.30` **fails with
 `Permission denied (publickey,password)`** — the default identity is offered
 instead of the deploy key. Always use the alias.
 
+## Deploy order — ALWAYS: migration → edge functions → web bundle
+
+Owner rule, 2026-09-25. Each layer may only depend on layers that are already live:
+
+1. **Migrations first** — `npx supabase db push --linked --yes`. New tables and
+   RPCs must exist before any code calls them (a bundle shipped first shows
+   admins "Could not find function admin_get_online_students").
+   Write migrations so the CURRENTLY live bundle keeps working against them —
+   pages opened before the deploy keep running old code for hours.
+2. **Edge functions second** — `npx supabase functions deploy <name> --use-api`
+   (`--no-verify-jwt` for exam-scraper and pdf-proxy).
+3. **Web bundle last** — the procedure below.
+
+A deploy that touches only one layer skips the others, never reorders them.
+Pages already open keep running the old bundle until reloaded: since
+2026-09-25 they notice (`/version.json`) and offer "A new version is
+available — tap to reload", and ai-proxy tells a pre-2026-09-25 page to reload.
+
 ## Procedure
 
 ```bash
@@ -120,6 +138,17 @@ for p in about contact privacy terms refund; do
 done
 #   every title must be that page's own (never the homepage's), every
 #   canonical must end in /$p/ (never bare "/")
+
+# 7c. Service worker + trackers (2026-09-25). Every URL the service worker
+#     precaches must be a 200, or NO browser can install it and returning
+#     visitors stay on an old cached app (/404.html did this for six weeks).
+#     And no prerendered page may contain a tracker <script> (the Meta Pixel
+#     was baked into the HTML by the prerender and fired before consent).
+node scripts/check-precache.mjs                     # must say "0 not 200"
+curl -s https://www.easewithexam.com/version.json   # must show this build's id
+for p in "" about/ contact/ privacy/ terms/ refund/; do
+  curl -s "https://www.easewithexam.com/$p" | grep -c 'connect.facebook.net|googletagmanager.com/gtag/js'
+done                                                # every line must be 0
 
 # 8. Clean up — belt and braces; step 3 is the one that actually protects you
 ssh easewithexam 'rm -f ~/ewe-dist.tar.gz'

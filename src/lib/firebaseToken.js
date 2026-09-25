@@ -22,13 +22,13 @@ import { auth, adminAuth } from '../firebase/config';
  * Its own module (moved out of supabase.js) because aiProxy.js needs it and
  * supabase.js already imports aiProxy.js — importing back would be a cycle.
  */
-export async function currentFirebaseIdToken() {
+export async function currentFirebaseIdToken(forceRefresh = false) {
   try {
     const onAdminRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/admin');
     const primary  = onAdminRoute ? adminAuth : auth;
     const fallback = onAdminRoute ? auth      : adminAuth;
     const user = primary.currentUser ?? fallback.currentUser;
-    return user ? await user.getIdToken() : null;
+    return user ? await user.getIdToken(forceRefresh) : null;
   } catch {
     return null;
   }
@@ -41,8 +41,8 @@ export async function currentFirebaseIdToken() {
  * (supabase/functions/_shared/caller.ts, ai-proxy's authorize()). No function
  * trusts a caller_uid in the body any more.
  */
-export async function edgeFunctionHeaders(extra = {}) {
-  const idToken = await currentFirebaseIdToken();
+export async function edgeFunctionHeaders(extra = {}, { forceRefresh = false } = {}) {
+  const idToken = await currentFirebaseIdToken(forceRefresh);
   return {
     'Content-Type': 'application/json',
     Authorization:  `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,

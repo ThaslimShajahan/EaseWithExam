@@ -7,7 +7,7 @@ import { loadCategories } from './lib/categories';
 import { loadOnboardingOptions } from './lib/onboardingOptions';
 import { loadPaperTemplateOverrides } from './lib/examPattern';
 import { captureReferralFromUrl } from './lib/referral';
-import { initMetaPixel } from './lib/metaPixel';
+import { loadTrackersIfConsented } from './lib/consent';
 import App from './App';
 import './styles/index.css';
 
@@ -16,8 +16,9 @@ import './styles/index.css';
 // render so the param is stripped from the URL the student actually sees.
 captureReferralFromUrl();
 
-// PROD-only (see metaPixel.js) — installs fbq and fires the base PageView.
-initMetaPixel();
+// GA4 + Meta Pixel load only for a visitor who already pressed Accept on the
+// cookie banner (src/lib/consent.js). A new visitor gets them from the banner.
+loadTrackersIfConsented();
 
 const queryClient = new QueryClient({
   defaultOptions: {

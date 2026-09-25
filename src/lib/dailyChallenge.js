@@ -1,12 +1,14 @@
 import { supabase } from './supabase';
 import { chatComplete } from './aiProxy';
 import { fetchSubjectContext } from './questionGen';
-import { beginAiAction, endAiAction } from './aiActions';
+import { beginAiAction, endAiAction, QuotaExceededError } from './aiActions';
 
-// Owner decision 2026-09-25: ONE Daily Mini Test per student per day (free and
-// premium alike), charging 1 ai_questions. The server enforces the one-per-day
-// rule (pick_daily_challenge_subject / save_daily_challenge).
-const DAILY_TEST_QUOTA = 1;
+// Owner decisions 2026-09-25: ONE Daily Mini Test per student per day (free and
+// premium alike), and it does NOT count against the AI-questions allowance —
+// it runs on its own free 'daily_test' action bucket (migration 20260927000000).
+// The server enforces one per day (pick_daily_challenge_subject /
+// save_daily_challenge / begin_ai_action) and caps generation retries at 3.
+const DAILY_TEST_BUCKET = 'daily_test';
 
 /*
  * Daily Mini Test — since 2026-09-25 (migration 20260925000000) the SERVER
@@ -89,7 +91,13 @@ export async function generateDailyChallenge({ userId }) {
 
   // Charged server-side (begin_ai_action) before any AI call; ai-proxy only
   // serves this student while the action is open. Refunded on any failure.
-  const action = await beginAiAction(userId, 'ai_questions', DAILY_TEST_QUOTA, { examType, subject });
+  let action;
+  try {
+    action = await beginAiAction(userId, DAILY_TEST_BUCKET, 1, { examType, subject });
+  } catch (e) {
+    if (e instanceof QuotaExceededError && e.reason === 'done_today') throw new DailyChallengeUnavailable('done_today');
+    throw e;
+  }
   try {
     return await generateAndSave({ userId, examType, subject, hasContent });
   } catch (e) {

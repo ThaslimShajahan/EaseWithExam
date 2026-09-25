@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import { usePlatformSettings } from '../../hooks/usePlatformSettings';
 import { isSeoManagedPage } from '../../lib/seo';
+import { getConsent, setConsent } from '../../lib/consent';
 
 // Brand green — Tailwind primary-600 (tailwind.config.js), "THE action
 // color". Same value already used for the web <meta name="theme-color">
@@ -17,7 +18,6 @@ const BRAND_COLOR = '#21A375';
 // it, so this one screen gets its own status bar treatment instead.
 const AUTH_SCREEN_COLOR = '#0f172a';
 
-const DISMISS_KEY = 'ewe_cookie_consent_v1';
 
 /**
  * Mounted once at the app root. Applies admin-configured platform settings
@@ -26,7 +26,9 @@ const DISMISS_KEY = 'ewe_cookie_consent_v1';
  */
 export default function PlatformChrome() {
   const { platform_name, cookie_banner_enabled, cookie_banner_text, loaded } = usePlatformSettings();
-  const [dismissed, setDismissed] = useState(() => localStorage.getItem(DISMISS_KEY) === '1');
+  // Accept or Decline both close the banner; only Accept loads GA / the Pixel.
+  const [dismissed, setDismissed] = useState(() => getConsent() !== null);
+  const choose = (value) => { setConsent(value); setDismissed(true); };
   const { pathname } = useLocation();
 
   // The public pages own their own <title> via useSeo() — each one is a tuned,
@@ -81,12 +83,20 @@ export default function PlatformChrome() {
           Read our Privacy &amp; Cookie Policy
         </a>
       </p>
-      <button
-        onClick={() => { localStorage.setItem(DISMISS_KEY, '1'); setDismissed(true); }}
-        className="shrink-0 px-4 py-3.5 rounded-xl bg-primary-600 hover:bg-primary-700 text-white text-xs font-bold transition-colors"
-      >
-        Accept
-      </button>
+      <div className="shrink-0 flex gap-2 w-full sm:w-auto">
+        <button
+          onClick={() => choose('denied')}
+          className="flex-1 sm:flex-none min-h-[44px] px-4 rounded-xl border border-white/25 hover:bg-white/10 text-white text-xs font-bold transition-colors"
+        >
+          Decline
+        </button>
+        <button
+          onClick={() => choose('granted')}
+          className="flex-1 sm:flex-none min-h-[44px] px-4 rounded-xl bg-primary-600 hover:bg-primary-700 text-white text-xs font-bold transition-colors"
+        >
+          Accept
+        </button>
+      </div>
     </div>
   );
 }
