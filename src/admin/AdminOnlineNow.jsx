@@ -4,6 +4,7 @@ import { Radio, Smartphone, Monitor, RefreshCw } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { usePolling, getAdminCallerUid, agoLabel, useAdminLiveFeed } from './hooks/useAdminLiveFeed';
 import { RegistrationList } from './AdminLiveBell';
+import { boardLabel, examLabel, studentDisplayName } from '../lib/displayLabels';
 
 /** Overview panel: students online now (last 2 min), active today / this week (IST), recent registrations. */
 export default function AdminOnlineNow() {
@@ -65,9 +66,9 @@ export default function AdminOnlineNow() {
                   ? <Smartphone size={14} className="text-emerald-400 shrink-0" aria-label="Android app" />
                   : <Monitor size={14} className="text-sky-400 shrink-0" aria-label="Web" />}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-white truncate">{s.name?.trim() || 'Unnamed student'}</p>
+                  <p className="text-sm text-white truncate">{studentDisplayName(s)}</p>
                   <p className="text-[11px] text-slate-500 truncate">
-                    {[s.class_level && `Class ${s.class_level}`, s.board, s.target_exam && s.target_exam !== 'NONE' && s.target_exam].filter(Boolean).join(' · ') || 'Profile incomplete'}
+                    {[s.class_level && `Class ${s.class_level}`, boardLabel(s.board), s.target_exam && s.target_exam !== 'NONE' && examLabel(s.target_exam)].filter(Boolean).join(' · ') || 'Profile incomplete'}
                   </p>
                 </div>
                 <span className="text-[11px] text-slate-400 shrink-0">last active {agoLabel(s.last_seen_at, serverNowMs)}</span>

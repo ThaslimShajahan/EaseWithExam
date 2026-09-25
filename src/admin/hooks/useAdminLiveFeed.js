@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
+import { boardLabel, studentDisplayName } from '../../lib/displayLabels';
 
 export const ADMIN_POLL_MS = 30_000;
 
@@ -29,10 +30,11 @@ export function usePolling(fn, ms = ADMIN_POLL_MS) {
   }, [ms]);
 }
 
+/** "Asha, Class 9 Kerala State" — name falls back to mobile, then email (admin-only data). */
 export const registrationLabel = (r) => {
-  const name = r?.name?.trim() || 'New student';
+  const name = studentDisplayName(r);
   const cls = r?.class_level ? `Class ${r.class_level}` : '';
-  return [name, [cls, r?.board].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  return [name, [cls, boardLabel(r?.board)].filter(Boolean).join(' ')].filter(Boolean).join(', ');
 };
 
 /**

@@ -8,6 +8,7 @@ import { supabase } from '../lib/supabase';
 // has an identical shape to a student-set one.
 import { classTierFor, flattenSubjects, buildAcademicTrack } from '../lib/streamSelection';
 import { EXAM_OPTIONS, BOARD_OPTIONS, CLASS_OPTIONS } from '../lib/onboardingOptions';
+import { boardLabel } from '../lib/displayLabels';
 import { toLocalInputValue } from '../lib/dateInput';
 
 function getCallerUid() {
@@ -506,7 +507,7 @@ function EditDrawer({ user, onClose, onSaved }) {
               className="w-full bg-slate-800 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-primary-500"
             >
               {getAllBoards().map((b) => (
-                <option key={b} value={b}>{OPTION_TITLE(BOARD_OPTIONS, b)}</option>
+                <option key={b} value={b}>{boardLabel(b)}</option>
               ))}
             </select>
           </Field>

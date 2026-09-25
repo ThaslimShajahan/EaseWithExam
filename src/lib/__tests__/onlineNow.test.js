@@ -86,7 +86,10 @@ describe('registration feed helpers', () => {
 
   it('labels "New student: <name>, Class X <board>" parts', () => {
     expect(registrationLabel(r('a', 'onboarded'))).toBe('Asha, Class 9 CBSE');
-    expect(registrationLabel({ name: '  ', class_level: null, board: null })).toBe('New student');
+    expect(registrationLabel({ name: '  ', class_level: null, board: null })).toBe('Unnamed student');
+    expect(registrationLabel({ name: null, phone_number: '+919800000000', email: 'a@b.c', class_level: '8', board: 'KERALA_STATE' }))
+      .toBe('+919800000000, Class 8 Kerala State');
+    expect(registrationLabel({ name: '', phone_number: null, email: 'a@b.c', class_level: '10', board: 'CBSE' })).toBe('a@b.c, Class 10 CBSE');
   });
 
   it('agoLabel uses the server clock', () => {

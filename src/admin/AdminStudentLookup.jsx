@@ -8,6 +8,7 @@ import {
 import { supabase, adminGetAllSubscriptions, adminGetQuotaOverride } from '../lib/supabase';
 import { pickExpiryInfo } from '../lib/quota';
 import { formatCountdown } from '../components/dashboard/ExpiryBadge';
+import { boardLabel } from '../lib/displayLabels';
 import StudentPicker from '../components/admin/StudentPicker';
 
 function getCallerUid() {
@@ -147,7 +148,7 @@ function StudentCard({ detail }) {
           <GraduationCap size={12} className="text-primary-400" /> Stream &amp; Subjects
         </p>
         <div className="text-xs text-slate-400">
-          {profile?.syllabus || '—'} {profile?.class_level ? `· Class ${profile.class_level}` : ''}
+          {boardLabel(profile?.syllabus) || '—'} {profile?.class_level ? `· Class ${profile.class_level}` : ''}
           {profile?.academic_track?.stream ? ` · ${profile.academic_track.stream}` : ''}
         </div>
         <div className="flex flex-wrap gap-1.5">

@@ -183,8 +183,10 @@ const esc = (v: unknown) => String(v ?? '').replace(/[&<>"']/g, (c) =>
 function renderNewRegistration(data: Record<string, unknown>): { subject: string; html: string } {
   const cls = data.classLevel ? `Class ${esc(data.classLevel)}` : 'class not set';
   const board = data.board ? esc(data.board) : 'board not set';
+  // `name` arrives already resolved: name → mobile → email → "Unnamed student"
+  // (_email_admin_new_registration), and `board` as its display title.
   const rows: [string, unknown][] = [
-    ['Name', data.name], ['Class', data.classLevel], ['Board', data.board],
+    ['Name', data.name], ['Mobile', data.phone], ['Email', data.email], ['Class', data.classLevel], ['Board', data.board],
     ['Target exam', data.targetExam], ['Signed up with', data.authMethod], ['Registered', data.registeredAt],
   ];
   return {
